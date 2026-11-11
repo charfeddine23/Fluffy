@@ -58,13 +58,9 @@ jobs:
               -dname "CN=Fluffy, OU=Mobile, O=Fluffy, L=City, S=State, C=US"
           fi
 
-      - name: Build Release APK
-        env:
-          KEYSTORE_PATH: ${{ runner.temp }}/release.keystore
-          STORE_PASSWORD: android
-          KEY_PASSWORD: android
+      - name: Build APK
         run: |
-          ./gradlew assembleRelease --no-daemon
+          ./gradlew assembleDebug --no-daemon
 
       - name: Locate and Rename APK
         run: |
