@@ -1,0 +1,118 @@
+name: Android CI/CD Release Build
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build, Sign, and Publish Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Temurin JDK 17 with Gradle Cache
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Grant Execute Permission to Gradle Wrapper
+        run: chmod +x gradlew
+
+      - name: Decode Keystore from GitHub Secrets
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > my-upload-key.jks
+            echo "Successfully decoded keystore from KEYSTORE_BASE64 secret."
+          elif [ -f "debug.keystore.base64" ]; then
+            base64 -d debug.keystore.base64 > my-upload-key.jks
+            echo "Decoded fallback keystore from repository debug.keystore.base64."
+          else
+            keytool -genkey -v -keystore my-upload-key.jks -alias upload \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass android -keypass android \
+              -dname "CN=Fluffy, OU=Mobile, O=Fluffy, L=City, S=State, C=US"
+            echo "Generated fallback build keystore."
+          fi
+
+      - name: Build Signed Release APK
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || 'android' }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'android' }}
+        run: |
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Extract Version Name & Prepare Release Artifact
+        id: extract_version
+        run: |
+          # Extract versionName from app/build.gradle.kts
+          VERSION_NAME=$(grep -oE 'versionName\s*=\s*"[^"]+"' app/build.gradle.kts | head -1 | sed -E 's/versionName\s*=\s*"([^"]+)"/\1/')
+          if [ -z "$VERSION_NAME" ]; then
+            VERSION_NAME="1.0.0"
+          fi
+          echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
+          echo "Extracted App Version: $VERSION_NAME"
+
+          # Find the generated release APK
+          APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            APK_PATH=$(find app/build/outputs/apk -name "*.apk" | head -n 1)
+          fi
+          echo "Found APK: $APK_PATH"
+
+          # Rename to standardized format: Fluffy-v[versionName].apk
+          RELEASE_APK="Fluffy-v${VERSION_NAME}.apk"
+          cp "$APK_PATH" "$RELEASE_APK"
+          echo "apk_path=$RELEASE_APK" >> $GITHUB_OUTPUT
+          echo "apk_name=$RELEASE_APK" >> $GITHUB_OUTPUT
+          ls -lh "$RELEASE_APK"
+
+      - name: Automatically Clean Previous Releases (Optional Clean Mode)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Delete any previous release with the exact same tag to prevent duplicate tag errors
+          TAG="v${{ steps.extract_version.outputs.version_name }}"
+          gh release delete "$TAG" --cleanup-tag -y || true
+
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.extract_version.outputs.version_name }}
+          name: Fluffy v${{ steps.extract_version.outputs.version_name }}
+          files: ${{ steps.extract_version.outputs.apk_path }}
+          draft: false
+          prerelease: false
+          make_latest: true
+          body: |
+            ### ✨ Fluffy Liquid Glass Notes - Release v${{ steps.extract_version.outputs.version_name }}
+
+            🚀 New production build of **Fluffy** notes application.
+
+            #### 📦 Release Asset:
+            - **`${{ steps.extract_version.outputs.apk_name }}`**
+
+            #### 💎 Key Features:
+            - **Liquid Glass / Frosted Glass UI** with Chromatic Dispersion & Inner Shadow.
+            - Full **Light & Dark mode** with dynamic glass refraction.
+            - Room Database local persistence with instant reactivity.
+            - Interactive checklists, categories, audio memos, and live search.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
