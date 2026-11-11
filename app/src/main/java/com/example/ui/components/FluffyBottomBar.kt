@@ -49,14 +49,21 @@ fun FluffyBottomBar(
             .padding(horizontal = 24.dp, vertical = 14.dp),
         contentAlignment = Alignment.Center
     ) {
-        // Floating Liquid Glass Dock
+        // Floating Liquid Glass Dock with 15% transparency
+        val bottomBarFill = if (isDark) {
+            Color(0xFF0F172A).copy(alpha = 0.85f)
+        } else {
+            Color(0xFFFFFFFF).copy(alpha = 0.85f)
+        }
+
         Row(
             modifier = Modifier
                 .liquidGlass(
                     isDark = isDark,
                     tint = GlassTint.FROST,
                     shape = RoundedCornerShape(32.dp),
-                    borderWidth = 1.6.dp
+                    borderWidth = 1.6.dp,
+                    customFill = bottomBarFill
                 )
                 .padding(horizontal = 14.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,

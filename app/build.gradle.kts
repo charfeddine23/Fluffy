@@ -1,4 +1,5 @@
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
+import java.util.Properties
 
 plugins {
   alias(libs.plugins.android.application)
@@ -12,12 +13,35 @@ android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
+  val versionPropsFile = rootProject.file("version.properties")
+  val versionProps = Properties()
+  if (versionPropsFile.exists()) {
+    versionPropsFile.inputStream().use { stream ->
+      versionProps.load(stream)
+    }
+  }
+
+  val resolvedVersionCode = (project.findProperty("versionCode") as? String)?.toIntOrNull()
+    ?: System.getenv("VERSION_CODE")?.toIntOrNull()
+    ?: versionProps.getProperty("VERSION_CODE", "101").toIntOrNull()
+    ?: 101
+
+  val resolvedVersionName = (project.findProperty("versionName") as? String)
+    ?: System.getenv("VERSION_NAME")
+    ?: versionProps.getProperty("VERSION_NAME")
+    ?: run {
+      val major = versionProps.getProperty("VERSION_MAJOR", "1")
+      val minor = versionProps.getProperty("VERSION_MINOR", "0")
+      val patch = versionProps.getProperty("VERSION_PATCH", "1")
+      "$major.$minor.$patch"
+    }
+
   defaultConfig {
     applicationId = "com.aistudio.fluffy.ntexpa"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0.0"
+    versionCode = resolvedVersionCode
+    versionName = resolvedVersionName
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

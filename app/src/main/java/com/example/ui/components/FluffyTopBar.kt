@@ -61,7 +61,7 @@ fun FluffyTopBar(
     searchQuery: String,
     onSearchChange: (String) -> Unit,
     onToggleTheme: () -> Unit,
-    onToggleLanguage: () -> Unit,
+    onToggleLanguage: (() -> Unit)? = null,
     onToggleViewMode: () -> Unit,
     onOpenStats: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -158,31 +158,6 @@ fun FluffyTopBar(
                     onClick = onToggleViewMode
                 )
 
-                // Language toggle (AR/EN)
-                Box(
-                    modifier = Modifier
-                        .size(38.dp)
-                        .testTag("language_toggle")
-                        .liquidGlass(
-                            isDark = isDark,
-                            tint = GlassTint.FROST,
-                            shape = CircleShape,
-                            borderWidth = 1.2.dp
-                        )
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = ripple(bounded = true),
-                            onClick = onToggleLanguage
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = if (isArabic) "EN" else "عربي",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = textColor
-                    )
-                }
 
                 // Theme Toggle (Sun/Moon)
                 GlassIconAction(

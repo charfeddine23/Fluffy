@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import com.example.BuildConfig
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -409,10 +410,19 @@ fun SettingsDrawer(
                     ) {
                         Column(modifier = Modifier.padding(14.dp)) {
                             Text(
-                                text = "Fluffy Notes v1.0.0 ✨",
+                                text = "Fluffy Notes v${BuildConfig.VERSION_NAME} ✨",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = textColor
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = if (isArabic)
+                                    "إصدار البناء: ${BuildConfig.VERSION_CODE}"
+                                else
+                                    "Build Code: ${BuildConfig.VERSION_CODE}",
+                                fontSize = 11.sp,
+                                color = metaColor
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(

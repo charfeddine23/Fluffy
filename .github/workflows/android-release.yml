@@ -31,88 +31,128 @@ jobs:
           cache: 'gradle'
 
       - name: Grant Execute Permission to Gradle Wrapper
-        run: chmod +x gradlew
+        run: chmod +x gradlew || true
 
-      - name: Decode Keystore from GitHub Secrets
+      - name: Determine Dynamic Version (Auto-Incrementing)
+        id: versioning
+        run: |
+          # Read base Major and Minor from version.properties
+          if [ -f "version.properties" ]; then
+            MAJOR=$(grep -E '^VERSION_MAJOR=' version.properties | cut -d'=' -f2 | tr -d '[:space:]')
+            MINOR=$(grep -E '^VERSION_MINOR=' version.properties | cut -d'=' -f2 | tr -d '[:space:]')
+          fi
+          MAJOR=${MAJOR:-1}
+          MINOR=${MINOR:-0}
+
+          # Use GitHub run_number for strictly increasing patch version and versionCode
+          RUN_NUM="${{ github.run_number }}"
+          PATCH="$RUN_NUM"
+          VERSION_NAME="${MAJOR}.${MINOR}.${PATCH}"
+          VERSION_CODE=$((1000 + RUN_NUM))
+
+          echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_ENV
+          echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_ENV
+          echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
+          echo "version_code=$VERSION_CODE" >> $GITHUB_OUTPUT
+
+          echo "=========================================="
+          echo "🚀 Target Release: Fluffy v${VERSION_NAME}"
+          echo "🔢 Monotonic Version Code: ${VERSION_CODE}"
+          echo "=========================================="
+
+      - name: Setup Persistent Signing Keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
+          # 1. Use user secret if provided in repository secrets
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "$KEYSTORE_BASE64" | base64 --decode > my-upload-key.jks
-            echo "Successfully decoded keystore from KEYSTORE_BASE64 secret."
-          elif [ -f "debug.keystore.base64" ]; then
-            base64 -d debug.keystore.base64 > my-upload-key.jks
-            echo "Decoded fallback keystore from repository debug.keystore.base64."
+            echo "✅ Loaded signing keystore from KEYSTORE_BASE64 secret."
+          # 2. Use persistent committed repository keystore
+          elif [ -f "my-upload-key.jks" ]; then
+            echo "✅ Using persistent repository keystore my-upload-key.jks."
+          # 3. Use committed base64 keystore
+          elif [ -f "my-upload-key.base64" ]; then
+            base64 -d my-upload-key.base64 > my-upload-key.jks
+            echo "✅ Decoded persistent keystore from my-upload-key.base64."
           else
-            keytool -genkey -v -keystore my-upload-key.jks -alias upload \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -storepass android -keypass android \
-              -dname "CN=Fluffy, OU=Mobile, O=Fluffy, L=City, S=State, C=US"
-            echo "Generated fallback build keystore."
+            echo "❌ Error: Release keystore not found! A persistent keystore is required for app updates."
+            exit 1
           fi
 
-      - name: Build Signed Release APK
+      - name: Build Signed Release APK with Dynamic Versioning
         env:
           KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || 'android' }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'android' }}
+          VERSION_NAME: ${{ steps.versioning.outputs.version_name }}
+          VERSION_CODE: ${{ steps.versioning.outputs.version_code }}
         run: |
-          ./gradlew assembleRelease --no-daemon
+          ./gradlew assembleRelease \
+            -PversionName="${VERSION_NAME}" \
+            -PversionCode="${VERSION_CODE}" \
+            --no-daemon
 
-      - name: Extract Version Name & Prepare Release Artifact
-        id: extract_version
+      - name: Package & Rename Release APK
+        id: package_apk
         run: |
-          # Extract versionName from app/build.gradle.kts
-          VERSION_NAME=$(grep -oE 'versionName\s*=\s*"[^"]+"' app/build.gradle.kts | head -1 | sed -E 's/versionName\s*=\s*"([^"]+)"/\1/')
-          if [ -z "$VERSION_NAME" ]; then
-            VERSION_NAME="1.0.0"
+          VERSION="${{ steps.versioning.outputs.version_name }}"
+          APK_NAME="Fluffy-v${VERSION}.apk"
+
+          # Find the built release APK
+          BUILT_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -z "$BUILT_APK" ]; then
+            BUILT_APK=$(find app/build/outputs/apk -name "*.apk" | head -n 1)
           fi
-          echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
-          echo "Extracted App Version: $VERSION_NAME"
 
-          # Find the generated release APK
-          APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
-          if [ -z "$APK_PATH" ]; then
-            APK_PATH=$(find app/build/outputs/apk -name "*.apk" | head -n 1)
+          if [ ! -f "$BUILT_APK" ]; then
+            echo "❌ Error: Could not locate built APK file!"
+            exit 1
           fi
-          echo "Found APK: $APK_PATH"
 
-          # Rename to standardized format: Fluffy-v[versionName].apk
-          RELEASE_APK="Fluffy-v${VERSION_NAME}.apk"
-          cp "$APK_PATH" "$RELEASE_APK"
-          echo "apk_path=$RELEASE_APK" >> $GITHUB_OUTPUT
-          echo "apk_name=$RELEASE_APK" >> $GITHUB_OUTPUT
-          ls -lh "$RELEASE_APK"
+          cp "$BUILT_APK" "$APK_NAME"
+          echo "apk_path=$APK_NAME" >> $GITHUB_OUTPUT
+          echo "apk_name=$APK_NAME" >> $GITHUB_OUTPUT
+          echo "✅ Prepared artifact: $APK_NAME ($(du -h "$APK_NAME" | cut -f1))"
 
-      - name: Automatically Clean Previous Releases (Optional Clean Mode)
+      - name: Clean Previous GitHub Releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Delete any previous release with the exact same tag to prevent duplicate tag errors
-          TAG="v${{ steps.extract_version.outputs.version_name }}"
-          gh release delete "$TAG" --cleanup-tag -y || true
+          echo "🧹 Checking for previous releases to remove..."
+          gh release list --limit 100 --json tagName -q '.[].tagName' | while read -r old_tag; do
+            if [ -n "$old_tag" ]; then
+              echo "Removing previous release & tag: $old_tag"
+              gh release delete "$old_tag" --cleanup-tag -y || true
+            fi
+          done
 
-      - name: Publish to GitHub Releases
+      - name: Publish New Version to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.extract_version.outputs.version_name }}
-          name: Fluffy v${{ steps.extract_version.outputs.version_name }}
-          files: ${{ steps.extract_version.outputs.apk_path }}
+          tag_name: v${{ steps.versioning.outputs.version_name }}
+          name: Fluffy v${{ steps.versioning.outputs.version_name }}
+          files: ${{ steps.package_apk.outputs.apk_path }}
           draft: false
           prerelease: false
           make_latest: true
           body: |
-            ### ✨ Fluffy Liquid Glass Notes - Release v${{ steps.extract_version.outputs.version_name }}
+            ### 🫧 Fluffy Notes - Release v${{ steps.versioning.outputs.version_name }}
 
-            🚀 New production build of **Fluffy** notes application.
+            ✨ New production build with auto-incremented version code and persistent signing certificate.
 
             #### 📦 Release Asset:
-            - **`${{ steps.extract_version.outputs.apk_name }}`**
+            - **`${{ steps.package_apk.outputs.apk_name }}`**
 
-            #### 💎 Key Features:
-            - **Liquid Glass / Frosted Glass UI** with Chromatic Dispersion & Inner Shadow.
-            - Full **Light & Dark mode** with dynamic glass refraction.
-            - Room Database local persistence with instant reactivity.
-            - Interactive checklists, categories, audio memos, and live search.
+            #### 🔄 In-Place Update Support:
+            - **Version Code**: `${{ steps.versioning.outputs.version_code }}` (incremented)
+            - **Signature**: Consistent cryptographic certificate (can be installed directly over previous builds without uninstalling).
+
+            #### 💎 Features & Aesthetics:
+            - **Liquid Glass / Frosted Glass** UI with Chromatic Dispersion & Inner Highlights.
+            - **Biometric Authentication** (Fingerprint / Face Unlock).
+            - **Left-Edge Swipe Drawer** with quick settings.
+            - **Frosted Edge Mist / Blur** on category tabs.
+            - **Room Database** offline-first encryption and local storage.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
