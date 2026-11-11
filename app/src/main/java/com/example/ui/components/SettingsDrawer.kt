@@ -99,7 +99,7 @@ fun SettingsDrawer(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = if (isDark) 0.65f else 0.40f))
+                .background(Color.Black.copy(alpha = if (isDark) 0.35f else 0.20f))
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -122,11 +122,18 @@ fun SettingsDrawer(
                 .windowInsetsPadding(WindowInsets.navigationBars)
                 .padding(vertical = 12.dp, horizontal = 12.dp)
         ) {
+            val settingsDrawerFill = if (isDark) {
+                Color(0xFF0F172A).copy(alpha = 0.85f)
+            } else {
+                Color(0xFFFFFFFF).copy(alpha = 0.85f)
+            }
+
             LiquidGlassCard(
                 isDark = isDark,
                 tint = GlassTint.FROST,
                 shape = RoundedCornerShape(28.dp),
                 borderWidth = 1.8.dp,
+                customFill = settingsDrawerFill,
                 modifier = Modifier
                     .fillMaxSize()
                     .testTag("settings_drawer_panel")
@@ -212,6 +219,7 @@ fun SettingsDrawer(
                         tint = GlassTint.CYAN,
                         shape = RoundedCornerShape(18.dp),
                         borderWidth = 1.2.dp,
+                        customFill = if (isDark) Color(0xFF1E293B).copy(alpha = 0.85f) else Color(0xFFF1F5F9).copy(alpha = 0.85f),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(
@@ -396,6 +404,7 @@ fun SettingsDrawer(
                         tint = GlassTint.EMERALD,
                         shape = RoundedCornerShape(16.dp),
                         borderWidth = 1.dp,
+                        customFill = if (isDark) Color(0xFF1E293B).copy(alpha = 0.85f) else Color(0xFFF1F5F9).copy(alpha = 0.85f),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(modifier = Modifier.padding(14.dp)) {
@@ -462,7 +471,7 @@ private fun SettingsRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(if (isDark) Color(0x15FFFFFF) else Color(0x0C000000))
+            .background(if (isDark) Color(0xFF1E293B).copy(alpha = 0.85f) else Color(0xFFF1F5F9).copy(alpha = 0.85f))
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = ripple(bounded = true),

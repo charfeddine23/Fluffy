@@ -188,7 +188,18 @@ fun Modifier.liquidGlass(
 
         // 1. Frosted Liquid Fill
         val baseFill = customFill ?: if (isDark) tint.darkFill else tint.lightFill
-        val specularSheen = if (isDark) {
+        val specularSheen = if (customFill != null) {
+            val a = customFill.alpha
+            Brush.linearGradient(
+                colors = listOf(
+                    customFill.copy(alpha = (a * 1.08f).coerceIn(0.01f, 1f)),
+                    customFill,
+                    customFill.copy(alpha = (a * 0.92f).coerceIn(0.01f, 1f))
+                ),
+                start = Offset(0f, 0f),
+                end = Offset(width, height)
+            )
+        } else if (isDark) {
             Brush.linearGradient(
                 colors = listOf(
                     baseFill.copy(alpha = (baseFill.alpha * 1.25f).coerceAtMost(0.95f)),
@@ -279,6 +290,7 @@ fun LiquidGlassCard(
     tint: GlassTint = GlassTint.FROST,
     shape: Shape = RoundedCornerShape(24.dp),
     borderWidth: Dp = 1.5.dp,
+    customFill: Color? = null,
     onClick: (() -> Unit)? = null,
     testTag: String = "liquid_glass_card",
     content: @Composable BoxScope.() -> Unit
@@ -301,7 +313,8 @@ fun LiquidGlassCard(
                 isDark = isDark,
                 tint = tint,
                 shape = shape,
-                borderWidth = borderWidth
+                borderWidth = borderWidth,
+                customFill = customFill
             )
             .then(clickModifier),
         content = content
