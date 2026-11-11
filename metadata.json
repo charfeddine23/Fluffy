@@ -1,0 +1,6 @@
+{
+  "name": "Fluffy",
+  "description": "تطبيق تدوين الملاحظات Fluffy بتصميم Liquid Glass / Frosted Glass مع التشتت اللوني والظلال الداخلية والوضع الليلي والنهاري.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
