@@ -49,12 +49,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import com.example.data.model.GlassTint
 import com.example.data.model.NoteEntity
 import com.example.ui.components.CategoryChips
 import com.example.ui.components.FluffyBottomBar
 import com.example.ui.components.FluffyTopBar
 import com.example.ui.components.NoteCard
+import com.example.ui.components.SettingsDrawer
 import com.example.ui.components.StatsBottomSheet
 import com.example.ui.components.VoiceRecorderDialog
 import com.example.ui.glass.FrostedBackdrop
@@ -64,11 +67,14 @@ import com.example.viewmodel.FluffyViewModel
 @Composable
 fun FluffyHomeScreen(
     viewModel: FluffyViewModel,
+    onToggleBiometricAuth: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val isDark by viewModel.isDarkMode.collectAsState()
     val isArabic by viewModel.isArabic.collectAsState()
     val isGridView by viewModel.isGridView.collectAsState()
+    val isBiometricEnabled by viewModel.isBiometricEnabled.collectAsState()
+    val isSettingsDrawerOpen by viewModel.isSettingsDrawerOpen.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
     val selectedCategory by viewModel.selectedCategory.collectAsState()
     val notes by viewModel.filteredNotes.collectAsState()
@@ -86,7 +92,18 @@ fun FluffyHomeScreen(
     }
 
     FrostedBackdrop(isDark = isDark) {
-        Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures { change, dragAmount ->
+                        // Swipe from left edge (x < 280f and dragAmount > 20f)
+                        if (dragAmount > 20f && change.position.x < 350f) {
+                            viewModel.openSettingsDrawer()
+                        }
+                    }
+                }
+        ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -102,7 +119,8 @@ fun FluffyHomeScreen(
                     onToggleTheme = { viewModel.toggleDarkMode() },
                     onToggleLanguage = { viewModel.toggleLanguage() },
                     onToggleViewMode = { viewModel.toggleViewMode() },
-                    onOpenStats = { viewModel.showStatsSheet.value = true }
+                    onOpenStats = { viewModel.showStatsSheet.value = true },
+                    onOpenSettings = { viewModel.openSettingsDrawer() }
                 )
 
                 // Category Chips
@@ -217,6 +235,21 @@ fun FluffyHomeScreen(
                     )
                 }
             }
+
+            // Settings Drawer (Opened via left swipe or menu icon)
+            SettingsDrawer(
+                isOpen = isSettingsDrawerOpen,
+                onClose = { viewModel.closeSettingsDrawer() },
+                isDark = isDark,
+                isArabic = isArabic,
+                isGridView = isGridView,
+                isBiometricEnabled = isBiometricEnabled,
+                onToggleBiometric = { onToggleBiometricAuth(it) },
+                onLockAppNow = { viewModel.lockApp() },
+                onToggleTheme = { viewModel.toggleDarkMode() },
+                onToggleLanguage = { viewModel.toggleLanguage() },
+                onToggleViewMode = { viewModel.toggleViewMode() }
+            )
         }
 
         // Stats Bottom Sheet

@@ -27,7 +27,9 @@ import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -62,6 +64,7 @@ fun FluffyTopBar(
     onToggleLanguage: () -> Unit,
     onToggleViewMode: () -> Unit,
     onOpenStats: () -> Unit,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val focusManager = LocalFocusManager.current
@@ -80,25 +83,33 @@ fun FluffyTopBar(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // Glass Logo Badge
+                // Menu / Settings Hamburger Button
                 Box(
                     modifier = Modifier
-                        .size(42.dp)
+                        .size(40.dp)
+                        .testTag("menu_drawer_button")
                         .liquidGlass(
                             isDark = isDark,
                             tint = GlassTint.FROST,
-                            shape = RoundedCornerShape(14.dp),
-                            borderWidth = 1.8.dp
+                            shape = RoundedCornerShape(13.dp),
+                            borderWidth = 1.2.dp
+                        )
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = ripple(bounded = true),
+                            onClick = onOpenSettings
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "✨",
-                        fontSize = 20.sp
+                    Icon(
+                        imageVector = Icons.Default.Menu,
+                        contentDescription = if (isArabic) "الإعدادات" else "Settings",
+                        tint = textColor,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
 
-                Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(10.dp))
 
                 Column {
                     Text(
@@ -107,6 +118,11 @@ fun FluffyTopBar(
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 24.sp,
                             color = textColor
+                        ),
+                        modifier = Modifier.clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = onOpenSettings
                         )
                     )
                     Text(

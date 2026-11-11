@@ -26,10 +26,19 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private val prefs = application.getSharedPreferences("fluffy_prefs", android.content.Context.MODE_PRIVATE)
+
     // App Preferences
     val isDarkMode = MutableStateFlow(true)
     val isArabic = MutableStateFlow(true)
     val isGridView = MutableStateFlow(true)
+
+    // Biometric Authentication & App Lock
+    val isBiometricEnabled = MutableStateFlow(prefs.getBoolean("biometric_enabled", false))
+    val isAppLocked = MutableStateFlow(prefs.getBoolean("biometric_enabled", false))
+
+    // Settings Drawer
+    val isSettingsDrawerOpen = MutableStateFlow(false)
 
     // Filter and Search
     val searchQuery = MutableStateFlow("")
@@ -207,6 +216,32 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                 repository.insertOrUpdate(updated)
             }
         }
+    }
+
+    fun setBiometricEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("biometric_enabled", enabled).apply()
+        isBiometricEnabled.value = enabled
+        if (!enabled) {
+            isAppLocked.value = false
+        }
+    }
+
+    fun lockApp() {
+        if (isBiometricEnabled.value) {
+            isAppLocked.value = true
+        }
+    }
+
+    fun unlockApp() {
+        isAppLocked.value = false
+    }
+
+    fun openSettingsDrawer() {
+        isSettingsDrawerOpen.value = true
+    }
+
+    fun closeSettingsDrawer() {
+        isSettingsDrawerOpen.value = false
     }
 
     fun showSnackbar(message: String) {
