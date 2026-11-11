@@ -9,7 +9,9 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -111,34 +113,55 @@ fun SettingsDrawer(
 
     AnimatedVisibility(
         visible = isOpen,
-        enter = slideInHorizontally(initialOffsetX = { -it }),
-        exit = slideOutHorizontally(targetOffsetX = { -it }),
-        modifier = modifier
+        enter = slideInHorizontally(
+            initialOffsetX = { fullWidth -> if (isArabic) fullWidth else -fullWidth }
+        ),
+        exit = slideOutHorizontally(
+            targetOffsetX = { fullWidth -> if (isArabic) fullWidth else -fullWidth }
+        ),
+        modifier = modifier.fillMaxSize()
     ) {
         Box(
-            modifier = Modifier
-                .fillMaxHeight()
-                .fillMaxWidth(0.85f)
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .windowInsetsPadding(WindowInsets.navigationBars)
-                .padding(vertical = 12.dp, horizontal = 12.dp)
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.CenterStart
         ) {
-            val settingsDrawerFill = if (isDark) {
-                Color(0xFF0F172A).copy(alpha = 0.85f)
-            } else {
-                Color(0xFFFFFFFF).copy(alpha = 0.85f)
-            }
-
-            LiquidGlassCard(
-                isDark = isDark,
-                tint = GlassTint.FROST,
-                shape = RoundedCornerShape(28.dp),
-                borderWidth = 1.8.dp,
-                customFill = settingsDrawerFill,
+            Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .testTag("settings_drawer_panel")
+                    .fillMaxHeight()
+                    .fillMaxWidth(0.85f)
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+                    .padding(vertical = 12.dp, horizontal = 12.dp)
             ) {
+                val settingsDrawerFill = if (isDark) {
+                    Color(0xFF0F172A).copy(alpha = 0.85f)
+                } else {
+                    Color(0xFFFFFFFF).copy(alpha = 0.85f)
+                }
+
+                LiquidGlassCard(
+                    isDark = isDark,
+                    tint = GlassTint.FROST,
+                    shape = RoundedCornerShape(28.dp),
+                    borderWidth = 1.8.dp,
+                    customFill = settingsDrawerFill,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(isArabic) {
+                            detectHorizontalDragGestures { _, dragAmount ->
+                                if (isArabic) {
+                                    if (dragAmount > 20f) {
+                                        onClose()
+                                    }
+                                } else {
+                                    if (dragAmount < -20f) {
+                                        onClose()
+                                    }
+                                }
+                            }
+                        }
+                        .testTag("settings_drawer_panel")
+                ) {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -442,6 +465,7 @@ fun SettingsDrawer(
             }
         }
     }
+}
 }
 
 @Composable

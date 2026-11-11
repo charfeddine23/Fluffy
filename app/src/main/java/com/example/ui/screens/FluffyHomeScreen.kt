@@ -38,7 +38,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -92,16 +94,33 @@ fun FluffyHomeScreen(
     }
 
     FrostedBackdrop(isDark = isDark) {
+        var dragStartX by remember { mutableFloatStateOf(0f) }
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectHorizontalDragGestures { change, dragAmount ->
-                        // Swipe from left edge (x < 280f and dragAmount > 20f)
-                        if (dragAmount > 20f && change.position.x < 350f) {
-                            viewModel.openSettingsDrawer()
+                .pointerInput(isArabic) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { offset ->
+                            dragStartX = offset.x
+                        },
+                        onHorizontalDrag = { change, dragAmount ->
+                            val screenWidth = size.width
+                            if (isArabic) {
+                                // In Arabic: swipe from right edge towards left
+                                val isRightEdge = dragStartX > (screenWidth - 380f) || change.position.x > (screenWidth - 380f)
+                                if (isRightEdge && dragAmount < -18f) {
+                                    viewModel.openSettingsDrawer()
+                                }
+                            } else {
+                                // In English: swipe from left edge towards right
+                                val isLeftEdge = dragStartX < 380f || change.position.x < 380f
+                                if (isLeftEdge && dragAmount > 18f) {
+                                    viewModel.openSettingsDrawer()
+                                }
+                            }
                         }
-                    }
+                    )
                 }
         ) {
             Column(
@@ -202,13 +221,14 @@ fun FluffyHomeScreen(
                 }
             }
 
-            // Floating Glass Bottom Bar Dock
+            // Floating Glass Bottom Bar & Expanding Action Sheet
             FluffyBottomBar(
                 isDark = isDark,
+                isArabic = isArabic,
                 onNewNote = { viewModel.openNewNote() },
                 onNewChecklist = { viewModel.openNewNote(startWithChecklist = true) },
                 onNewVoiceNote = { viewModel.showVoiceRecorder.value = true },
-                modifier = Modifier.align(Alignment.BottomCenter)
+                modifier = Modifier.fillMaxSize()
             )
 
             // Custom Frosted Glass Snackbar Host
