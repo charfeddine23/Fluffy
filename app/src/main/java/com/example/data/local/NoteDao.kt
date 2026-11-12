@@ -29,6 +29,9 @@ interface NoteDao {
     @Query("DELETE FROM notes WHERE id = :id")
     suspend fun deleteById(id: Long)
 
+    @Query("DELETE FROM notes WHERE title IN ('مرحباً بك في Fluffy ✨', 'قائمة مهام الأسبوع 🎯', 'خاطرة إبداعية: انعكاس الضوء 🌈', 'Liquid Glass Architecture 💎')")
+    suspend fun clearSampleNotes()
+
     @Query("""
         SELECT * FROM notes 
         WHERE isArchived = 0 

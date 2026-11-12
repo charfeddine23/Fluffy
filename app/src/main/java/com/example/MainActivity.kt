@@ -116,7 +116,19 @@ class MainActivity : FragmentActivity() {
                                                 audioDurationSec = audioDuration
                                             )
                                         },
-                                        onDelete = { viewModel.deleteCurrentNote() }
+                                        onDelete = { viewModel.deleteCurrentNote() },
+                                        onAutoSave = { title, content, category, colorPreset, isPinned, isFav, checklist, audioDuration ->
+                                            viewModel.autoSaveNote(
+                                                title = title,
+                                                content = content,
+                                                category = category,
+                                                colorPreset = colorPreset,
+                                                isPinned = isPinned,
+                                                isFavorite = isFav,
+                                                checklist = checklist,
+                                                audioDurationSec = audioDuration
+                                            )
+                                        }
                                     )
                                 } else {
                                     FluffyHomeScreen(

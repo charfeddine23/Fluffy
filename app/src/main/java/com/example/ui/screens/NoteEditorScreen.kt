@@ -91,7 +91,17 @@ fun NoteEditorScreen(
         checklist: List<ChecklistItem>,
         audioDurationSec: Int
     ) -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onAutoSave: ((
+        title: String,
+        content: String,
+        category: String,
+        colorPreset: String,
+        isPinned: Boolean,
+        isFavorite: Boolean,
+        checklist: List<ChecklistItem>,
+        audioDurationSec: Int
+    ) -> Unit)? = null
 ) {
     val context = LocalContext.current
 
@@ -109,6 +119,18 @@ fun NoteEditorScreen(
         mutableStateListOf<ChecklistItem>().apply {
             addAll(ChecklistItem.jsonToList(note.checklistJson))
         }
+    }
+
+    // Real-time automatic background save with 500ms debounce
+    androidx.compose.runtime.LaunchedEffect(
+        title, content, category, selectedTint.id,
+        isPinned, isFavorite, checklistItems.toList(), audioDurationSec
+    ) {
+        kotlinx.coroutines.delay(500)
+        onAutoSave?.invoke(
+            title, content, category, selectedTint.id,
+            isPinned, isFavorite, checklistItems.toList(), audioDurationSec
+        )
     }
 
     // Handle Android system back gesture to save or pop

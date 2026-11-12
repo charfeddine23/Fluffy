@@ -18,20 +18,12 @@ import kotlinx.coroutines.launch
 class FluffyViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: NoteRepository
-    init {
-        val db = FluffyDatabase.getDatabase(application)
-        repository = NoteRepository(db.noteDao())
-        viewModelScope.launch {
-            repository.populateInitialDataIfEmpty()
-        }
-    }
-
     private val prefs = application.getSharedPreferences("fluffy_prefs", android.content.Context.MODE_PRIVATE)
 
-    // App Preferences
-    val isDarkMode = MutableStateFlow(true)
-    val isArabic = MutableStateFlow(true)
-    val isGridView = MutableStateFlow(true)
+    // App Preferences (Persisted across restarts)
+    val isDarkMode = MutableStateFlow(prefs.getBoolean("is_dark_mode", true))
+    val isArabic = MutableStateFlow(prefs.getBoolean("is_arabic", true))
+    val isGridView = MutableStateFlow(prefs.getBoolean("is_grid_view", true))
 
     // Biometric Authentication & App Lock
     val isBiometricEnabled = MutableStateFlow(prefs.getBoolean("biometric_enabled", false))
@@ -42,7 +34,16 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
 
     // Filter and Search
     val searchQuery = MutableStateFlow("")
-    val selectedCategory = MutableStateFlow("ALL") // ALL, PINNED, FAVORITES, or specific tag
+    val selectedCategory = MutableStateFlow(prefs.getString("selected_category", "ALL") ?: "ALL")
+
+    init {
+        val db = FluffyDatabase.getDatabase(application)
+        repository = NoteRepository(db.noteDao())
+        viewModelScope.launch {
+            // Ensure any pre-existing sample notes are cleared and never seeded
+            repository.clearSampleNotesIfPresent()
+        }
+    }
 
     // Active Editor & Sheets
     val editingNote = MutableStateFlow<NoteEntity?>(null)
@@ -86,15 +87,21 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     fun toggleDarkMode() {
-        isDarkMode.value = !isDarkMode.value
+        val next = !isDarkMode.value
+        isDarkMode.value = next
+        prefs.edit().putBoolean("is_dark_mode", next).apply()
     }
 
     fun toggleLanguage() {
-        isArabic.value = !isArabic.value
+        val next = !isArabic.value
+        isArabic.value = next
+        prefs.edit().putBoolean("is_arabic", next).apply()
     }
 
     fun toggleViewMode() {
-        isGridView.value = !isGridView.value
+        val next = !isGridView.value
+        isGridView.value = next
+        prefs.edit().putBoolean("is_grid_view", next).apply()
     }
 
     fun setSearch(query: String) {
@@ -103,6 +110,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
 
     fun selectCategory(cat: String) {
         selectedCategory.value = cat
+        prefs.edit().putString("selected_category", cat).apply()
     }
 
     fun openNewNote(initialCategory: String = "أفكار", startWithChecklist: Boolean = false) {
@@ -138,6 +146,52 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         isCreatingNew.value = false
     }
 
+    /**
+     * Silent real-time autosave while editing:
+     * Saves changes directly to Room SQLite without closing the editor.
+     */
+    fun autoSaveNote(
+        title: String,
+        content: String,
+        category: String,
+        colorPreset: String,
+        isPinned: Boolean,
+        isFavorite: Boolean,
+        checklist: List<ChecklistItem>,
+        audioDurationSec: Int
+    ) {
+        val current = editingNote.value ?: return
+        val trimmedTitle = title.trim()
+        val trimmedContent = content.trim()
+        val activeChecklist = checklist.filter { it.text.isNotBlank() }
+
+        // Don't auto-save a completely blank note
+        if (trimmedTitle.isBlank() && trimmedContent.isBlank() && activeChecklist.isEmpty() && audioDurationSec == 0) {
+            return
+        }
+
+        val updatedNote = current.copy(
+            title = trimmedTitle,
+            content = trimmedContent,
+            category = category.ifBlank { if (isArabic.value) "عام" else "General" },
+            colorPreset = colorPreset,
+            isPinned = isPinned,
+            isFavorite = isFavorite,
+            checklistJson = ChecklistItem.listToJson(activeChecklist),
+            audioDurationSec = audioDurationSec,
+            updatedAt = System.currentTimeMillis()
+        )
+
+        viewModelScope.launch {
+            val id = repository.insertOrUpdate(updatedNote)
+            if (current.id == 0L && id > 0) {
+                editingNote.value = updatedNote.copy(id = id)
+            } else {
+                editingNote.value = updatedNote
+            }
+        }
+    }
+
     fun saveNote(
         title: String,
         content: String,
@@ -149,19 +203,23 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         audioDurationSec: Int
     ) {
         val current = editingNote.value ?: return
-        if (title.isBlank() && content.isBlank() && checklist.isEmpty() && audioDurationSec == 0) {
+        val trimmedTitle = title.trim()
+        val trimmedContent = content.trim()
+        val activeChecklist = checklist.filter { it.text.isNotBlank() }
+
+        if (trimmedTitle.isBlank() && trimmedContent.isBlank() && activeChecklist.isEmpty() && audioDurationSec == 0) {
             closeEditor()
             return
         }
 
         val updatedNote = current.copy(
-            title = title.trim(),
-            content = content.trim(),
+            title = trimmedTitle,
+            content = trimmedContent,
             category = category.ifBlank { if (isArabic.value) "عام" else "General" },
             colorPreset = colorPreset,
             isPinned = isPinned,
             isFavorite = isFavorite,
-            checklistJson = ChecklistItem.listToJson(checklist.filter { it.text.isNotBlank() }),
+            checklistJson = ChecklistItem.listToJson(activeChecklist),
             audioDurationSec = audioDurationSec,
             updatedAt = System.currentTimeMillis()
         )
