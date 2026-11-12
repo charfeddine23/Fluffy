@@ -26,8 +26,6 @@ import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.NoteAdd
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Snackbar
@@ -150,14 +148,27 @@ fun FluffyHomeScreen(
                     onSelectCategory = { viewModel.selectCategory(it) }
                 )
 
-                // Notes Content: Staggered Grid, List, or Empty State
+                // Notes Content: Staggered Grid, List, or clean empty space
                 if (notes.isEmpty()) {
-                    EmptyNotesState(
-                        isDark = isDark,
-                        isArabic = isArabic,
-                        isSearching = searchQuery.isNotBlank(),
-                        onCreateNote = { viewModel.openNewNote() }
-                    )
+                    if (searchQuery.isNotBlank()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(32.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (isArabic) "لا توجد نتائج مطابقة" else "No matching notes found",
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    color = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B),
+                                    textAlign = TextAlign.Center
+                                )
+                            )
+                        }
+                    } else {
+                        // Completely empty clean canvas with no placeholder, frame, or text
+                        Box(modifier = Modifier.fillMaxSize())
+                    }
                 } else {
                     if (isGridView) {
                         LazyVerticalStaggeredGrid(
@@ -297,105 +308,6 @@ fun FluffyHomeScreen(
                     )
                 }
             )
-        }
-    }
-}
-
-@Composable
-private fun EmptyNotesState(
-    isDark: Boolean,
-    isArabic: Boolean,
-    isSearching: Boolean,
-    onCreateNote: () -> Unit
-) {
-    val textColor = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
-    val metaColor = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        LiquidGlassCard(
-            isDark = isDark,
-            tint = GlassTint.FROST,
-            shape = RoundedCornerShape(32.dp),
-            borderWidth = 1.6.dp,
-            modifier = Modifier.fillMaxWidth(0.88f)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(32.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                // Sparkle Icon with animated frosted glow
-                Box(
-                    modifier = Modifier
-                        .size(72.dp)
-                        .clip(CircleShape)
-                        .background(
-                            if (isDark) Color(0x2238BDF8) else Color(0x180284C7)
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = if (isSearching) Icons.Default.AutoAwesome else Icons.Default.NoteAdd,
-                        contentDescription = null,
-                        tint = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7),
-                        modifier = Modifier.size(36.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(18.dp))
-
-                Text(
-                    text = if (isSearching) {
-                        if (isArabic) "لا توجد نتائج مطابقة" else "No matching notes found"
-                    } else {
-                        if (isArabic) "مساحتك الزجاجية فارغة ✨" else "Your glass canvas is empty ✨"
-                    },
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = textColor,
-                        textAlign = TextAlign.Center
-                    )
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                    text = if (isSearching) {
-                        if (isArabic) "جرّب البحث بكلمات أخرى أو اختر قسماً مختلفاً." else "Try searching with different terms or categories."
-                    } else {
-                        if (isArabic) "ابدأ بتدوين أول فكرة، قائمة مهام، أو تسجيل صوتي بتقنية Liquid Glass الفاخرة." else "Start writing your first idea, checklist, or voice memo in stunning liquid frosted glass."
-                    },
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        color = metaColor,
-                        textAlign = TextAlign.Center,
-                        lineHeight = 18.sp
-                    )
-                )
-
-                if (!isSearching) {
-                    Spacer(modifier = Modifier.height(20.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(if (isDark) Color(0xFF0284C7) else Color(0xFF38BDF8))
-                            .clickable { onCreateNote() }
-                            .padding(horizontal = 20.dp, vertical = 10.dp)
-                    ) {
-                        Text(
-                            text = if (isArabic) "إنشاء ملاحظة جديدة" else "Create First Note",
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp
-                        )
-                    }
-                }
-            }
         }
     }
 }
