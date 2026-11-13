@@ -296,11 +296,10 @@ fun UpdateAvailableDialog(
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        // Release Notes or Dynamic State Message
+                        // Dynamic State Content (progress bar, permission prompt, or error only — no cluttered release notes)
                         when (updateState) {
                             is UpdateUiState.Downloading -> {
+                                Spacer(modifier = Modifier.height(14.dp))
                                 val downloadedMb = updateState.downloadedBytes / (1024f * 1024f)
                                 val totalMb = (updateState.totalBytes.takeIf { it > 0L } ?: info.apkSizeBytes) / (1024f * 1024f)
                                 val percent = (animatedProgress * 100).toInt().coerceIn(0, 100)
@@ -369,18 +368,20 @@ fun UpdateAvailableDialog(
                             }
 
                             is UpdateUiState.NeedsInstallPermission -> {
+                                Spacer(modifier = Modifier.height(12.dp))
                                 FrostedInfoBox(
                                     isDark = isDark,
                                     tint = GlassTint.AMBER,
                                     text = if (isArabic)
-                                        "يرجى تفعيل خيار «السماح بتثبيت التطبيقات من هذا المصدر» لمتابعة التحديث مباشرة دون حذف النسخة الحالية."
+                                        "يرجى تفعيل خيار «السماح بتثبيت التطبيقات من هذا المصدر» لمتابعة التحديث مباشرة."
                                     else
-                                        "Please enable \"Allow from this source\" so Fluffy can install the update directly over your existing app.",
+                                        "Please enable \"Allow from this source\" to install the update directly.",
                                     textColor = metaColor
                                 )
                             }
 
                             is UpdateUiState.Error -> {
+                                Spacer(modifier = Modifier.height(12.dp))
                                 FrostedInfoBox(
                                     isDark = isDark,
                                     tint = GlassTint.ROSE,
@@ -389,23 +390,10 @@ fun UpdateAvailableDialog(
                                 )
                             }
 
-                            else -> {
-                                val notesDisplay = info.releaseNotes.ifBlank {
-                                    if (isArabic)
-                                        "يتضمن هذا الإصدار تحسينات في الأداء والاستقرار وواجهة الزجاج السائل، مع دعم التحديث المباشر دون فقدان الملاحظات."
-                                    else
-                                        "Includes performance improvements, visual polish, and direct in-place upgrade while keeping all your notes safe."
-                                }
-                                FrostedInfoBox(
-                                    isDark = isDark,
-                                    tint = GlassTint.FROST,
-                                    text = notesDisplay,
-                                    textColor = metaColor
-                                )
-                            }
+                            else -> Unit
                         }
 
-                        Spacer(modifier = Modifier.height(18.dp))
+                        Spacer(modifier = Modifier.height(20.dp))
 
                         // Signature Liquid Glass CTA Pill Button
                         val buttonColors = when (updateState) {
