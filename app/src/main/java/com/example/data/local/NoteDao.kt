@@ -14,11 +14,17 @@ interface NoteDao {
     @Query("SELECT * FROM notes WHERE isArchived = 0 ORDER BY isPinned DESC, updatedAt DESC")
     fun getAllNotes(): Flow<List<NoteEntity>>
 
+    @Query("SELECT * FROM notes ORDER BY isPinned DESC, updatedAt DESC")
+    suspend fun getAllNotesOnce(): List<NoteEntity>
+
     @Query("SELECT * FROM notes WHERE id = :id LIMIT 1")
     fun getNoteById(id: Long): Flow<NoteEntity?>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertNote(note: NoteEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertNoteIfAbsent(note: NoteEntity): Long
 
     @Update
     suspend fun updateNote(note: NoteEntity)

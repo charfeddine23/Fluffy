@@ -1,5 +1,9 @@
 package com.example.ui.screens
 
+import android.app.Activity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -55,9 +59,11 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import kotlin.math.abs
 import com.example.data.model.GlassTint
 import com.example.data.model.NoteEntity
+import com.example.drive.GoogleDriveBackupManager
 import com.example.ui.components.CategoryChips
 import com.example.ui.components.FluffyBottomBar
 import com.example.ui.components.FluffyTopBar
@@ -76,6 +82,7 @@ fun FluffyHomeScreen(
     onToggleBiometricAuth: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val isDark by viewModel.isDarkMode.collectAsState()
     val isArabic by viewModel.isArabic.collectAsState()
     val isGridView by viewModel.isGridView.collectAsState()
@@ -88,6 +95,36 @@ fun FluffyHomeScreen(
     val showVoiceRecorder by viewModel.showVoiceRecorder.collectAsState()
     val snackbarMsg by viewModel.snackbarMessage.collectAsState()
     val updateState by viewModel.updateState.collectAsState()
+    val driveSyncStatus by viewModel.driveSyncStatus.collectAsState()
+    val isAutoDriveBackupEnabled by viewModel.isAutoDriveBackupEnabled.collectAsState()
+    val lastDriveBackupAt by viewModel.lastDriveBackupAt.collectAsState()
+
+    val driveConsentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val token = GoogleDriveBackupManager.extractTokenFromConsentResult(context, result.data)
+            if (token != null) {
+                viewModel.onDriveConsentGranted(token)
+            } else {
+                viewModel.onDriveConsentCancelled()
+            }
+        } else {
+            viewModel.onDriveConsentCancelled()
+        }
+    }
+
+    val exportBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        uri?.let { viewModel.exportFullBackupToPhoneUri(it) }
+    }
+
+    val importBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let { viewModel.restoreFullBackupFromPhoneUri(it) }
+    }
 
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -348,7 +385,7 @@ fun FluffyHomeScreen(
                 }
             }
 
-            // Settings Drawer (Opened via left swipe or menu icon)
+            // Settings Drawer (Opened via left/right half-screen swipe or menu icon)
             SettingsDrawer(
                 isOpen = isSettingsDrawerOpen,
                 onClose = { viewModel.closeSettingsDrawer() },
@@ -365,7 +402,31 @@ fun FluffyHomeScreen(
                 hasPendingUpdate = updateState is UpdateUiState.Available ||
                     updateState is UpdateUiState.ReadyToInstall ||
                     updateState is UpdateUiState.NeedsInstallPermission,
-                onCheckForUpdates = { viewModel.checkForUpdates(isManual = true) }
+                onCheckForUpdates = { viewModel.checkForUpdates(isManual = true) },
+                driveSyncStatus = driveSyncStatus,
+                isAutoDriveBackupEnabled = isAutoDriveBackupEnabled,
+                lastDriveBackupAt = lastDriveBackupAt,
+                onDriveBackup = {
+                    viewModel.performManualDriveBackup { intentSender ->
+                        driveConsentLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
+                    }
+                },
+                onDriveRestore = {
+                    viewModel.performManualDriveRestore { intentSender ->
+                        driveConsentLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
+                    }
+                },
+                onToggleAutoDriveBackup = { enabled ->
+                    viewModel.setAutoDriveBackup24h(enabled) { intentSender ->
+                        driveConsentLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
+                    }
+                },
+                onExportLocalBackup = {
+                    exportBackupLauncher.launch("Fluffy_Backup_${System.currentTimeMillis()}.json")
+                },
+                onImportLocalBackup = {
+                    importBackupLauncher.launch(arrayOf("application/json", "*/*"))
+                }
             )
         }
 

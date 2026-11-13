@@ -66,6 +66,7 @@ class MainActivity : FragmentActivity() {
             val isAppLocked by viewModel.isAppLocked.collectAsState()
             val editingNote by viewModel.editingNote.collectAsState()
             val isVaultOpen by viewModel.isVaultOpen.collectAsState()
+            val vaultItems by viewModel.vaultItems.collectAsState()
             val updateState by viewModel.updateState.collectAsState()
             val showUpdateDialog by viewModel.showUpdateDialog.collectAsState()
 
@@ -160,8 +161,18 @@ class MainActivity : FragmentActivity() {
                                     when (screen) {
                                         FluffyScreenState.Vault -> {
                                             VaultScreen(
+                                                vaultItems = vaultItems,
                                                 isDark = isDark,
                                                 isArabic = isArabic,
+                                                onSaveLiteralText = { title, content ->
+                                                    viewModel.saveLiteralTextToVault(title, content)
+                                                },
+                                                onSaveFileUri = { uri ->
+                                                    viewModel.saveFileToVault(uri)
+                                                },
+                                                onExportItemToUri = { item, destUri ->
+                                                    viewModel.exportVaultItemToUri(item, destUri)
+                                                },
                                                 onBack = { viewModel.closeVault() }
                                             )
                                         }

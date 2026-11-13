@@ -36,14 +36,20 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Brightness4
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.ViewAgenda
@@ -56,6 +62,10 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
+import com.example.drive.DriveSyncStatus
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -87,6 +97,14 @@ fun SettingsDrawer(
     isCheckingUpdates: Boolean = false,
     hasPendingUpdate: Boolean = false,
     onCheckForUpdates: () -> Unit = {},
+    driveSyncStatus: DriveSyncStatus = DriveSyncStatus.Idle,
+    isAutoDriveBackupEnabled: Boolean = false,
+    lastDriveBackupAt: Long = 0L,
+    onDriveBackup: () -> Unit = {},
+    onDriveRestore: () -> Unit = {},
+    onToggleAutoDriveBackup: (Boolean) -> Unit = {},
+    onExportLocalBackup: () -> Unit = {},
+    onImportLocalBackup: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     if (isOpen) {
@@ -382,6 +400,244 @@ fun SettingsDrawer(
                         isDark = isDark,
                         onClick = onToggleViewMode
                     )
+
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    // SECTION 2B: Google Drive Backup, Restore & 24h Auto-Backup + Local Phone Storage
+                    DrawerSectionHeader(
+                        title = if (isArabic) "النسخ الاحتياطي و Google Drive" else "Google Drive & Phone Backup",
+                        color = Color(0xFF38BDF8)
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    val isDriveBusy = driveSyncStatus is DriveSyncStatus.BackingUp ||
+                        driveSyncStatus is DriveSyncStatus.Restoring
+
+                    LiquidGlassCard(
+                        isDark = isDark,
+                        tint = GlassTint.CYAN,
+                        shape = RoundedCornerShape(18.dp),
+                        borderWidth = 1.2.dp,
+                        customFill = if (isDark) Color(0xFF1E293B).copy(alpha = 0.85f) else Color(0xFFF1F5F9).copy(alpha = 0.85f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            // Manual Backup & Restore Buttons Row
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                // Backup button
+                                Row(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("drive_backup_button")
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(Color(0xFF0EA5E9).copy(alpha = 0.18f))
+                                        .clickable(enabled = !isDriveBusy, onClick = onDriveBackup)
+                                        .padding(horizontal = 10.dp, vertical = 11.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center
+                                ) {
+                                    if (driveSyncStatus is DriveSyncStatus.BackingUp) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(16.dp),
+                                            strokeWidth = 2.dp,
+                                            color = Color(0xFF38BDF8)
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Default.CloudUpload,
+                                            contentDescription = "Backup",
+                                            tint = Color(0xFF38BDF8),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = if (isArabic) "Backup نسخ" else "Backup",
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF38BDF8)
+                                    )
+                                }
+
+                                // Restore button
+                                Row(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("drive_restore_button")
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(Color(0xFF8B5CF6).copy(alpha = 0.18f))
+                                        .clickable(enabled = !isDriveBusy, onClick = onDriveRestore)
+                                        .padding(horizontal = 10.dp, vertical = 11.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center
+                                ) {
+                                    if (driveSyncStatus is DriveSyncStatus.Restoring) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(16.dp),
+                                            strokeWidth = 2.dp,
+                                            color = Color(0xFFC084FC)
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Default.CloudDownload,
+                                            contentDescription = "Restore",
+                                            tint = Color(0xFFC084FC),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = if (isArabic) "Restore استعادة" else "Restore",
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFC084FC)
+                                    )
+                                }
+                            }
+
+                            HorizontalDivider(color = metaColor.copy(alpha = 0.16f))
+
+                            // Automatic Backup Every 24 Hours Toggle
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Schedule,
+                                        contentDescription = null,
+                                        tint = Color(0xFF10B981),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text(
+                                            text = if (isArabic) "النسخ التلقائي كل 24 ساعة" else "Auto Backup (Every 24h)",
+                                            fontSize = 12.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = textColor
+                                        )
+                                        val sub = if (lastDriveBackupAt > 0L) {
+                                            val formatted = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
+                                                .format(Date(lastDriveBackupAt))
+                                            if (isArabic) "آخر نسخ: $formatted" else "Last backup: $formatted"
+                                        } else {
+                                            if (isArabic) "يحفظ الإعدادات والملاحظات و Vault" else "Backs up Settings, Notes & Vault"
+                                        }
+                                        Text(
+                                            text = sub,
+                                            fontSize = 10.5.sp,
+                                            color = metaColor
+                                        )
+                                    }
+                                }
+
+                                Switch(
+                                    checked = isAutoDriveBackupEnabled,
+                                    onCheckedChange = onToggleAutoDriveBackup,
+                                    modifier = Modifier.testTag("auto_backup_24h_switch"),
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color.White,
+                                        checkedTrackColor = Color(0xFF10B981)
+                                    )
+                                )
+                            }
+
+                            // Status feedback message (if any)
+                            when (driveSyncStatus) {
+                                is DriveSyncStatus.Success -> {
+                                    Text(
+                                        text = if (isArabic) driveSyncStatus.messageAr else driveSyncStatus.messageEn,
+                                        fontSize = 11.sp,
+                                        color = Color(0xFF10B981),
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                                is DriveSyncStatus.Error -> {
+                                    Text(
+                                        text = if (isArabic) driveSyncStatus.messageAr else driveSyncStatus.messageEn,
+                                        fontSize = 11.sp,
+                                        color = Color(0xFFF43F5E),
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                                else -> Unit
+                            }
+
+                            HorizontalDivider(color = metaColor.copy(alpha = 0.16f))
+
+                            // Literal Phone Storage Export / Import Backup
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("local_backup_export_button")
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(Color(0xFF10B981).copy(alpha = 0.14f))
+                                        .clickable(onClick = onExportLocalBackup)
+                                        .padding(horizontal = 8.dp, vertical = 9.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Save,
+                                        contentDescription = null,
+                                        tint = Color(0xFF10B981),
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(5.dp))
+                                    Text(
+                                        text = if (isArabic) "حفظ بالهاتف" else "Save Phone",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF10B981)
+                                    )
+                                }
+
+                                Row(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("local_backup_import_button")
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(Color(0xFFF59E0B).copy(alpha = 0.14f))
+                                        .clickable(onClick = onImportLocalBackup)
+                                        .padding(horizontal = 8.dp, vertical = 9.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.FolderOpen,
+                                        contentDescription = null,
+                                        tint = Color(0xFFF59E0B),
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(5.dp))
+                                    Text(
+                                        text = if (isArabic) "استعادة من الهاتف" else "Load Phone",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFF59E0B)
+                                    )
+                                }
+                            }
+                        }
+                    }
 
                     Spacer(modifier = Modifier.height(20.dp))
 
