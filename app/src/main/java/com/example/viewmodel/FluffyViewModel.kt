@@ -39,9 +39,10 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     val searchQuery = MutableStateFlow("")
     val selectedCategory = MutableStateFlow(prefs.getString("selected_category", "ALL") ?: "ALL")
 
-    // Active Editor & Sheets
+    // Active Editor, Vault & Sheets
     val editingNote = MutableStateFlow<NoteEntity?>(null)
     val isCreatingNew = MutableStateFlow(false)
+    val isVaultOpen = MutableStateFlow(false)
     val showStatsSheet = MutableStateFlow(false)
     val showVoiceRecorder = MutableStateFlow(false)
     val snackbarMessage = MutableStateFlow<String?>(null)
@@ -308,6 +309,15 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
 
     fun closeSettingsDrawer() {
         isSettingsDrawerOpen.value = false
+    }
+
+    fun openVault() {
+        isSettingsDrawerOpen.value = false
+        isVaultOpen.value = true
+    }
+
+    fun closeVault() {
+        isVaultOpen.value = false
     }
 
     fun showSnackbar(message: String) {

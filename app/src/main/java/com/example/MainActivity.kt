@@ -7,7 +7,9 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,13 +34,21 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.auth.BiometricAuthManager
 import com.example.auth.BiometricAvailability
+import com.example.data.model.NoteEntity
 import com.example.ui.components.UpdateAvailableDialog
 import com.example.ui.screens.BiometricLockScreen
 import com.example.ui.screens.FluffyHomeScreen
 import com.example.ui.screens.NoteEditorScreen
+import com.example.ui.screens.VaultScreen
 import com.example.ui.theme.FluffyTheme
 import com.example.update.AppUpdateManager
 import com.example.viewmodel.FluffyViewModel
+
+private sealed interface FluffyScreenState {
+    data object Home : FluffyScreenState
+    data class Editor(val note: NoteEntity) : FluffyScreenState
+    data object Vault : FluffyScreenState
+}
 
 class MainActivity : FragmentActivity() {
 
@@ -55,6 +65,7 @@ class MainActivity : FragmentActivity() {
             val isArabic by viewModel.isArabic.collectAsState()
             val isAppLocked by viewModel.isAppLocked.collectAsState()
             val editingNote by viewModel.editingNote.collectAsState()
+            val isVaultOpen by viewModel.isVaultOpen.collectAsState()
             val updateState by viewModel.updateState.collectAsState()
             val showUpdateDialog by viewModel.showUpdateDialog.collectAsState()
 
@@ -108,99 +119,133 @@ class MainActivity : FragmentActivity() {
                                 errorMessage = authErrorMessage
                             )
                         } else {
+                            val activeScreen = when {
+                                isVaultOpen -> FluffyScreenState.Vault
+                                editingNote != null -> FluffyScreenState.Editor(editingNote!!)
+                                else -> FluffyScreenState.Home
+                            }
+
                             Box(modifier = Modifier.fillMaxSize()) {
                                 AnimatedContent(
-                                    targetState = editingNote,
+                                    targetState = activeScreen,
+                                    contentKey = { screen ->
+                                        when (screen) {
+                                            FluffyScreenState.Home -> "home"
+                                            FluffyScreenState.Vault -> "vault"
+                                            is FluffyScreenState.Editor -> "editor"
+                                        }
+                                    },
                                     transitionSpec = {
-                                        if (targetState != null) {
-                                            (slideInHorizontally { width -> if (isArabic) -width else width } + fadeIn())
-                                                .togetherWith(slideOutHorizontally { width -> if (isArabic) width else -width } + fadeOut())
-                                        } else {
-                                            (slideInHorizontally { width -> if (isArabic) width else -width } + fadeIn())
-                                                .togetherWith(slideOutHorizontally { width -> if (isArabic) -width else width } + fadeOut())
+                                        when {
+                                            targetState is FluffyScreenState.Vault -> {
+                                                (slideInVertically { -it / 2 } + fadeIn())
+                                                    .togetherWith(fadeOut())
+                                            }
+                                            initialState is FluffyScreenState.Vault -> {
+                                                fadeIn()
+                                                    .togetherWith(slideOutVertically { -it / 2 } + fadeOut())
+                                            }
+                                            targetState is FluffyScreenState.Editor -> {
+                                                (slideInHorizontally { width -> if (isArabic) -width else width } + fadeIn())
+                                                    .togetherWith(slideOutHorizontally { width -> if (isArabic) width else -width } + fadeOut())
+                                            }
+                                            else -> {
+                                                (slideInHorizontally { width -> if (isArabic) width else -width } + fadeIn())
+                                                    .togetherWith(slideOutHorizontally { width -> if (isArabic) -width else width } + fadeOut())
+                                            }
                                         }
                                     },
                                     label = "screen_transition"
-                                ) { activeNote ->
-                                    if (activeNote != null) {
-                                        NoteEditorScreen(
-                                            note = activeNote,
-                                            isDark = isDark,
-                                            isArabic = isArabic,
-                                            onBack = { viewModel.closeEditor() },
-                                            onSave = { title, content, category, colorPreset, isPinned, isFav, checklist, audioDuration ->
-                                                viewModel.saveNote(
-                                                    title = title,
-                                                    content = content,
-                                                    category = category,
-                                                    colorPreset = colorPreset,
-                                                    isPinned = isPinned,
-                                                    isFavorite = isFav,
-                                                    checklist = checklist,
-                                                    audioDurationSec = audioDuration
-                                                )
-                                            },
-                                            onDelete = { viewModel.deleteCurrentNote() },
-                                            onAutoSave = { title, content, category, colorPreset, isPinned, isFav, checklist, audioDuration ->
-                                                viewModel.autoSaveNote(
-                                                    title = title,
-                                                    content = content,
-                                                    category = category,
-                                                    colorPreset = colorPreset,
-                                                    isPinned = isPinned,
-                                                    isFavorite = isFav,
-                                                    checklist = checklist,
-                                                    audioDurationSec = audioDuration
-                                                )
-                                            }
-                                        )
-                                    } else {
-                                        FluffyHomeScreen(
-                                            viewModel = viewModel,
-                                            onToggleBiometricAuth = { enable ->
-                                                if (enable) {
-                                                    // Verify identity first before enabling
-                                                    biometricAuthManager.promptBiometricAuth(
-                                                        title = if (isArabic) "تفعيل قفل البصمة" else "Enable Biometric Lock",
-                                                        subtitle = if (isArabic) "يرجى تأكيد هويتك لتفعيل القفل" else "Please confirm your identity to enable lock",
-                                                        onSuccess = {
-                                                            viewModel.setBiometricEnabled(true)
-                                                            viewModel.showSnackbar(
-                                                                if (isArabic) "تم تفعيل قفل البصمة بنجاح 🔒" else "Biometric lock enabled 🔒"
-                                                            )
-                                                        },
-                                                        onError = {
-                                                            viewModel.showSnackbar(
-                                                                if (isArabic) "تعذر تفعيل البصمة: $it" else "Authentication cancelled: $it"
-                                                            )
-                                                        }
+                                ) { screen ->
+                                    when (screen) {
+                                        FluffyScreenState.Vault -> {
+                                            VaultScreen(
+                                                isDark = isDark,
+                                                isArabic = isArabic,
+                                                onBack = { viewModel.closeVault() }
+                                            )
+                                        }
+                                        is FluffyScreenState.Editor -> {
+                                            NoteEditorScreen(
+                                                note = screen.note,
+                                                isDark = isDark,
+                                                isArabic = isArabic,
+                                                onBack = { viewModel.closeEditor() },
+                                                onSave = { title, content, category, colorPreset, isPinned, isFav, checklist, audioDuration ->
+                                                    viewModel.saveNote(
+                                                        title = title,
+                                                        content = content,
+                                                        category = category,
+                                                        colorPreset = colorPreset,
+                                                        isPinned = isPinned,
+                                                        isFavorite = isFav,
+                                                        checklist = checklist,
+                                                        audioDurationSec = audioDuration
                                                     )
-                                                } else {
-                                                    // Confirm before disabling
-                                                    biometricAuthManager.promptBiometricAuth(
-                                                        title = if (isArabic) "إلغاء قفل البصمة" else "Disable Biometric Lock",
-                                                        subtitle = if (isArabic) "يرجى تأكيد هويتك لإلغاء القفل" else "Confirm your identity to disable lock",
-                                                        onSuccess = {
-                                                            viewModel.setBiometricEnabled(false)
-                                                            viewModel.showSnackbar(
-                                                                if (isArabic) "تم إلغاء قفل البصمة" else "Biometric lock disabled"
-                                                            )
-                                                        },
-                                                        onError = {
-                                                            viewModel.showSnackbar(
-                                                                if (isArabic) "تعذر إلغاء القفل: $it" else "Authentication cancelled: $it"
-                                                            )
-                                                        }
+                                                },
+                                                onDelete = { viewModel.deleteCurrentNote() },
+                                                onAutoSave = { title, content, category, colorPreset, isPinned, isFav, checklist, audioDuration ->
+                                                    viewModel.autoSaveNote(
+                                                        title = title,
+                                                        content = content,
+                                                        category = category,
+                                                        colorPreset = colorPreset,
+                                                        isPinned = isPinned,
+                                                        isFavorite = isFav,
+                                                        checklist = checklist,
+                                                        audioDurationSec = audioDuration
                                                     )
                                                 }
-                                            }
-                                        )
+                                            )
+                                        }
+                                        FluffyScreenState.Home -> {
+                                            FluffyHomeScreen(
+                                                viewModel = viewModel,
+                                                onToggleBiometricAuth = { enable ->
+                                                    if (enable) {
+                                                        // Verify identity first before enabling
+                                                        biometricAuthManager.promptBiometricAuth(
+                                                            title = if (isArabic) "تفعيل قفل البصمة" else "Enable Biometric Lock",
+                                                            subtitle = if (isArabic) "يرجى تأكيد هويتك لتفعيل القفل" else "Please confirm your identity to enable lock",
+                                                            onSuccess = {
+                                                                viewModel.setBiometricEnabled(true)
+                                                                viewModel.showSnackbar(
+                                                                    if (isArabic) "تم تفعيل قفل البصمة بنجاح 🔒" else "Biometric lock enabled 🔒"
+                                                                )
+                                                            },
+                                                            onError = {
+                                                                viewModel.showSnackbar(
+                                                                    if (isArabic) "تعذر تفعيل البصمة: $it" else "Authentication cancelled: $it"
+                                                                )
+                                                            }
+                                                        )
+                                                    } else {
+                                                        // Confirm before disabling
+                                                        biometricAuthManager.promptBiometricAuth(
+                                                            title = if (isArabic) "إلغاء قفل البصمة" else "Disable Biometric Lock",
+                                                            subtitle = if (isArabic) "يرجى تأكيد هويتك لإلغاء القفل" else "Confirm your identity to disable lock",
+                                                            onSuccess = {
+                                                                viewModel.setBiometricEnabled(false)
+                                                                viewModel.showSnackbar(
+                                                                    if (isArabic) "تم إلغاء قفل البصمة" else "Biometric lock disabled"
+                                                                )
+                                                            },
+                                                            onError = {
+                                                                viewModel.showSnackbar(
+                                                                    if (isArabic) "تعذر إلغاء القفل: $it" else "Authentication cancelled: $it"
+                                                                )
+                                                            }
+                                                        )
+                                                    }
+                                                }
+                                            )
+                                        }
                                     }
                                 }
 
                                 // Floating Liquid Glass OTA Update Dialog (Compact, Dynamic, Theme-Matched)
                                 UpdateAvailableDialog(
-                                    visible = showUpdateDialog && !isAppLocked,
+                                    visible = showUpdateDialog && !isAppLocked && !isVaultOpen,
                                     updateState = updateState,
                                     isDark = isDark,
                                     isArabic = isArabic,

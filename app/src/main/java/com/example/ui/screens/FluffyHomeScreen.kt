@@ -37,6 +37,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -49,8 +50,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.pointerInput
+import kotlin.math.abs
 import com.example.data.model.GlassTint
 import com.example.data.model.NoteEntity
 import com.example.ui.components.CategoryChips
@@ -95,32 +100,106 @@ fun FluffyHomeScreen(
 
     FrostedBackdrop(isDark = isDark) {
         var dragStartX by remember { mutableFloatStateOf(0f) }
+        var totalDragX by remember { mutableFloatStateOf(0f) }
+        var drawerTriggered by remember { mutableStateOf(false) }
 
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                // Settings drawer swipe gesture: reaches all the way from the edge up to the midpoint of the screen
                 .pointerInput(isArabic) {
                     detectHorizontalDragGestures(
                         onDragStart = { offset ->
                             dragStartX = offset.x
+                            totalDragX = 0f
+                            drawerTriggered = false
                         },
-                        onHorizontalDrag = { change, dragAmount ->
-                            val screenWidth = size.width
-                            if (isArabic) {
-                                // In Arabic: swipe from right edge towards left
-                                val isRightEdge = dragStartX > (screenWidth - 380f) || change.position.x > (screenWidth - 380f)
-                                if (isRightEdge && dragAmount < -18f) {
-                                    viewModel.openSettingsDrawer()
-                                }
-                            } else {
-                                // In English: swipe from left edge towards right
-                                val isLeftEdge = dragStartX < 380f || change.position.x < 380f
-                                if (isLeftEdge && dragAmount > 18f) {
-                                    viewModel.openSettingsDrawer()
+                        onHorizontalDrag = { _, dragAmount ->
+                            totalDragX += dragAmount
+                            if (!drawerTriggered) {
+                                val halfWidth = size.width / 2f
+                                if (isArabic) {
+                                    // In Arabic: right half (from right edge up to center of screen) swiping left
+                                    if (dragStartX >= halfWidth && totalDragX < -24f) {
+                                        drawerTriggered = true
+                                        viewModel.openSettingsDrawer()
+                                    }
+                                } else {
+                                    // In English: left half (from left edge up to center of screen) swiping right
+                                    if (dragStartX <= halfWidth && totalDragX > 24f) {
+                                        drawerTriggered = true
+                                        viewModel.openSettingsDrawer()
+                                    }
                                 }
                             }
                         }
                     )
+                }
+                // Two-finger downward swipe in the middle of the screen opens Vault
+                .pointerInput(isSettingsDrawerOpen, showStats, showVoiceRecorder) {
+                    if (isSettingsDrawerOpen || showStats || showVoiceRecorder) return@pointerInput
+                    val triggerDistancePx = 36.dp.toPx()
+                    awaitEachGesture {
+                        var twoFingerStartedInCenter = false
+                        var startX1 = 0f
+                        var startY1 = 0f
+                        var startX2 = 0f
+                        var startY2 = 0f
+                        var id1 = PointerId(-1L)
+                        var id2 = PointerId(-1L)
+                        var triggered = false
+
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val pressed = event.changes.filter { it.pressed }
+                            if (pressed.isEmpty()) break
+
+                            if (!twoFingerStartedInCenter && pressed.size == 2) {
+                                val p1 = pressed[0]
+                                val p2 = pressed[1]
+                                val avgX = (p1.position.x + p2.position.x) / 2f
+                                val avgY = (p1.position.y + p2.position.y) / 2f
+                                val width = size.width.toFloat()
+                                val height = size.height.toFloat()
+
+                                val inCenterX = avgX in (width * 0.15f)..(width * 0.85f)
+                                val inCenterY = avgY in (height * 0.15f)..(height * 0.85f)
+                                if (inCenterX && inCenterY) {
+                                    twoFingerStartedInCenter = true
+                                    id1 = p1.id
+                                    id2 = p2.id
+                                    startX1 = p1.position.x
+                                    startY1 = p1.position.y
+                                    startX2 = p2.position.x
+                                    startY2 = p2.position.y
+                                }
+                            } else if (twoFingerStartedInCenter && !triggered) {
+                                val c1 = event.changes.firstOrNull { it.id == id1 }
+                                val c2 = event.changes.firstOrNull { it.id == id2 }
+                                if (c1 == null || c2 == null || !c1.pressed || !c2.pressed || pressed.size != 2) {
+                                    twoFingerStartedInCenter = false
+                                } else {
+                                    val dy1 = c1.position.y - startY1
+                                    val dy2 = c2.position.y - startY2
+                                    val dx1 = abs(c1.position.x - startX1)
+                                    val dx2 = abs(c2.position.x - startX2)
+
+                                    if (dy1 > 10f && dy2 > 10f) {
+                                        c1.consume()
+                                        c2.consume()
+                                    }
+                                    if (dy1 >= triggerDistancePx && dy2 >= triggerDistancePx &&
+                                        dx1 < dy1 * 1.2f && dx2 < dy2 * 1.2f
+                                    ) {
+                                        triggered = true
+                                        viewModel.openVault()
+                                    }
+                                }
+                            } else if (triggered) {
+                                event.changes.forEach { it.consume() }
+                            }
+                        }
+                    }
                 }
         ) {
             Column(
