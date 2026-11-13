@@ -5,6 +5,8 @@ import android.util.Base64
 import android.util.Log
 import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.example.data.model.NoteEntity
 import com.example.data.model.VaultItemEntity
 import com.example.data.storage.FluffySettingsSnapshot
@@ -173,6 +175,13 @@ object FirebaseSyncRepository {
     suspend fun signOut(context: Context) {
         runCatching {
             getAuthOrNull(context)?.signOut()
+            val webClientId = getWebClientId(context)
+            val gsoBuilder = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                .requestEmail()
+            if (webClientId.isNotBlank()) {
+                gsoBuilder.requestIdToken(webClientId)
+            }
+            GoogleSignIn.getClient(context, gsoBuilder.build()).signOut().await()
             CredentialManager.create(context).clearCredentialState(ClearCredentialStateRequest())
         }
     }

@@ -3,6 +3,8 @@ package com.example.ui.components
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -47,7 +49,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,21 +67,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.credentials.CredentialManager
-import androidx.credentials.CustomCredential
-import androidx.credentials.GetCredentialRequest
-import androidx.credentials.exceptions.GetCredentialCancellationException
-import androidx.credentials.exceptions.GetCredentialException
-import androidx.credentials.exceptions.NoCredentialException
 import com.example.data.model.GlassTint
 import com.example.data.repository.CloudSyncStatus
 import com.example.data.repository.FirebaseSyncRepository
 import com.example.data.repository.FirebaseUserInfo
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.glass.liquidGlass
-import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
-import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
-import kotlinx.coroutines.launch
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
+import com.google.android.gms.common.api.CommonStatusCodes
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -108,7 +104,6 @@ fun FirebaseAuthDialog(
     if (!visible) return
 
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
 
     var isSignUpMode by remember { mutableStateOf(false) }
     var email by remember { mutableStateOf("") }
@@ -117,6 +112,51 @@ fun FirebaseAuthDialog(
     var isGoogleLoading by remember { mutableStateOf(false) }
     var isEmailLoading by remember { mutableStateOf(false) }
     var localError by remember { mutableStateOf<String?>(null) }
+
+    val googleSignInLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        isGoogleLoading = false
+        val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+        try {
+            val account = task.getResult(ApiException::class.java)
+            val idToken = account.idToken
+            if (!idToken.isNullOrBlank()) {
+                onGoogleIdToken(idToken)
+            } else {
+                localError = if (isArabic) {
+                    "تعذر استلام رمز ID Token. تأكد من default_web_client_id في google-services.json"
+                } else {
+                    "Failed to retrieve ID Token. Verify default_web_client_id in google-services.json"
+                }
+            }
+        } catch (e: ApiException) {
+            when (e.statusCode) {
+                CommonStatusCodes.CANCELED, 12501 -> {
+                    // User closed the picker cleanly
+                }
+                CommonStatusCodes.DEVELOPER_ERROR -> {
+                    localError = if (isArabic) {
+                        "خطأ إعدادات (10): أضف بصمة SHA-1 وفعّل Google Sign-In في Firebase Console ثم حدّث google-services.json"
+                    } else {
+                        "Configuration error (10): Add SHA-1 & enable Google Sign-In in Firebase Console, then refresh google-services.json"
+                    }
+                }
+                CommonStatusCodes.NETWORK_ERROR -> {
+                    localError = if (isArabic) "تحقق من اتصال الإنترنت" else "Network error during sign-in"
+                }
+                else -> {
+                    localError = if (isArabic) {
+                        "تعذر الدخول بجوجل (رمز ${e.statusCode}): ${e.localizedMessage ?: ""}"
+                    } else {
+                        "Google Sign-In failed (${e.statusCode}): ${e.localizedMessage ?: ""}"
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            localError = e.localizedMessage ?: "Google Sign-In failed"
+        }
+    }
 
     androidx.compose.runtime.LaunchedEffect(currentUser, visible) {
         isGoogleLoading = false
@@ -394,44 +434,14 @@ fun FirebaseAuthDialog(
                                     }
 
                                     isGoogleLoading = true
-                                    scope.launch {
-                                        try {
-                                            val credentialManager = CredentialManager.create(activity)
-                                            val googleOption = GetSignInWithGoogleOption.Builder(webClientId).build()
-                                            val request = GetCredentialRequest.Builder()
-                                                .addCredentialOption(googleOption)
-                                                .build()
-                                            val response = credentialManager.getCredential(
-                                                request = request,
-                                                context = activity
-                                            )
-                                            val credential = response.credential
-                                            if (credential is CustomCredential &&
-                                                credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
-                                            ) {
-                                                val googleCred = GoogleIdTokenCredential.createFrom(credential.data)
-                                                isGoogleLoading = false
-                                                onGoogleIdToken(googleCred.idToken)
-                                            } else {
-                                                isGoogleLoading = false
-                                                localError = if (isArabic) "نوع الاعتماد غير مدعوم" else "Unexpected credential type"
-                                            }
-                                        } catch (_: GetCredentialCancellationException) {
-                                            isGoogleLoading = false
-                                        } catch (_: NoCredentialException) {
-                                            isGoogleLoading = false
-                                            localError = if (isArabic) {
-                                                "لا يوجد حساب Google مسجّل على الجهاز أو أضف SHA-1 في Firebase Console"
-                                            } else {
-                                                "No Google account available or SHA-1 missing in Firebase Console"
-                                            }
-                                        } catch (e: GetCredentialException) {
-                                            isGoogleLoading = false
-                                            localError = e.localizedMessage ?: "Google Sign-In failed"
-                                        } catch (e: Exception) {
-                                            isGoogleLoading = false
-                                            localError = e.localizedMessage ?: "Google Sign-In failed"
-                                        }
+                                    val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                                        .requestIdToken(webClientId)
+                                        .requestEmail()
+                                        .build()
+                                    val googleSignInClient = GoogleSignIn.getClient(activity, gso)
+                                    // Sign out first to avoid a stuck or auto-cancelled session
+                                    googleSignInClient.signOut().addOnCompleteListener {
+                                        googleSignInLauncher.launch(googleSignInClient.signInIntent)
                                     }
                                 },
                             contentAlignment = Alignment.Center

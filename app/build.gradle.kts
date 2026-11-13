@@ -136,7 +136,8 @@ dependencies {
   implementation(libs.firebase.firestore)
   implementation(libs.firebase.auth)
 
-  // Identity & Credential Manager (Google Sign-In with Firebase Auth)
+  // Identity & Google Sign-In with Firebase Auth
+  implementation(libs.play.services.auth)
   implementation(libs.androidx.credentials)
   implementation(libs.androidx.credentials.play.services)
   implementation(libs.googleid)
