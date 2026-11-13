@@ -20,6 +20,9 @@ interface NoteDao {
     @Query("SELECT * FROM notes WHERE id = :id LIMIT 1")
     fun getNoteById(id: Long): Flow<NoteEntity?>
 
+    @Query("SELECT * FROM notes WHERE syncId = :syncId LIMIT 1")
+    suspend fun getNoteBySyncId(syncId: String): NoteEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertNote(note: NoteEntity): Long
 
@@ -34,6 +37,9 @@ interface NoteDao {
 
     @Query("DELETE FROM notes WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM notes WHERE syncId = :syncId")
+    suspend fun deleteBySyncId(syncId: String)
 
     @Query("DELETE FROM notes WHERE title IN ('مرحباً بك في Fluffy ✨', 'قائمة مهام الأسبوع 🎯', 'خاطرة إبداعية: انعكاس الضوء 🌈', 'Liquid Glass Architecture 💎')")
     suspend fun clearSampleNotes()

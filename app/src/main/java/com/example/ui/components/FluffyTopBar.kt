@@ -23,13 +23,14 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -65,6 +66,8 @@ fun FluffyTopBar(
     onToggleViewMode: () -> Unit,
     onOpenStats: () -> Unit,
     onOpenSettings: () -> Unit,
+    isCloudSignedIn: Boolean = false,
+    onOpenCloudAuth: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val focusManager = LocalFocusManager.current
@@ -228,25 +231,47 @@ fun FluffyTopBar(
                     )
                 }
 
-                AnimatedVisibility(
-                    visible = searchQuery.isNotEmpty(),
-                    enter = fadeIn(),
-                    exit = fadeOut()
-                ) {
+                if (searchQuery.isEmpty()) {
                     Box(
                         modifier = Modifier
-                            .size(24.dp)
+                            .size(34.dp)
+                            .testTag("topbar_cloud_auth_button")
                             .clip(CircleShape)
-                            .background(if (isDark) Color(0x33FFFFFF) else Color(0x22000000))
-                            .clickable { onSearchChange("") },
+                            .background(
+                                if (isCloudSignedIn) Color(0xFF10B981).copy(alpha = 0.16f)
+                                else Color(0xFF38BDF8).copy(alpha = 0.14f)
+                            )
+                            .clickable(onClick = onOpenCloudAuth),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Clear",
-                            tint = textColor,
-                            modifier = Modifier.size(14.dp)
+                            imageVector = if (isCloudSignedIn) Icons.Default.CloudDone else Icons.Default.CloudQueue,
+                            contentDescription = if (isArabic) "الحساب السحابي والمزامنة" else "Cloud Account & Sync",
+                            tint = if (isCloudSignedIn) Color(0xFF10B981) else Color(0xFF38BDF8),
+                            modifier = Modifier.size(18.dp)
                         )
+                    }
+                } else {
+                    AnimatedVisibility(
+                        visible = searchQuery.isNotEmpty(),
+                        enter = fadeIn(),
+                        exit = fadeOut()
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(if (isDark) Color(0x33FFFFFF) else Color(0x22000000))
+                                .clickable { onSearchChange("") },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Clear",
+                                tint = textColor,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
                     }
                 }
             }

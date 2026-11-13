@@ -1,7 +1,6 @@
 package com.example.viewmodel
 
 import android.app.Application
-import android.content.IntentSender
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -10,30 +9,26 @@ import com.example.data.model.ChecklistItem
 import com.example.data.model.GlassTint
 import com.example.data.model.NoteEntity
 import com.example.data.model.VaultItemEntity
+import com.example.data.repository.CloudSyncStatus
+import com.example.data.repository.FirebaseSyncRepository
+import com.example.data.repository.FirebaseUserInfo
 import com.example.data.repository.NoteRepository
 import com.example.data.storage.FluffySettingsSnapshot
 import com.example.data.storage.LocalDeviceStorageManager
-import com.example.drive.DriveAuthOutcome
-import com.example.drive.DriveAutoBackupWorker
-import com.example.drive.DriveSyncStatus
-import com.example.drive.GoogleDriveBackupManager
 import com.example.update.AppUpdateManager
 import com.example.update.ReleaseUpdateInfo
 import com.example.update.UpdateUiState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
-enum class PendingDriveAction {
-    BACKUP,
-    RESTORE,
-    AUTHORIZE_ONLY
-}
+import java.util.UUID
 
 class FluffyViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -42,7 +37,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     private val vaultDao = db.vaultDao()
     private val prefs = application.getSharedPreferences("fluffy_prefs", android.content.Context.MODE_PRIVATE)
 
-    // App Preferences (Persisted across restarts & literal phone storage)
+    // App Preferences (Persisted across restarts, literal phone storage & Cloud Firestore)
     val isDarkMode = MutableStateFlow(prefs.getBoolean("is_dark_mode", true))
     val isArabic = MutableStateFlow(prefs.getBoolean("is_arabic", true))
     val isGridView = MutableStateFlow(prefs.getBoolean("is_grid_view", true))
@@ -64,21 +59,21 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     val isVaultOpen = MutableStateFlow(false)
     val showStatsSheet = MutableStateFlow(false)
     val showVoiceRecorder = MutableStateFlow(false)
+    val showAuthDialog = MutableStateFlow(false)
     val snackbarMessage = MutableStateFlow<String?>(null)
 
     // In-App OTA Update State
     val updateState = MutableStateFlow<UpdateUiState>(UpdateUiState.Idle)
     val showUpdateDialog = MutableStateFlow(false)
 
-    // Google Drive Backup & 24h Auto-Backup State
-    val driveSyncStatus = MutableStateFlow<DriveSyncStatus>(DriveSyncStatus.Idle)
-    val isAutoDriveBackupEnabled = MutableStateFlow(
-        prefs.getBoolean(DriveAutoBackupWorker.KEY_AUTO_BACKUP_24H, false)
+    // Firebase Auth & Real-Time Cloud Firestore Sync State
+    val currentUser = MutableStateFlow<FirebaseUserInfo?>(
+        FirebaseSyncRepository.currentUser(application)
     )
-    val lastDriveBackupAt = MutableStateFlow(
-        prefs.getLong(DriveAutoBackupWorker.KEY_LAST_DRIVE_BACKUP_AT, 0L)
-    )
-    private var pendingDriveAction: PendingDriveAction? = null
+    val cloudSyncStatus = MutableStateFlow<CloudSyncStatus>(CloudSyncStatus.Disconnected)
+
+    private var cloudSyncJob: Job? = null
+    private var lastAppliedRemoteSettingsAt = prefs.getLong("last_remote_settings_at", 0L)
 
     val vaultItems: StateFlow<List<VaultItemEntity>> = vaultDao.getAllVaultItems()
         .stateIn(
@@ -91,17 +86,33 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             // Reconcile and guarantee literal recovery from phone storage if DB was reset
             recoverLiteralStorageIfNeeded()
-            // Keep literal snapshot synced automatically
+            backfillMissingSyncIds()
+
+            // Observe Firebase Authentication & automatically bind real-time Cloud Firestore listeners
+            launch {
+                FirebaseSyncRepository.observeAuthState(getApplication()).collect { user ->
+                    val previousUid = currentUser.value?.uid
+                    currentUser.value = user
+                    if (user != null) {
+                        if (previousUid != user.uid || cloudSyncJob == null || cloudSyncJob?.isActive != true) {
+                            startRealTimeCloudSync(user.uid)
+                        }
+                    } else {
+                        cloudSyncJob?.cancel()
+                        cloudSyncJob = null
+                        cloudSyncStatus.value = CloudSyncStatus.Disconnected
+                    }
+                }
+            }
+
+            // Keep local literal snapshot synced automatically
             repository.allNotes.collect { notes ->
                 withContext(Dispatchers.IO) {
                     LocalDeviceStorageManager.saveNotesLiteralSnapshot(getApplication(), notes)
                 }
             }
         }
-        persistSettingsSnapshot()
-        if (isAutoDriveBackupEnabled.value) {
-            DriveAutoBackupWorker.scheduleEvery24Hours(application)
-        }
+        persistSettingsSnapshot(syncToCloud = false)
         checkForUpdates(isManual = false)
     }
 
@@ -124,9 +135,175 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         // Recover settings if SharedPreferences were cleared while local snapshot survived
         if (!prefs.contains("is_dark_mode")) {
             LocalDeviceStorageManager.loadSettingsSnapshot(app)?.let { restored ->
-                applyRestoredSettings(restored)
+                applyRestoredSettings(restored, fromRemote = false)
             }
         }
+    }
+
+    private suspend fun backfillMissingSyncIds() = withContext(Dispatchers.IO) {
+        val notes = repository.getAllNotesOnce()
+        notes.filter { it.syncId.isBlank() }.forEach { note ->
+            repository.insertOrUpdate(note.copy(syncId = UUID.randomUUID().toString()))
+        }
+    }
+
+    private fun startRealTimeCloudSync(uid: String) {
+        cloudSyncJob?.cancel()
+        cloudSyncJob = viewModelScope.launch {
+            cloudSyncStatus.value = CloudSyncStatus.Syncing
+            try {
+                reconcileLocalAndCloud(uid)
+            } catch (e: Exception) {
+                cloudSyncStatus.value = CloudSyncStatus.Error(
+                    messageAr = "تعذر المزامنة الأولية: ${e.localizedMessage ?: "خطأ"}",
+                    messageEn = "Initial sync failed: ${e.localizedMessage ?: "Error"}"
+                )
+            }
+
+            // 1) Real-time listener for users/{userId}/notes
+            launch {
+                FirebaseSyncRepository.observeNotes(getApplication(), uid)
+                    .catch { e ->
+                        cloudSyncStatus.value = CloudSyncStatus.Error(
+                            messageAr = "توقفت المزامنة الفورية: ${e.localizedMessage ?: "خطأ"}",
+                            messageEn = "Realtime sync error: ${e.localizedMessage ?: "Error"}"
+                        )
+                    }
+                    .collect { remoteSnapshot ->
+                        withContext(Dispatchers.IO) {
+                            remoteSnapshot.upserted.forEach { remoteNote ->
+                                val existing = repository.getNoteBySyncId(remoteNote.syncId)
+                                if (existing == null) {
+                                    repository.insertOrUpdate(remoteNote.copy(id = 0L))
+                                } else if (remoteNote.updatedAt > existing.updatedAt) {
+                                    repository.insertOrUpdate(remoteNote.copy(id = existing.id))
+                                }
+                            }
+
+                            if (!remoteSnapshot.hasPendingWrites) {
+                                remoteSnapshot.removedSyncIds.forEach { sid ->
+                                    if (editingNote.value?.syncId != sid) {
+                                        repository.deleteBySyncId(sid)
+                                    }
+                                }
+                            }
+                        }
+                        val count = withContext(Dispatchers.IO) {
+                            repository.getAllNotesOnce().size
+                        }
+                        cloudSyncStatus.value = CloudSyncStatus.Synced(
+                            lastSyncAt = System.currentTimeMillis(),
+                            syncedCount = count
+                        )
+                    }
+            }
+
+            // 2) Real-time listener for users/{userId}/settings/preferences
+            launch {
+                FirebaseSyncRepository.observeSettings(getApplication(), uid)
+                    .catch { /* logged inside repository */ }
+                    .collect { payload ->
+                        if (payload != null) {
+                            val localUpdatedAt = prefs.getLong("local_settings_updated_at", 0L)
+                            if (payload.updatedAt > lastAppliedRemoteSettingsAt && payload.updatedAt > localUpdatedAt) {
+                                lastAppliedRemoteSettingsAt = payload.updatedAt
+                                prefs.edit().putLong("last_remote_settings_at", payload.updatedAt).apply()
+                                applyRestoredSettings(payload.snapshot, fromRemote = true)
+                            }
+                        }
+                    }
+            }
+
+            // 3) Real-time listener for users/{userId}/vault (immutable write-once)
+            launch {
+                FirebaseSyncRepository.observeVaultItems(getApplication(), uid)
+                    .catch { /* logged inside repository */ }
+                    .collect { remotePayloads ->
+                        withContext(Dispatchers.IO) {
+                            remotePayloads.forEach { payload ->
+                                val materialized = LocalDeviceStorageManager.restoreVaultRawFileFromBase64WriteOnce(
+                                    context = getApplication(),
+                                    item = payload.item,
+                                    base64Data = payload.rawFileBase64
+                                )
+                                vaultDao.insertImmutableItem(materialized)
+                            }
+                        }
+                    }
+            }
+        }
+    }
+
+    private suspend fun reconcileLocalAndCloud(uid: String) = withContext(Dispatchers.IO) {
+        val app = getApplication<Application>()
+        backfillMissingSyncIds()
+
+        // Reconcile Notes (last-write-wins using updatedAt; literal text untouched)
+        val localNotes = repository.getAllNotesOnce()
+        val remoteNotes = FirebaseSyncRepository.fetchNotesOnce(app, uid)
+        val localBySync = localNotes.associateBy { it.syncId }
+        val remoteBySync = remoteNotes.associateBy { it.syncId }
+
+        for (local in localNotes) {
+            val remote = remoteBySync[local.syncId]
+            if (remote == null || local.updatedAt > remote.updatedAt) {
+                FirebaseSyncRepository.upsertNote(app, uid, local)
+            }
+        }
+        for (remote in remoteNotes) {
+            val local = localBySync[remote.syncId]
+            if (local == null) {
+                repository.insertOrUpdate(remote.copy(id = 0L))
+            } else if (remote.updatedAt > local.updatedAt) {
+                repository.insertOrUpdate(remote.copy(id = local.id))
+            }
+        }
+
+        // Reconcile Settings
+        val remoteSettings = FirebaseSyncRepository.fetchSettingsOnce(app, uid)
+        val localSettingsAt = prefs.getLong("local_settings_updated_at", 0L)
+        if (remoteSettings == null || localSettingsAt > remoteSettings.updatedAt) {
+            FirebaseSyncRepository.upsertSettings(
+                context = app,
+                userId = uid,
+                settings = currentSettingsSnapshot(),
+                updatedAt = localSettingsAt.takeIf { it > 0L } ?: System.currentTimeMillis()
+            )
+        } else if (remoteSettings.updatedAt > localSettingsAt) {
+            withContext(Dispatchers.Main) {
+                applyRestoredSettings(remoteSettings.snapshot, fromRemote = true)
+            }
+            lastAppliedRemoteSettingsAt = remoteSettings.updatedAt
+            prefs.edit().putLong("last_remote_settings_at", remoteSettings.updatedAt).apply()
+        }
+
+        // Reconcile Immutable Vault Items (bidirectional union; never overwrites existing items)
+        val localVault = vaultDao.getAllVaultItemsOnce()
+        val remoteVault = FirebaseSyncRepository.fetchVaultItemsOnce(app, uid)
+        val localVaultIds = localVault.map { it.id }.toHashSet()
+        val remoteVaultIds = remoteVault.map { it.item.id }.toHashSet()
+
+        localVault.forEach { item ->
+            if (item.id !in remoteVaultIds) {
+                FirebaseSyncRepository.upsertVaultItemIfAbsent(app, uid, item)
+            }
+        }
+        remoteVault.forEach { payload ->
+            if (payload.item.id !in localVaultIds) {
+                val materialized = LocalDeviceStorageManager.restoreVaultRawFileFromBase64WriteOnce(
+                    context = app,
+                    item = payload.item,
+                    base64Data = payload.rawFileBase64
+                )
+                vaultDao.insertImmutableItem(materialized)
+            }
+        }
+
+        val finalCount = repository.getAllNotesOnce().size
+        cloudSyncStatus.value = CloudSyncStatus.Synced(
+            lastSyncAt = System.currentTimeMillis(),
+            syncedCount = finalCount
+        )
     }
 
     // Filtered Notes Flow
@@ -167,21 +344,21 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         val next = !isDarkMode.value
         isDarkMode.value = next
         prefs.edit().putBoolean("is_dark_mode", next).apply()
-        persistSettingsSnapshot()
+        persistSettingsSnapshot(syncToCloud = true)
     }
 
     fun toggleLanguage() {
         val next = !isArabic.value
         isArabic.value = next
         prefs.edit().putBoolean("is_arabic", next).apply()
-        persistSettingsSnapshot()
+        persistSettingsSnapshot(syncToCloud = true)
     }
 
     fun toggleViewMode() {
         val next = !isGridView.value
         isGridView.value = next
         prefs.edit().putBoolean("is_grid_view", next).apply()
-        persistSettingsSnapshot()
+        persistSettingsSnapshot(syncToCloud = true)
     }
 
     fun setSearch(query: String) {
@@ -191,7 +368,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     fun selectCategory(cat: String) {
         selectedCategory.value = cat
         prefs.edit().putString("selected_category", cat).apply()
-        persistSettingsSnapshot()
+        persistSettingsSnapshot(syncToCloud = true)
     }
 
     private fun currentSettingsSnapshot(): FluffySettingsSnapshot = FluffySettingsSnapshot(
@@ -200,23 +377,32 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         isGridView = isGridView.value,
         isBiometricEnabled = isBiometricEnabled.value,
         selectedCategory = selectedCategory.value,
-        autoDriveBackupEnabled = isAutoDriveBackupEnabled.value
+        cloudSyncEnabled = true
     )
 
-    private fun persistSettingsSnapshot() {
+    private fun persistSettingsSnapshot(syncToCloud: Boolean = true) {
+        val now = System.currentTimeMillis()
+        if (syncToCloud) {
+            prefs.edit().putLong("local_settings_updated_at", now).apply()
+        }
         val snapshot = currentSettingsSnapshot()
+        val uid = currentUser.value?.uid
         viewModelScope.launch(Dispatchers.IO) {
             LocalDeviceStorageManager.saveSettingsSnapshot(getApplication(), snapshot)
+            if (syncToCloud && uid != null) {
+                runCatching {
+                    FirebaseSyncRepository.upsertSettings(getApplication(), uid, snapshot, now)
+                }
+            }
         }
     }
 
-    private fun applyRestoredSettings(s: FluffySettingsSnapshot) {
+    private fun applyRestoredSettings(s: FluffySettingsSnapshot, fromRemote: Boolean) {
         isDarkMode.value = s.isDarkMode
         isArabic.value = s.isArabic
         isGridView.value = s.isGridView
         isBiometricEnabled.value = s.isBiometricEnabled
         selectedCategory.value = s.selectedCategory
-        isAutoDriveBackupEnabled.value = s.autoDriveBackupEnabled
 
         prefs.edit()
             .putBoolean("is_dark_mode", s.isDarkMode)
@@ -224,15 +410,9 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             .putBoolean("is_grid_view", s.isGridView)
             .putBoolean("biometric_enabled", s.isBiometricEnabled)
             .putString("selected_category", s.selectedCategory)
-            .putBoolean(DriveAutoBackupWorker.KEY_AUTO_BACKUP_24H, s.autoDriveBackupEnabled)
             .apply()
 
-        if (s.autoDriveBackupEnabled) {
-            DriveAutoBackupWorker.scheduleEvery24Hours(getApplication())
-        } else {
-            DriveAutoBackupWorker.cancelScheduledBackup(getApplication())
-        }
-        persistSettingsSnapshot()
+        persistSettingsSnapshot(syncToCloud = !fromRemote)
     }
 
     fun openNewNote(initialCategory: String = "أفكار", startWithChecklist: Boolean = false) {
@@ -253,7 +433,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             colorPreset = GlassTint.FROST.id,
             checklistJson = emptyChecklist,
             createdAt = System.currentTimeMillis(),
-            updatedAt = System.currentTimeMillis()
+            updatedAt = System.currentTimeMillis(),
+            syncId = UUID.randomUUID().toString()
         )
         isCreatingNew.value = true
     }
@@ -270,7 +451,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
 
     /**
      * Silent real-time autosave while editing:
-     * Saves written text LITERALLY without altering/trimming whitespace, formatting, or newlines.
+     * Saves written text LITERALLY without altering/trimming whitespace, formatting, or newlines,
+     * and automatically syncs to Cloud Firestore when authenticated.
      */
     fun autoSaveNote(
         title: String,
@@ -290,6 +472,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
 
+        val ensuredSyncId = current.syncId.ifBlank { UUID.randomUUID().toString() }
         val updatedNote = current.copy(
             title = title,
             content = content,
@@ -299,16 +482,15 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             isFavorite = isFavorite,
             checklistJson = ChecklistItem.listToJson(activeChecklist),
             audioDurationSec = audioDurationSec,
-            updatedAt = System.currentTimeMillis()
+            updatedAt = System.currentTimeMillis(),
+            syncId = ensuredSyncId
         )
 
         viewModelScope.launch {
             val id = repository.insertOrUpdate(updatedNote)
-            if (current.id == 0L && id > 0) {
-                editingNote.value = updatedNote.copy(id = id)
-            } else {
-                editingNote.value = updatedNote
-            }
+            val saved = if (current.id == 0L && id > 0) updatedNote.copy(id = id) else updatedNote
+            editingNote.value = saved
+            syncNoteUpsertIfSignedIn(saved)
         }
     }
 
@@ -330,6 +512,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
 
+        val ensuredSyncId = current.syncId.ifBlank { UUID.randomUUID().toString() }
         val updatedNote = current.copy(
             title = title,
             content = content,
@@ -339,11 +522,14 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             isFavorite = isFavorite,
             checklistJson = ChecklistItem.listToJson(activeChecklist),
             audioDurationSec = audioDurationSec,
-            updatedAt = System.currentTimeMillis()
+            updatedAt = System.currentTimeMillis(),
+            syncId = ensuredSyncId
         )
 
         viewModelScope.launch {
-            repository.insertOrUpdate(updatedNote)
+            val id = repository.insertOrUpdate(updatedNote)
+            val saved = if (current.id == 0L && id > 0) updatedNote.copy(id = id) else updatedNote
+            syncNoteUpsertIfSignedIn(saved)
             closeEditor()
             showSnackbar(if (isArabic.value) "تم حفظ الملاحظة حرفياً بنجاح ✨" else "Note saved verbatim ✨")
         }
@@ -354,6 +540,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             if (current.id != 0L) {
                 repository.deleteById(current.id)
+                syncNoteDeleteIfSignedIn(current.syncId)
                 showSnackbar(if (isArabic.value) "تم حذف الملاحظة" else "Note deleted")
             }
             closeEditor()
@@ -363,19 +550,32 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     fun deleteNoteDirectly(note: NoteEntity) {
         viewModelScope.launch {
             repository.deleteNote(note)
+            syncNoteDeleteIfSignedIn(note.syncId)
             showSnackbar(if (isArabic.value) "تم حذف الملاحظة" else "Note deleted")
         }
     }
 
     fun togglePin(note: NoteEntity) {
+        val updated = note.copy(
+            isPinned = !note.isPinned,
+            updatedAt = System.currentTimeMillis(),
+            syncId = note.syncId.ifBlank { UUID.randomUUID().toString() }
+        )
         viewModelScope.launch {
-            repository.togglePin(note)
+            repository.insertOrUpdate(updated)
+            syncNoteUpsertIfSignedIn(updated)
         }
     }
 
     fun toggleFavorite(note: NoteEntity) {
+        val updated = note.copy(
+            isFavorite = !note.isFavorite,
+            updatedAt = System.currentTimeMillis(),
+            syncId = note.syncId.ifBlank { UUID.randomUUID().toString() }
+        )
         viewModelScope.launch {
-            repository.toggleFavorite(note)
+            repository.insertOrUpdate(updated)
+            syncNoteUpsertIfSignedIn(updated)
         }
     }
 
@@ -386,11 +586,135 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             items[itemIndex] = item.copy(isDone = !item.isDone)
             val updated = note.copy(
                 checklistJson = ChecklistItem.listToJson(items),
-                updatedAt = System.currentTimeMillis()
+                updatedAt = System.currentTimeMillis(),
+                syncId = note.syncId.ifBlank { UUID.randomUUID().toString() }
             )
             viewModelScope.launch {
                 repository.insertOrUpdate(updated)
+                syncNoteUpsertIfSignedIn(updated)
             }
+        }
+    }
+
+    private fun syncNoteUpsertIfSignedIn(note: NoteEntity) {
+        val uid = currentUser.value?.uid ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                FirebaseSyncRepository.upsertNote(getApplication(), uid, note)
+            }.onFailure { e ->
+                cloudSyncStatus.value = CloudSyncStatus.Error(
+                    messageAr = "تعذر رفع الملاحظة: ${e.localizedMessage ?: "خطأ"}",
+                    messageEn = "Upload error: ${e.localizedMessage ?: "Error"}"
+                )
+            }
+        }
+    }
+
+    private fun syncNoteDeleteIfSignedIn(syncId: String) {
+        val uid = currentUser.value?.uid ?: return
+        if (syncId.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                FirebaseSyncRepository.deleteNote(getApplication(), uid, syncId)
+            }
+        }
+    }
+
+    // --- Firebase Authentication & Manual Cloud Sync Triggers ---
+
+    fun openAuthDialog() {
+        showAuthDialog.value = true
+    }
+
+    fun closeAuthDialog() {
+        showAuthDialog.value = false
+    }
+
+    fun signInWithGoogleIdToken(idToken: String) {
+        viewModelScope.launch {
+            val result = FirebaseSyncRepository.signInWithGoogleIdToken(getApplication(), idToken)
+            result.onSuccess { user ->
+                currentUser.value = user
+                showAuthDialog.value = false
+                showSnackbar(
+                    if (isArabic.value) "تم تسجيل الدخول والمزامنة السحابية ☁️✨"
+                    else "Signed in — Cloud sync active ☁️✨"
+                )
+            }.onFailure { err ->
+                showSnackbar(
+                    if (isArabic.value) "فشل الدخول: ${err.localizedMessage}"
+                    else "Sign-in failed: ${err.localizedMessage}"
+                )
+            }
+        }
+    }
+
+    fun signInWithEmail(email: String, password: String, onError: (String) -> Unit) {
+        viewModelScope.launch {
+            val result = FirebaseSyncRepository.signInWithEmail(getApplication(), email, password)
+            result.onSuccess { user ->
+                currentUser.value = user
+                showAuthDialog.value = false
+                showSnackbar(
+                    if (isArabic.value) "أهلاً بك! جاري المزامنة التلقائية ☁️✨"
+                    else "Welcome back! Syncing notes ☁️✨"
+                )
+            }.onFailure { err ->
+                onError(err.localizedMessage ?: "Authentication failed")
+            }
+        }
+    }
+
+    fun registerWithEmail(email: String, password: String, onError: (String) -> Unit) {
+        viewModelScope.launch {
+            val result = FirebaseSyncRepository.registerWithEmail(getApplication(), email, password)
+            result.onSuccess { user ->
+                currentUser.value = user
+                showAuthDialog.value = false
+                showSnackbar(
+                    if (isArabic.value) "تم إنشاء الحساب وتفعيل المزامنة السحابية ☁️✨"
+                    else "Account created — Cloud sync active ☁️✨"
+                )
+            }.onFailure { err ->
+                onError(err.localizedMessage ?: "Registration failed")
+            }
+        }
+    }
+
+    fun syncCloudNow() {
+        val uid = currentUser.value?.uid
+        if (uid == null) {
+            showAuthDialog.value = true
+            return
+        }
+        viewModelScope.launch {
+            cloudSyncStatus.value = CloudSyncStatus.Syncing
+            try {
+                reconcileLocalAndCloud(uid)
+                showSnackbar(
+                    if (isArabic.value) "تمت المزامنة السحابية الفورية بنجاح ☁️✨"
+                    else "Cloud Firestore sync complete ☁️✨"
+                )
+            } catch (e: Exception) {
+                cloudSyncStatus.value = CloudSyncStatus.Error(
+                    messageAr = "تعذر المزامنة: ${e.localizedMessage ?: "خطأ"}",
+                    messageEn = "Sync failed: ${e.localizedMessage ?: "Error"}"
+                )
+            }
+        }
+    }
+
+    fun signOutFirebase() {
+        viewModelScope.launch {
+            cloudSyncJob?.cancel()
+            cloudSyncJob = null
+            FirebaseSyncRepository.signOut(getApplication())
+            currentUser.value = null
+            cloudSyncStatus.value = CloudSyncStatus.Disconnected
+            showSnackbar(
+                if (isArabic.value) "تم تسجيل الخروج من السحابة"
+                else "Signed out from cloud account"
+            )
         }
     }
 
@@ -405,6 +729,11 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                 literalContent = literalContent
             )
             vaultDao.insertImmutableItem(item)
+            currentUser.value?.uid?.let { uid ->
+                launch(Dispatchers.IO) {
+                    FirebaseSyncRepository.upsertVaultItemIfAbsent(getApplication(), uid, item)
+                }
+            }
             showSnackbar(
                 if (isArabic.value) "تم الحفظ حرفياً في الـ Vault وذاكرة الهاتف 🔒"
                 else "Saved verbatim in Vault & phone storage 🔒"
@@ -420,6 +749,11 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                     uri = uri
                 )
                 vaultDao.insertImmutableItem(item)
+                currentUser.value?.uid?.let { uid ->
+                    launch(Dispatchers.IO) {
+                        FirebaseSyncRepository.upsertVaultItemIfAbsent(getApplication(), uid, item)
+                    }
+                }
                 showSnackbar(
                     if (isArabic.value) "تم حفظ الملف حرفياً في ذاكرة الهاتف والـ Vault 🔒"
                     else "File saved verbatim in phone storage & Vault 🔒"
@@ -450,7 +784,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // --- Local Storage & Google Drive Backup / Restore ---
+    // --- Local Phone Storage Full Literal Export / Import ---
 
     fun exportFullBackupToPhoneUri(destUri: Uri) {
         viewModelScope.launch {
@@ -488,118 +822,6 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun performManualDriveBackup(onNeedConsent: (IntentSender) -> Unit) {
-        if (driveSyncStatus.value is DriveSyncStatus.BackingUp ||
-            driveSyncStatus.value is DriveSyncStatus.Restoring
-        ) return
-
-        viewModelScope.launch {
-            driveSyncStatus.value = DriveSyncStatus.BackingUp
-            when (val auth = GoogleDriveBackupManager.authorize(getApplication())) {
-                is DriveAuthOutcome.Authorized -> executeDriveBackupWithToken(auth.accessToken)
-                is DriveAuthOutcome.NeedsConsent -> {
-                    pendingDriveAction = PendingDriveAction.BACKUP
-                    driveSyncStatus.value = DriveSyncStatus.Idle
-                    onNeedConsent(auth.intentSender)
-                }
-                is DriveAuthOutcome.Failed -> {
-                    driveSyncStatus.value = DriveSyncStatus.Error(
-                        messageAr = "تعذر تفويض Google Drive: ${auth.message}",
-                        messageEn = "Google Drive auth error: ${auth.message}"
-                    )
-                }
-            }
-        }
-    }
-
-    fun performManualDriveRestore(onNeedConsent: (IntentSender) -> Unit) {
-        if (driveSyncStatus.value is DriveSyncStatus.BackingUp ||
-            driveSyncStatus.value is DriveSyncStatus.Restoring
-        ) return
-
-        viewModelScope.launch {
-            driveSyncStatus.value = DriveSyncStatus.Restoring
-            when (val auth = GoogleDriveBackupManager.authorize(getApplication())) {
-                is DriveAuthOutcome.Authorized -> executeDriveRestoreWithToken(auth.accessToken)
-                is DriveAuthOutcome.NeedsConsent -> {
-                    pendingDriveAction = PendingDriveAction.RESTORE
-                    driveSyncStatus.value = DriveSyncStatus.Idle
-                    onNeedConsent(auth.intentSender)
-                }
-                is DriveAuthOutcome.Failed -> {
-                    driveSyncStatus.value = DriveSyncStatus.Error(
-                        messageAr = "تعذر تفويض Google Drive: ${auth.message}",
-                        messageEn = "Google Drive auth error: ${auth.message}"
-                    )
-                }
-            }
-        }
-    }
-
-    fun setAutoDriveBackup24h(enabled: Boolean, onNeedConsent: (IntentSender) -> Unit) {
-        isAutoDriveBackupEnabled.value = enabled
-        prefs.edit().putBoolean(DriveAutoBackupWorker.KEY_AUTO_BACKUP_24H, enabled).apply()
-        persistSettingsSnapshot()
-
-        if (enabled) {
-            DriveAutoBackupWorker.scheduleEvery24Hours(getApplication())
-            // Authorize once upfront so background 24h runs can execute silently without UI
-            viewModelScope.launch {
-                when (val auth = GoogleDriveBackupManager.authorize(getApplication())) {
-                    is DriveAuthOutcome.NeedsConsent -> {
-                        pendingDriveAction = PendingDriveAction.AUTHORIZE_ONLY
-                        onNeedConsent(auth.intentSender)
-                    }
-                    is DriveAuthOutcome.Authorized -> {
-                        showSnackbar(
-                            if (isArabic.value) "تم تفعيل النسخ التلقائي على Google Drive كل 24 ساعة ☁️"
-                            else "24h automatic Google Drive backup enabled ☁️"
-                        )
-                    }
-                    is DriveAuthOutcome.Failed -> {
-                        showSnackbar(
-                            if (isArabic.value) "تم جدولة النسخ كل 24 ساعة (تحتاج ربط Google Drive عند الاتصال)"
-                            else "24h schedule saved (connect Google Drive when ready)"
-                        )
-                    }
-                }
-            }
-        } else {
-            DriveAutoBackupWorker.cancelScheduledBackup(getApplication())
-            showSnackbar(
-                if (isArabic.value) "تم إيقاف النسخ التلقائي كل 24 ساعة"
-                else "24h automatic backup disabled"
-            )
-        }
-    }
-
-    fun onDriveConsentGranted(accessToken: String) {
-        val action = pendingDriveAction
-        pendingDriveAction = null
-        viewModelScope.launch {
-            when (action) {
-                PendingDriveAction.BACKUP -> executeDriveBackupWithToken(accessToken)
-                PendingDriveAction.RESTORE -> executeDriveRestoreWithToken(accessToken)
-                PendingDriveAction.AUTHORIZE_ONLY -> {
-                    showSnackbar(
-                        if (isArabic.value) "تم ربط Google Drive والنسخ التلقائي كل 24 ساعة بنجاح ☁️"
-                        else "Google Drive connected for 24h auto-backup ☁️"
-                    )
-                }
-                null -> Unit
-            }
-        }
-    }
-
-    fun onDriveConsentCancelled() {
-        pendingDriveAction = null
-        driveSyncStatus.value = DriveSyncStatus.Idle
-        showSnackbar(
-            if (isArabic.value) "تم إلغاء ربط Google Drive"
-            else "Google Drive authorization cancelled"
-        )
-    }
-
     private suspend fun buildCurrentFullBackupJson(): String = withContext(Dispatchers.IO) {
         val notes = db.noteDao().getAllNotesOnce()
         val vault = vaultDao.getAllVaultItemsOnce()
@@ -611,80 +833,34 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
-    private suspend fun executeDriveBackupWithToken(accessToken: String) {
-        driveSyncStatus.value = DriveSyncStatus.BackingUp
-        try {
-            val json = buildCurrentFullBackupJson()
-            GoogleDriveBackupManager.uploadBackupJson(accessToken, json)
-            val now = System.currentTimeMillis()
-            lastDriveBackupAt.value = now
-            prefs.edit()
-                .putLong(DriveAutoBackupWorker.KEY_LAST_DRIVE_BACKUP_AT, now)
-                .putString(DriveAutoBackupWorker.KEY_LAST_DRIVE_BACKUP_STATUS, "manual_ok")
-                .apply()
-
-            driveSyncStatus.value = DriveSyncStatus.Success(
-                messageAr = "تم حفظ الإعدادات والملاحظات والـ Vault في Google Drive بنجاح ☁️✨",
-                messageEn = "Settings, Notes & Vault backed up to Google Drive ☁️✨"
-            )
-            showSnackbar(
-                if (isArabic.value) "تم النسخ الاحتياطي إلى Google Drive بنجاح ☁️"
-                else "Google Drive backup complete ☁️"
-            )
-        } catch (e: Exception) {
-            driveSyncStatus.value = DriveSyncStatus.Error(
-                messageAr = "فشل النسخ إلى Google Drive: ${e.localizedMessage}",
-                messageEn = "Google Drive backup failed: ${e.localizedMessage}"
-            )
-        }
-    }
-
-    private suspend fun executeDriveRestoreWithToken(accessToken: String) {
-        driveSyncStatus.value = DriveSyncStatus.Restoring
-        try {
-            val json = GoogleDriveBackupManager.downloadLatestBackupJson(accessToken)
-            if (json.isNullOrBlank()) {
-                driveSyncStatus.value = DriveSyncStatus.Error(
-                    messageAr = "لا توجد نسخة احتياطية سابقة في Google Drive",
-                    messageEn = "No existing backup found in Google Drive"
-                )
-                return
-            }
-
-            applyRestoredBackupBundle(json)
-            driveSyncStatus.value = DriveSyncStatus.Success(
-                messageAr = "تمت استعادة الإعدادات والملاحظات والـ Vault من Google Drive بنجاح ✨",
-                messageEn = "Restored Settings, Notes & Vault from Google Drive ✨"
-            )
-            showSnackbar(
-                if (isArabic.value) "تمت الاستعادة من Google Drive بنجاح ✨"
-                else "Restored from Google Drive ✨"
-            )
-        } catch (e: Exception) {
-            driveSyncStatus.value = DriveSyncStatus.Error(
-                messageAr = "فشلت الاستعادة من Google Drive: ${e.localizedMessage}",
-                messageEn = "Google Drive restore failed: ${e.localizedMessage}"
-            )
-        }
-    }
-
     private suspend fun applyRestoredBackupBundle(jsonString: String) = withContext(Dispatchers.IO) {
         val bundle = LocalDeviceStorageManager.parseFullBackupBundle(jsonString)
 
         bundle.settings?.let { restoredSettings ->
             withContext(Dispatchers.Main) {
-                applyRestoredSettings(restoredSettings)
+                applyRestoredSettings(restoredSettings, fromRemote = false)
             }
         }
 
         // Restore notes verbatim without losing or altering existing local notes
         val existingNotes = db.noteDao().getAllNotesOnce()
         val existingKeys = existingNotes.map { "${it.createdAt}|${it.title}|${it.content}" }.toHashSet()
+        val existingSyncIds = existingNotes.map { it.syncId }.toHashSet()
+        val uid = currentUser.value?.uid
+
         bundle.notes.forEach { note ->
             val key = "${note.createdAt}|${note.title}|${note.content}"
-            if (key !in existingKeys) {
-                db.noteDao().insertNote(note.copy(id = 0L))
+            if (key !in existingKeys && note.syncId !in existingSyncIds) {
+                val prepared = note.copy(
+                    id = 0L,
+                    syncId = note.syncId.ifBlank { UUID.randomUUID().toString() }
+                )
+                db.noteDao().insertNote(prepared)
                 existingKeys.add(key)
+                existingSyncIds.add(prepared.syncId)
+                if (uid != null) {
+                    runCatching { FirebaseSyncRepository.upsertNote(getApplication(), uid, prepared) }
+                }
             }
         }
 
@@ -696,6 +872,9 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                 base64Data = restorable.rawFileBase64
             )
             vaultDao.insertImmutableItem(materialized)
+            if (uid != null) {
+                runCatching { FirebaseSyncRepository.upsertVaultItemIfAbsent(getApplication(), uid, materialized) }
+            }
         }
     }
 
@@ -705,7 +884,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         if (!enabled) {
             isAppLocked.value = false
         }
-        persistSettingsSnapshot()
+        persistSettingsSnapshot(syncToCloud = true)
     }
 
     fun lockApp() {

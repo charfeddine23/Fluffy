@@ -11,7 +11,7 @@ import com.example.data.model.VaultItemEntity
 
 @Database(
     entities = [NoteEntity::class, VaultItemEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class FluffyDatabase : RoomDatabase() {
@@ -44,6 +44,12 @@ abstract class FluffyDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `notes` ADD COLUMN `syncId` TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun getDatabase(context: Context): FluffyDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -51,7 +57,7 @@ abstract class FluffyDatabase : RoomDatabase() {
                     FluffyDatabase::class.java,
                     "fluffy_notes.db"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .build()
                 INSTANCE = instance
                 instance

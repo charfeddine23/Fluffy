@@ -2,6 +2,7 @@ package com.example.data.model
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import java.util.UUID
 
 @Entity(tableName = "notes")
 data class NoteEntity(
@@ -17,5 +18,6 @@ data class NoteEntity(
     val checklistJson: String = "",
     val audioDurationSec: Int = 0,
     val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    val syncId: String = UUID.randomUUID().toString()
 )

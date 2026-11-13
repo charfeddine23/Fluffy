@@ -24,7 +24,7 @@ data class FluffySettingsSnapshot(
     val isGridView: Boolean,
     val isBiometricEnabled: Boolean,
     val selectedCategory: String,
-    val autoDriveBackupEnabled: Boolean
+    val cloudSyncEnabled: Boolean = true
 )
 
 data class FluffyBackupBundle(
@@ -45,7 +45,7 @@ data class RestorableVaultItem(
  * Literal, tamper-resistant local phone storage engine.
  * - Stores Notes, Settings, and Vault items verbatim on device internal storage.
  * - Uses write-once semantics for Vault records and raw files (never mutates or trims saved data).
- * - Builds and parses portable full JSON backups (Settings + Notes + Vault) for Google Drive and phone storage.
+ * - Builds and parses portable full JSON backups (Settings + Notes + Vault) for Firebase Cloud Sync and phone storage.
  */
 object LocalDeviceStorageManager {
 
@@ -431,7 +431,7 @@ object LocalDeviceStorageManager {
         put("isGridView", s.isGridView)
         put("isBiometricEnabled", s.isBiometricEnabled)
         put("selectedCategory", s.selectedCategory)
-        put("autoDriveBackupEnabled", s.autoDriveBackupEnabled)
+        put("cloudSyncEnabled", s.cloudSyncEnabled)
     }
 
     private fun jsonToSettings(obj: JSONObject): FluffySettingsSnapshot = FluffySettingsSnapshot(
@@ -440,11 +440,12 @@ object LocalDeviceStorageManager {
         isGridView = obj.optBoolean("isGridView", true),
         isBiometricEnabled = obj.optBoolean("isBiometricEnabled", false),
         selectedCategory = obj.optString("selectedCategory", "ALL"),
-        autoDriveBackupEnabled = obj.optBoolean("autoDriveBackupEnabled", false)
+        cloudSyncEnabled = obj.optBoolean("cloudSyncEnabled", true)
     )
 
     private fun noteToJson(n: NoteEntity): JSONObject = JSONObject().apply {
         put("id", n.id)
+        put("syncId", n.syncId)
         put("title", n.title)
         put("content", n.content)
         put("category", n.category)
@@ -470,7 +471,8 @@ object LocalDeviceStorageManager {
         checklistJson = obj.optString("checklistJson", ""),
         audioDurationSec = obj.optInt("audioDurationSec", 0),
         createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
-        updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
+        updatedAt = obj.optLong("updatedAt", System.currentTimeMillis()),
+        syncId = obj.optString("syncId", "").ifBlank { UUID.randomUUID().toString() }
     )
 
     private fun vaultItemToJson(v: VaultItemEntity, includeRawFile: Boolean): JSONObject = JSONObject().apply {

@@ -1,0 +1,40 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Per-user Notes synced from Fluffy
+    match /users/{userId}/notes/{noteId} {
+      allow read, delete: if isOwner(userId);
+      allow create, update: if isOwner(userId)
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.title is string
+        && request.resource.data.content is string
+        && request.resource.data.updatedAt is int;
+    }
+
+    // Per-user App Settings Snapshot
+    match /users/{userId}/settings/{docId} {
+      allow read: if isOwner(userId);
+      allow create, update: if isOwner(userId)
+        && request.resource.data.userId == request.auth.uid;
+      allow delete: if isOwner(userId);
+    }
+
+    // Per-user Immutable Vault Items (Write-Once: never altered or deleted once sealed)
+    match /users/{userId}/vault/{vaultId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId)
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.isImmutable == true;
+      allow update, delete: if false;
+    }
+  }
+}

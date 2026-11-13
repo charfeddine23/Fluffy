@@ -1,8 +1,6 @@
 package com.example.ui.screens
 
-import android.app.Activity
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -62,9 +60,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import kotlin.math.abs
 import com.example.data.model.GlassTint
-import com.example.data.model.NoteEntity
-import com.example.drive.GoogleDriveBackupManager
 import com.example.ui.components.CategoryChips
+import com.example.ui.components.FirebaseAuthDialog
 import com.example.ui.components.FluffyBottomBar
 import com.example.ui.components.FluffyTopBar
 import com.example.ui.components.NoteCard
@@ -95,24 +92,9 @@ fun FluffyHomeScreen(
     val showVoiceRecorder by viewModel.showVoiceRecorder.collectAsState()
     val snackbarMsg by viewModel.snackbarMessage.collectAsState()
     val updateState by viewModel.updateState.collectAsState()
-    val driveSyncStatus by viewModel.driveSyncStatus.collectAsState()
-    val isAutoDriveBackupEnabled by viewModel.isAutoDriveBackupEnabled.collectAsState()
-    val lastDriveBackupAt by viewModel.lastDriveBackupAt.collectAsState()
-
-    val driveConsentLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartIntentSenderForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            val token = GoogleDriveBackupManager.extractTokenFromConsentResult(context, result.data)
-            if (token != null) {
-                viewModel.onDriveConsentGranted(token)
-            } else {
-                viewModel.onDriveConsentCancelled()
-            }
-        } else {
-            viewModel.onDriveConsentCancelled()
-        }
-    }
+    val currentUser by viewModel.currentUser.collectAsState()
+    val cloudSyncStatus by viewModel.cloudSyncStatus.collectAsState()
+    val showAuthDialog by viewModel.showAuthDialog.collectAsState()
 
     val exportBackupLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
@@ -255,7 +237,9 @@ fun FluffyHomeScreen(
                     onToggleLanguage = { viewModel.toggleLanguage() },
                     onToggleViewMode = { viewModel.toggleViewMode() },
                     onOpenStats = { viewModel.showStatsSheet.value = true },
-                    onOpenSettings = { viewModel.openSettingsDrawer() }
+                    onOpenSettings = { viewModel.openSettingsDrawer() },
+                    isCloudSignedIn = currentUser != null,
+                    onOpenCloudAuth = { viewModel.openAuthDialog() }
                 )
 
                 // Category Chips
@@ -403,24 +387,14 @@ fun FluffyHomeScreen(
                     updateState is UpdateUiState.ReadyToInstall ||
                     updateState is UpdateUiState.NeedsInstallPermission,
                 onCheckForUpdates = { viewModel.checkForUpdates(isManual = true) },
-                driveSyncStatus = driveSyncStatus,
-                isAutoDriveBackupEnabled = isAutoDriveBackupEnabled,
-                lastDriveBackupAt = lastDriveBackupAt,
-                onDriveBackup = {
-                    viewModel.performManualDriveBackup { intentSender ->
-                        driveConsentLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
-                    }
+                currentUser = currentUser,
+                cloudSyncStatus = cloudSyncStatus,
+                onOpenAuthDialog = {
+                    viewModel.closeSettingsDrawer()
+                    viewModel.openAuthDialog()
                 },
-                onDriveRestore = {
-                    viewModel.performManualDriveRestore { intentSender ->
-                        driveConsentLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
-                    }
-                },
-                onToggleAutoDriveBackup = { enabled ->
-                    viewModel.setAutoDriveBackup24h(enabled) { intentSender ->
-                        driveConsentLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
-                    }
-                },
+                onSyncCloudNow = { viewModel.syncCloudNow() },
+                onSignOutFirebase = { viewModel.signOutFirebase() },
                 onExportLocalBackup = {
                     exportBackupLauncher.launch("Fluffy_Backup_${System.currentTimeMillis()}.json")
                 },
@@ -429,6 +403,25 @@ fun FluffyHomeScreen(
                 }
             )
         }
+
+        // Liquid Glass Firebase Authentication & Sync Dialog
+        FirebaseAuthDialog(
+            visible = showAuthDialog,
+            currentUser = currentUser,
+            cloudSyncStatus = cloudSyncStatus,
+            isDark = isDark,
+            isArabic = isArabic,
+            onDismiss = { viewModel.closeAuthDialog() },
+            onGoogleIdToken = { idToken -> viewModel.signInWithGoogleIdToken(idToken) },
+            onEmailSignIn = { email, password, onError ->
+                viewModel.signInWithEmail(email, password, onError)
+            },
+            onEmailRegister = { email, password, onError ->
+                viewModel.registerWithEmail(email, password, onError)
+            },
+            onSyncNow = { viewModel.syncCloudNow() },
+            onSignOut = { viewModel.signOutFirebase() }
+        )
 
         // Stats Bottom Sheet
         if (showStats) {
