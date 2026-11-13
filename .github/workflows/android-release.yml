@@ -4,17 +4,20 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - '**.md'
-      - '.gitignore'
+      - master
   workflow_dispatch:
 
 permissions:
   contents: write
+  actions: write
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-release:
-    name: Build, Sign, and Publish Release APK
+    name: Build, Sign & Publish Latest Release APK
     runs-on: ubuntu-latest
 
     steps:
@@ -31,56 +34,57 @@ jobs:
           cache: 'gradle'
 
       - name: Grant Execute Permission to Gradle Wrapper
-        run: chmod +x gradlew || true
+        run: chmod +x gradlew
 
-      - name: Determine Dynamic Version (Auto-Incrementing)
+      - name: Compute Auto-Incremented Version (v1.x.x)
         id: versioning
         run: |
-          # Read base Major and Minor from version.properties
           if [ -f "version.properties" ]; then
             MAJOR=$(grep -E '^VERSION_MAJOR=' version.properties | cut -d'=' -f2 | tr -d '[:space:]')
-            MINOR=$(grep -E '^VERSION_MINOR=' version.properties | cut -d'=' -f2 | tr -d '[:space:]')
+            BASE_CODE=$(grep -E '^BASE_VERSION_CODE=' version.properties | cut -d'=' -f2 | tr -d '[:space:]')
           fi
           MAJOR=${MAJOR:-1}
-          MINOR=${MINOR:-0}
+          BASE_CODE=${BASE_CODE:-1010}
 
-          # Use GitHub run_number for strictly increasing patch version and versionCode
+          # Monotonically increasing run number preserved by GitHub even after history cleanup
           RUN_NUM="${{ github.run_number }}"
-          PATCH="$RUN_NUM"
+          MINOR=$(( RUN_NUM / 10 ))
+          PATCH=$(( RUN_NUM % 10 ))
           VERSION_NAME="${MAJOR}.${MINOR}.${PATCH}"
-          VERSION_CODE=$((1000 + RUN_NUM))
+          VERSION_CODE=$(( BASE_CODE + RUN_NUM ))
 
-          echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_ENV
-          echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_ENV
-          echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
-          echo "version_code=$VERSION_CODE" >> $GITHUB_OUTPUT
+          echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
 
           echo "=========================================="
-          echo "🚀 Target Release: Fluffy v${VERSION_NAME}"
-          echo "🔢 Monotonic Version Code: ${VERSION_CODE}"
+          echo "Target Release Version : v${VERSION_NAME}"
+          echo "Monotonic Version Code : ${VERSION_CODE}"
           echo "=========================================="
 
       - name: Setup Persistent Signing Keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || 'android' }}
         run: |
-          # 1. Use user secret if provided in repository secrets
+          # Always use the exact same signing key across releases so Android supports direct in-place updates
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "$KEYSTORE_BASE64" | base64 --decode > my-upload-key.jks
-            echo "✅ Loaded signing keystore from KEYSTORE_BASE64 secret."
-          # 2. Use persistent committed repository keystore
+            echo "Loaded persistent keystore from KEYSTORE_BASE64 secret."
           elif [ -f "my-upload-key.jks" ]; then
-            echo "✅ Using persistent repository keystore my-upload-key.jks."
-          # 3. Use committed base64 keystore
+            echo "Using persistent repository keystore my-upload-key.jks."
           elif [ -f "my-upload-key.base64" ]; then
             base64 -d my-upload-key.base64 > my-upload-key.jks
-            echo "✅ Decoded persistent keystore from my-upload-key.base64."
+            echo "Decoded persistent keystore from my-upload-key.base64."
           else
-            echo "❌ Error: Release keystore not found! A persistent keystore is required for app updates."
+            echo "Error: Persistent keystore not found. Cannot guarantee in-place update compatibility."
             exit 1
           fi
 
-      - name: Build Signed Release APK with Dynamic Versioning
+          keytool -list -keystore my-upload-key.jks -storepass "$STORE_PASSWORD" -alias upload
+
+      - name: Build Signed Release APK
         env:
           KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || 'android' }}
@@ -93,66 +97,89 @@ jobs:
             -PversionCode="${VERSION_CODE}" \
             --no-daemon
 
-      - name: Package & Rename Release APK
+      - name: Package & Rename APK ([app_name].v1.x.x.apk)
         id: package_apk
         run: |
           VERSION="${{ steps.versioning.outputs.version_name }}"
-          APK_NAME="Fluffy-v${VERSION}.apk"
 
-          # Find the built release APK
+          # Extract app_name from strings.xml (e.g., Fluffy)
+          APP_NAME=$(grep -oE '<string name="app_name">[^<]+</string>' app/src/main/res/values/strings.xml | sed -E 's/<string name="app_name">([^<]+)<\/string>/\1/' | tr -d '\r\n' | sed 's/[[:space:]]\+/_/g')
+          APP_NAME=${APP_NAME:-Fluffy}
+
+          APK_NAME="${APP_NAME}.v${VERSION}.apk"
+
           BUILT_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
           if [ -z "$BUILT_APK" ]; then
             BUILT_APK=$(find app/build/outputs/apk -name "*.apk" | head -n 1)
           fi
 
           if [ ! -f "$BUILT_APK" ]; then
-            echo "❌ Error: Could not locate built APK file!"
+            echo "Error: Release APK not found!"
             exit 1
           fi
 
           cp "$BUILT_APK" "$APK_NAME"
-          echo "apk_path=$APK_NAME" >> $GITHUB_OUTPUT
-          echo "apk_name=$APK_NAME" >> $GITHUB_OUTPUT
-          echo "✅ Prepared artifact: $APK_NAME ($(du -h "$APK_NAME" | cut -f1))"
+          echo "app_name=$APP_NAME" >> "$GITHUB_OUTPUT"
+          echo "apk_path=$APK_NAME" >> "$GITHUB_OUTPUT"
+          echo "apk_name=$APK_NAME" >> "$GITHUB_OUTPUT"
+          ls -lh "$APK_NAME"
 
-      - name: Clean Previous GitHub Releases
+          # Verify signature & versionCode when Android build-tools are present
+          APKSIGNER=$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -name "apksigner" 2>/dev/null | sort -V | tail -n 1)
+          if [ -n "$APKSIGNER" ]; then
+            "$APKSIGNER" verify --print-certs "$APK_NAME"
+          fi
+
+      - name: Delete All Previous Releases & Tags
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "🧹 Checking for previous releases to remove..."
+          echo "Cleaning up all previous releases and release tags..."
           gh release list --limit 100 --json tagName -q '.[].tagName' | while read -r old_tag; do
             if [ -n "$old_tag" ]; then
-              echo "Removing previous release & tag: $old_tag"
+              echo "Deleting previous release and tag: $old_tag"
               gh release delete "$old_tag" --cleanup-tag -y || true
             fi
           done
 
-      - name: Publish New Version to GitHub Releases
+          # Also remove any orphaned v* tags on remote to keep Releases clean
+          git fetch --tags --force || true
+          git tag -l 'v*' | while read -r orphan_tag; do
+            if [ -n "$orphan_tag" ]; then
+              git push origin ":refs/tags/${orphan_tag}" || true
+            fi
+          done
+
+      - name: Publish Latest Release to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.versioning.outputs.version_name }}
-          name: Fluffy v${{ steps.versioning.outputs.version_name }}
+          name: ${{ steps.package_apk.outputs.app_name }} v${{ steps.versioning.outputs.version_name }}
           files: ${{ steps.package_apk.outputs.apk_path }}
           draft: false
           prerelease: false
           make_latest: true
           body: |
-            ### 🫧 Fluffy Notes - Release v${{ steps.versioning.outputs.version_name }}
+            ### ${{ steps.package_apk.outputs.app_name }} - Release v${{ steps.versioning.outputs.version_name }}
 
-            ✨ New production build with auto-incremented version code and persistent signing certificate.
-
-            #### 📦 Release Asset:
-            - **`${{ steps.package_apk.outputs.apk_name }}`**
-
-            #### 🔄 In-Place Update Support:
-            - **Version Code**: `${{ steps.versioning.outputs.version_code }}` (incremented)
-            - **Signature**: Consistent cryptographic certificate (can be installed directly over previous builds without uninstalling).
-
-            #### 💎 Features & Aesthetics:
-            - **Liquid Glass / Frosted Glass** UI with Chromatic Dispersion & Inner Highlights.
-            - **Biometric Authentication** (Fingerprint / Face Unlock).
-            - **Left-Edge Swipe Drawer** with quick settings.
-            - **Frosted Edge Mist / Blur** on category tabs.
-            - **Room Database** offline-first encryption and local storage.
+            - **Download APK**: `${{ steps.package_apk.outputs.apk_name }}`
+            - **Version Code**: `${{ steps.versioning.outputs.version_code }}`
+            - **Direct Update Ready**: Signed with the persistent release certificate and monotonic `versionCode` so you can install directly over any previous version without uninstalling first.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Clean Up Old GitHub Actions Run History
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Cleaning up previous workflow runs so only the latest run remains..."
+          CURRENT_RUN_ID="${{ github.run_id }}"
+          gh api "repos/${{ github.repository }}/actions/runs?per_page=100" --paginate \
+            --jq ".workflow_runs[] | select(.id != ${CURRENT_RUN_ID} and .status == \"completed\") | .id" \
+            | while read -r run_id; do
+              if [ -n "$run_id" ]; then
+                echo "Deleting old workflow run: $run_id"
+                gh api -X DELETE "repos/${{ github.repository }}/actions/runs/${run_id}" || true
+              fi
+            done

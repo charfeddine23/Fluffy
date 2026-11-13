@@ -62,6 +62,7 @@ import com.example.ui.components.StatsBottomSheet
 import com.example.ui.components.VoiceRecorderDialog
 import com.example.ui.glass.FrostedBackdrop
 import com.example.ui.glass.LiquidGlassCard
+import com.example.update.UpdateUiState
 import com.example.viewmodel.FluffyViewModel
 
 @Composable
@@ -81,6 +82,7 @@ fun FluffyHomeScreen(
     val showStats by viewModel.showStatsSheet.collectAsState()
     val showVoiceRecorder by viewModel.showVoiceRecorder.collectAsState()
     val snackbarMsg by viewModel.snackbarMessage.collectAsState()
+    val updateState by viewModel.updateState.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -279,7 +281,12 @@ fun FluffyHomeScreen(
                 onLockAppNow = { viewModel.lockApp() },
                 onToggleTheme = { viewModel.toggleDarkMode() },
                 onToggleLanguage = { viewModel.toggleLanguage() },
-                onToggleViewMode = { viewModel.toggleViewMode() }
+                onToggleViewMode = { viewModel.toggleViewMode() },
+                isCheckingUpdates = updateState is UpdateUiState.Checking,
+                hasPendingUpdate = updateState is UpdateUiState.Available ||
+                    updateState is UpdateUiState.ReadyToInstall ||
+                    updateState is UpdateUiState.NeedsInstallPermission,
+                onCheckForUpdates = { viewModel.checkForUpdates(isManual = true) }
             )
         }
 

@@ -45,7 +45,9 @@ import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.ViewAgenda
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -82,6 +84,9 @@ fun SettingsDrawer(
     onToggleTheme: () -> Unit,
     onToggleLanguage: () -> Unit,
     onToggleViewMode: () -> Unit,
+    isCheckingUpdates: Boolean = false,
+    hasPendingUpdate: Boolean = false,
+    onCheckForUpdates: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     if (isOpen) {
@@ -457,6 +462,76 @@ fun SettingsDrawer(
                                 color = metaColor,
                                 lineHeight = 16.sp
                             )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // In-App Update Check Row
+                    LiquidGlassCard(
+                        isDark = isDark,
+                        tint = GlassTint.CYAN,
+                        shape = RoundedCornerShape(16.dp),
+                        borderWidth = 1.dp,
+                        customFill = if (isDark) Color(0xFF1E293B).copy(alpha = 0.85f) else Color(0xFFF1F5F9).copy(alpha = 0.85f),
+                        onClick = { if (!isCheckingUpdates) onCheckForUpdates() },
+                        testTag = "check_updates_button",
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .liquidGlass(
+                                        isDark = isDark,
+                                        tint = GlassTint.CYAN,
+                                        shape = RoundedCornerShape(12.dp),
+                                        borderWidth = 1.dp
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (isCheckingUpdates) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        strokeWidth = 2.dp,
+                                        color = Color(0xFF38BDF8)
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.SystemUpdate,
+                                        contentDescription = if (isArabic) "التحقق من التحديثات" else "Check for Updates",
+                                        tint = Color(0xFF38BDF8),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = if (isArabic) "التحقق من التحديثات" else "Check for Updates",
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = textColor
+                                )
+                                Text(
+                                    text = when {
+                                        isCheckingUpdates ->
+                                            if (isArabic) "جاري البحث عن إصدار جديد..." else "Checking GitHub Releases..."
+                                        hasPendingUpdate ->
+                                            if (isArabic) "يوجد تحديث جديد جاهز للتنزيل ✨" else "New update available ✨"
+                                        else ->
+                                            if (isArabic) "تحديث مباشر من داخل التطبيق (v${BuildConfig.VERSION_NAME})" else "Direct in-app OTA (v${BuildConfig.VERSION_NAME})"
+                                    },
+                                    fontSize = 11.sp,
+                                    color = if (hasPendingUpdate) Color(0xFF38BDF8) else metaColor
+                                )
+                            }
                         }
                     }
 

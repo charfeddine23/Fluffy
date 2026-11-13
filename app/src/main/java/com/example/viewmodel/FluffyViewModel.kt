@@ -8,6 +8,9 @@ import com.example.data.model.ChecklistItem
 import com.example.data.model.GlassTint
 import com.example.data.model.NoteEntity
 import com.example.data.repository.NoteRepository
+import com.example.update.AppUpdateManager
+import com.example.update.ReleaseUpdateInfo
+import com.example.update.UpdateUiState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -36,6 +39,17 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     val searchQuery = MutableStateFlow("")
     val selectedCategory = MutableStateFlow(prefs.getString("selected_category", "ALL") ?: "ALL")
 
+    // Active Editor & Sheets
+    val editingNote = MutableStateFlow<NoteEntity?>(null)
+    val isCreatingNew = MutableStateFlow(false)
+    val showStatsSheet = MutableStateFlow(false)
+    val showVoiceRecorder = MutableStateFlow(false)
+    val snackbarMessage = MutableStateFlow<String?>(null)
+
+    // In-App OTA Update State
+    val updateState = MutableStateFlow<UpdateUiState>(UpdateUiState.Idle)
+    val showUpdateDialog = MutableStateFlow(false)
+
     init {
         val db = FluffyDatabase.getDatabase(application)
         repository = NoteRepository(db.noteDao())
@@ -43,14 +57,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             // Ensure any pre-existing sample notes are cleared and never seeded
             repository.clearSampleNotesIfPresent()
         }
+        checkForUpdates(isManual = false)
     }
-
-    // Active Editor & Sheets
-    val editingNote = MutableStateFlow<NoteEntity?>(null)
-    val isCreatingNew = MutableStateFlow(false)
-    val showStatsSheet = MutableStateFlow(false)
-    val showVoiceRecorder = MutableStateFlow(false)
-    val snackbarMessage = MutableStateFlow<String?>(null)
 
     // Filtered Notes Flow
     val filteredNotes: StateFlow<List<NoteEntity>> = combine(
@@ -308,5 +316,113 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
 
     fun clearSnackbar() {
         snackbarMessage.value = null
+    }
+
+    fun checkForUpdates(isManual: Boolean) {
+        if (updateState.value is UpdateUiState.Checking || updateState.value is UpdateUiState.Downloading) {
+            if (isManual && updateState.value is UpdateUiState.Downloading) {
+                showUpdateDialog.value = true
+            }
+            return
+        }
+
+        viewModelScope.launch {
+            updateState.value = UpdateUiState.Checking
+            when (val result = AppUpdateManager.checkForUpdate()) {
+                is AppUpdateManager.CheckResult.UpdateAvailable -> {
+                    updateState.value = UpdateUiState.Available(result.info)
+                    showUpdateDialog.value = true
+                    if (isManual) {
+                        closeSettingsDrawer()
+                    }
+                }
+                is AppUpdateManager.CheckResult.AlreadyLatest -> {
+                    updateState.value = UpdateUiState.UpToDate
+                    if (isManual) {
+                        showSnackbar(
+                            if (isArabic.value) "أنت تستخدم أحدث إصدار بالفعل ✨" else "You're already on the latest version ✨"
+                        )
+                    }
+                }
+                is AppUpdateManager.CheckResult.Failure -> {
+                    updateState.value = UpdateUiState.Idle
+                    if (isManual) {
+                        showSnackbar(if (isArabic.value) result.messageAr else result.messageEn)
+                    }
+                }
+            }
+        }
+    }
+
+    fun startUpdateDownload(info: ReleaseUpdateInfo) {
+        if (updateState.value is UpdateUiState.Downloading) return
+        val appContext = getApplication<Application>()
+
+        viewModelScope.launch {
+            updateState.value = UpdateUiState.Downloading(
+                info = info,
+                progress = 0f,
+                downloadedBytes = 0L,
+                totalBytes = info.apkSizeBytes
+            )
+            try {
+                val apkFile = AppUpdateManager.downloadApk(
+                    context = appContext,
+                    info = info
+                ) { progress, downloaded, total ->
+                    updateState.value = UpdateUiState.Downloading(
+                        info = info,
+                        progress = progress,
+                        downloadedBytes = downloaded,
+                        totalBytes = total
+                    )
+                }
+
+                if (AppUpdateManager.canInstallPackages(appContext)) {
+                    updateState.value = UpdateUiState.ReadyToInstall(info, apkFile)
+                    AppUpdateManager.installApk(appContext, apkFile)
+                } else {
+                    updateState.value = UpdateUiState.NeedsInstallPermission(info, apkFile)
+                }
+            } catch (e: Exception) {
+                updateState.value = UpdateUiState.Error(
+                    messageAr = "تعذر تحميل التحديث: تأكد من اتصال الإنترنت وحاول مرة أخرى",
+                    messageEn = e.localizedMessage ?: "Failed to download update",
+                    info = info
+                )
+            }
+        }
+    }
+
+    fun installDownloadedUpdate() {
+        val appContext = getApplication<Application>()
+        val currentState = updateState.value
+        val (info, file) = when (currentState) {
+            is UpdateUiState.ReadyToInstall -> currentState.info to currentState.apkFile
+            is UpdateUiState.NeedsInstallPermission -> currentState.info to currentState.apkFile
+            else -> return
+        }
+
+        if (AppUpdateManager.canInstallPackages(appContext)) {
+            updateState.value = UpdateUiState.ReadyToInstall(info, file)
+            AppUpdateManager.installApk(appContext, file)
+        } else {
+            updateState.value = UpdateUiState.NeedsInstallPermission(info, file)
+        }
+    }
+
+    fun retryInstallAfterPermissionIfReady() {
+        val currentState = updateState.value
+        if (currentState is UpdateUiState.NeedsInstallPermission) {
+            val appContext = getApplication<Application>()
+            if (AppUpdateManager.canInstallPackages(appContext)) {
+                updateState.value = UpdateUiState.ReadyToInstall(currentState.info, currentState.apkFile)
+                AppUpdateManager.installApk(appContext, currentState.apkFile)
+            }
+        }
+    }
+
+    fun dismissUpdateDialog() {
+        showUpdateDialog.value = false
     }
 }
