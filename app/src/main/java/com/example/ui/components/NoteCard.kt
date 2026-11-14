@@ -59,6 +59,7 @@ fun NoteCard(
     onToggleFavorite: () -> Unit,
     onToggleChecklistItem: (Int) -> Unit,
     onDelete: () -> Unit,
+    isDragging: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val glassTint = GlassTint.fromId(note.colorPreset)
@@ -74,7 +75,11 @@ fun NoteCard(
         isDark = isDark,
         tint = glassTint,
         shape = RoundedCornerShape(22.dp),
-        borderWidth = if (note.isPinned) 2.2.dp else 1.4.dp,
+        borderWidth = when {
+            isDragging -> 2.8.dp
+            note.isPinned -> 2.2.dp
+            else -> 1.4.dp
+        },
         onClick = onClick,
         testTag = "note_card_${note.id}",
         modifier = modifier.fillMaxWidth()

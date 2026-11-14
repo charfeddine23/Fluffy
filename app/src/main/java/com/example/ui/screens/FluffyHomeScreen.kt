@@ -1,12 +1,17 @@
 package com.example.ui.screens
 
+import android.os.SystemClock
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,9 +27,11 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.items
+import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -39,27 +46,35 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerId
+import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.PointerId
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
-import kotlin.math.abs
+import androidx.compose.ui.zIndex
 import com.example.data.model.GlassTint
+import com.example.data.model.NoteEntity
 import com.example.ui.components.CategoryChips
 import com.example.ui.components.FirebaseAuthDialog
 import com.example.ui.components.FluffyBottomBar
@@ -72,6 +87,8 @@ import com.example.ui.glass.FrostedBackdrop
 import com.example.ui.glass.LiquidGlassCard
 import com.example.update.UpdateUiState
 import com.example.viewmodel.FluffyViewModel
+import kotlinx.coroutines.delay
+import kotlin.math.abs
 
 @Composable
 fun FluffyHomeScreen(
@@ -111,6 +128,123 @@ fun FluffyHomeScreen(
     }
 
     val snackbarHostState = remember { SnackbarHostState() }
+    val haptic = LocalHapticFeedback.current
+    val density = LocalDensity.current
+    val gridState = rememberLazyStaggeredGridState()
+    val listState = rememberLazyListState()
+
+    var displayedNotes by remember { mutableStateOf(notes) }
+    var draggedNoteId by remember { mutableStateOf<Long?>(null) }
+    var currentPointerPos by remember { mutableStateOf(Offset.Zero) }
+    var grabOffsetInsideCard by remember { mutableStateOf(Offset.Zero) }
+    var pendingCommitOrderIds by remember { mutableStateOf<List<Long>?>(null) }
+    var lastSwappedKey by remember { mutableStateOf<Long?>(null) }
+    var lastSwapTimeMs by remember { mutableLongStateOf(0L) }
+    var lastSwapPointerPos by remember { mutableStateOf(Offset.Zero) }
+    val lastKnownTranslationXY = remember { floatArrayOf(0f, 0f) }
+
+    val currentDisplayedNotes by rememberUpdatedState(displayedNotes)
+    val currentIsGridView by rememberUpdatedState(isGridView)
+    val currentNotes by rememberUpdatedState(notes)
+
+    val listStartPaddingPx = with(density) { 16.dp.toPx() }
+    val swapHysteresisPx = with(density) { 28.dp.toPx() }
+
+    LaunchedEffect(notes, draggedNoteId, pendingCommitOrderIds) {
+        if (draggedNoteId == null) {
+            val pending = pendingCommitOrderIds
+            if (pending == null || notes.map { it.id } == pending) {
+                displayedNotes = notes
+                pendingCommitOrderIds = null
+            }
+        }
+    }
+
+    LaunchedEffect(pendingCommitOrderIds) {
+        if (pendingCommitOrderIds != null) {
+            delay(600L)
+            if (draggedNoteId == null) {
+                displayedNotes = currentNotes
+                pendingCommitOrderIds = null
+            }
+        }
+    }
+
+    fun trySwapDraggedNote(pointerPos: Offset, activeDragId: Long, inGrid: Boolean) {
+        val candidateKey: Long? = if (inGrid) {
+            gridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+                val id = info.key as? Long ?: return@firstOrNull false
+                if (id == activeDragId) return@firstOrNull false
+                val left = info.offset.x.toFloat()
+                val right = left + info.size.width
+                val top = info.offset.y.toFloat()
+                val bottom = top + info.size.height
+                pointerPos.x in left..right && pointerPos.y in top..bottom
+            }?.key as? Long
+        } else {
+            listState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+                val id = info.key as? Long ?: return@firstOrNull false
+                if (id == activeDragId) return@firstOrNull false
+                val top = info.offset.toFloat()
+                val bottom = top + info.size
+                pointerPos.y in top..bottom
+            }?.key as? Long
+        }
+
+        if (candidateKey == null) return
+
+        val now = SystemClock.uptimeMillis()
+        val elapsed = now - lastSwapTimeMs
+        val movedDist = (pointerPos - lastSwapPointerPos).getDistance()
+        val allowSwap = candidateKey != lastSwappedKey || (elapsed > 260L && movedDist > swapHysteresisPx)
+        if (!allowSwap) return
+
+        val currentList = currentDisplayedNotes
+        val fromIdx = currentList.indexOfFirst { it.id == activeDragId }
+        val toIdx = currentList.indexOfFirst { it.id == candidateKey }
+        if (fromIdx != -1 && toIdx != -1 && fromIdx != toIdx) {
+            val mutable = currentList.toMutableList()
+            val moved = mutable.removeAt(fromIdx)
+            mutable.add(toIdx, moved)
+            displayedNotes = mutable
+            lastSwappedKey = candidateKey
+            lastSwapTimeMs = now
+            lastSwapPointerPos = pointerPos
+        }
+    }
+
+    // Smooth edge auto-scrolling while holding & dragging a note near the top/bottom edges
+    LaunchedEffect(draggedNoteId, isGridView) {
+        val activeDragId = draggedNoteId ?: return@LaunchedEffect
+        val edgeZonePx = with(density) { 64.dp.toPx() }
+        val maxScrollStep = with(density) { 14.dp.toPx() }
+
+        while (draggedNoteId == activeDragId) {
+            val viewportHeight = if (currentIsGridView) {
+                gridState.layoutInfo.viewportSize.height.toFloat()
+            } else {
+                listState.layoutInfo.viewportSize.height.toFloat()
+            }
+
+            val y = currentPointerPos.y
+            val scrollDelta = when {
+                viewportHeight <= 0f -> 0f
+                y < edgeZonePx -> -((edgeZonePx - y) / edgeZonePx).coerceIn(0f, 1f) * maxScrollStep
+                y > viewportHeight - edgeZonePx -> ((y - (viewportHeight - edgeZonePx)) / edgeZonePx).coerceIn(0f, 1f) * maxScrollStep
+                else -> 0f
+            }
+
+            if (scrollDelta != 0f) {
+                if (currentIsGridView) {
+                    gridState.scrollBy(scrollDelta)
+                } else {
+                    listState.scrollBy(scrollDelta)
+                }
+                trySwapDraggedNote(currentPointerPos, activeDragId, currentIsGridView)
+            }
+            withFrameNanos { }
+        }
+    }
 
     LaunchedEffect(snackbarMsg) {
         snackbarMsg?.let {
@@ -136,6 +270,7 @@ fun FluffyHomeScreen(
                             drawerTriggered = false
                         },
                         onHorizontalDrag = { _, dragAmount ->
+                            if (draggedNoteId != null) return@detectHorizontalDragGestures
                             totalDragX += dragAmount
                             if (!drawerTriggered) {
                                 val halfWidth = size.width / 2f
@@ -254,7 +389,7 @@ fun FluffyHomeScreen(
                 )
 
                 // Notes Content: Staggered Grid, List, or clean empty space
-                if (notes.isEmpty()) {
+                if (displayedNotes.isEmpty()) {
                     if (searchQuery.isNotBlank()) {
                         Box(
                             modifier = Modifier
@@ -275,62 +410,249 @@ fun FluffyHomeScreen(
                         Box(modifier = Modifier.fillMaxSize())
                     }
                 } else {
-                    if (isGridView) {
-                        LazyVerticalStaggeredGrid(
-                            columns = StaggeredGridCells.Fixed(2),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .testTag("notes_grid"),
-                            contentPadding = PaddingValues(
-                                start = 16.dp,
-                                end = 16.dp,
-                                top = 8.dp,
-                                bottom = 100.dp
-                            ),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalItemSpacing = 12.dp
-                        ) {
-                            items(notes, key = { it.id }) { note ->
-                                NoteCard(
-                                    note = note,
-                                    isDark = isDark,
-                                    isArabic = isArabic,
-                                    onClick = { viewModel.openExistingNote(note) },
-                                    onTogglePin = { viewModel.togglePin(note) },
-                                    onToggleFavorite = { viewModel.toggleFavorite(note) },
-                                    onToggleChecklistItem = { idx ->
-                                        viewModel.toggleChecklistItem(note, idx)
-                                    },
-                                    onDelete = { viewModel.deleteNoteDirectly(note) }
-                                )
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .pointerInput(Unit) {
+                                val touchSlop = viewConfiguration.touchSlop
+
+                                fun findHitNoteAndOrigin(pos: Offset): Pair<Long, Offset>? {
+                                    return if (currentIsGridView) {
+                                        gridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+                                            val left = info.offset.x.toFloat()
+                                            val right = left + info.size.width
+                                            val top = info.offset.y.toFloat()
+                                            val bottom = top + info.size.height
+                                            pos.x in left..right && pos.y in top..bottom
+                                        }?.let { info ->
+                                            val id = info.key as? Long ?: return@let null
+                                            id to Offset(info.offset.x.toFloat(), info.offset.y.toFloat())
+                                        }
+                                    } else {
+                                        val rightEdge = size.width.toFloat() - listStartPaddingPx
+                                        listState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+                                            val top = info.offset.toFloat()
+                                            val bottom = top + info.size
+                                            pos.x in listStartPaddingPx..rightEdge && pos.y in top..bottom
+                                        }?.let { info ->
+                                            val id = info.key as? Long ?: return@let null
+                                            id to Offset(listStartPaddingPx, info.offset.toFloat())
+                                        }
+                                    }
+                                }
+
+                                awaitEachGesture {
+                                    val initialEvent = awaitPointerEvent(PointerEventPass.Initial)
+                                    val firstDown = initialEvent.changes.firstOrNull { it.changedToDownIgnoreConsumed() }
+                                        ?: return@awaitEachGesture
+                                    if (initialEvent.changes.count { it.pressed } != 1) return@awaitEachGesture
+
+                                    val pointerId = firstDown.id
+                                    val downPos = firstDown.position
+                                    if (findHitNoteAndOrigin(downPos) == null) return@awaitEachGesture
+
+                                    // Wait 1000 ms (1 full second) while stationary before activating drag
+                                    var latestPos = downPos
+                                    var holdActivated = false
+                                    val startTime = SystemClock.uptimeMillis()
+
+                                    while (true) {
+                                        val remaining = 1000L - (SystemClock.uptimeMillis() - startTime)
+                                        if (remaining <= 0L) {
+                                            holdActivated = true
+                                            break
+                                        }
+                                        val nextEvent = withTimeoutOrNull(remaining) {
+                                            awaitPointerEvent(PointerEventPass.Initial)
+                                        }
+                                        if (nextEvent == null) {
+                                            holdActivated = true
+                                            break
+                                        }
+                                        val activeCount = nextEvent.changes.count { it.pressed }
+                                        val change = nextEvent.changes.firstOrNull { it.id == pointerId }
+                                        if (change == null || !change.pressed || activeCount != 1) {
+                                            return@awaitEachGesture
+                                        }
+                                        latestPos = change.position
+                                        if ((latestPos - downPos).getDistance() > touchSlop) {
+                                            return@awaitEachGesture
+                                        }
+                                    }
+
+                                    if (!holdActivated) return@awaitEachGesture
+                                    val hit = findHitNoteAndOrigin(latestPos) ?: return@awaitEachGesture
+                                    if (currentDisplayedNotes.size <= 1) return@awaitEachGesture
+
+                                    val (hitNoteId, cardOrigin) = hit
+                                    draggedNoteId = hitNoteId
+                                    currentPointerPos = latestPos
+                                    grabOffsetInsideCard = latestPos - cardOrigin
+                                    lastKnownTranslationXY[0] = 0f
+                                    lastKnownTranslationXY[1] = 0f
+                                    lastSwappedKey = null
+                                    lastSwapTimeMs = 0L
+                                    lastSwapPointerPos = latestPos
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+
+                                    while (true) {
+                                        val dragEvent = awaitPointerEvent(PointerEventPass.Initial)
+                                        val change = dragEvent.changes.firstOrNull { it.id == pointerId }
+                                        if (change == null || !change.pressed) {
+                                            dragEvent.changes.forEach { it.consume() }
+                                            break
+                                        }
+                                        dragEvent.changes.forEach { it.consume() }
+                                        latestPos = change.position
+                                        currentPointerPos = latestPos
+                                        trySwapDraggedNote(latestPos, hitNoteId, currentIsGridView)
+                                    }
+
+                                    val committed = currentDisplayedNotes.toList()
+                                    pendingCommitOrderIds = committed.map { it.id }
+                                    draggedNoteId = null
+                                    lastKnownTranslationXY[0] = 0f
+                                    lastKnownTranslationXY[1] = 0f
+                                    viewModel.reorderNotes(committed)
+                                }
                             }
-                        }
-                    } else {
-                        LazyColumn(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .testTag("notes_list"),
-                            contentPadding = PaddingValues(
-                                start = 16.dp,
-                                end = 16.dp,
-                                top = 8.dp,
-                                bottom = 100.dp
-                            ),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            items(notes, key = { it.id }) { note ->
-                                NoteCard(
-                                    note = note,
-                                    isDark = isDark,
-                                    isArabic = isArabic,
-                                    onClick = { viewModel.openExistingNote(note) },
-                                    onTogglePin = { viewModel.togglePin(note) },
-                                    onToggleFavorite = { viewModel.toggleFavorite(note) },
-                                    onToggleChecklistItem = { idx ->
-                                        viewModel.toggleChecklistItem(note, idx)
-                                    },
-                                    onDelete = { viewModel.deleteNoteDirectly(note) }
-                                )
+                    ) {
+                        if (isGridView) {
+                            LazyVerticalStaggeredGrid(
+                                state = gridState,
+                                columns = StaggeredGridCells.Fixed(2),
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .testTag("notes_grid"),
+                                contentPadding = PaddingValues(
+                                    start = 16.dp,
+                                    end = 16.dp,
+                                    top = 8.dp,
+                                    bottom = 100.dp
+                                ),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalItemSpacing = 12.dp
+                            ) {
+                                items(displayedNotes, key = { it.id }) { note ->
+                                    val isDragging = draggedNoteId == note.id
+                                    val dragScale by animateFloatAsState(
+                                        targetValue = if (isDragging) 1.04f else 1f,
+                                        label = "grid_drag_scale"
+                                    )
+                                    val itemModifier = if (isDragging) {
+                                        Modifier
+                                            .zIndex(10f)
+                                            .graphicsLayer {
+                                                val origin = gridState.layoutInfo.visibleItemsInfo
+                                                    .firstOrNull { it.key == note.id }
+                                                    ?.offset
+                                                    ?.let { Offset(it.x.toFloat(), it.y.toFloat()) }
+                                                val tx: Float
+                                                val ty: Float
+                                                if (origin != null) {
+                                                    val computed = currentPointerPos - origin - grabOffsetInsideCard
+                                                    lastKnownTranslationXY[0] = computed.x
+                                                    lastKnownTranslationXY[1] = computed.y
+                                                    tx = computed.x
+                                                    ty = computed.y
+                                                } else {
+                                                    tx = lastKnownTranslationXY[0]
+                                                    ty = lastKnownTranslationXY[1]
+                                                }
+                                                translationX = tx
+                                                translationY = ty
+                                                scaleX = dragScale
+                                                scaleY = dragScale
+                                                shape = RoundedCornerShape(22.dp)
+                                                shadowElevation = 24.dp.toPx()
+                                            }
+                                    } else {
+                                        Modifier.animateItem()
+                                    }
+
+                                    NoteCard(
+                                        note = note,
+                                        isDark = isDark,
+                                        isArabic = isArabic,
+                                        isDragging = isDragging,
+                                        onClick = { viewModel.openExistingNote(note) },
+                                        onTogglePin = { viewModel.togglePin(note) },
+                                        onToggleFavorite = { viewModel.toggleFavorite(note) },
+                                        onToggleChecklistItem = { idx ->
+                                            viewModel.toggleChecklistItem(note, idx)
+                                        },
+                                        onDelete = { viewModel.deleteNoteDirectly(note) },
+                                        modifier = itemModifier
+                                    )
+                                }
+                            }
+                        } else {
+                            LazyColumn(
+                                state = listState,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .testTag("notes_list"),
+                                contentPadding = PaddingValues(
+                                    start = 16.dp,
+                                    end = 16.dp,
+                                    top = 8.dp,
+                                    bottom = 100.dp
+                                ),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                items(displayedNotes, key = { it.id }) { note ->
+                                    val isDragging = draggedNoteId == note.id
+                                    val dragScale by animateFloatAsState(
+                                        targetValue = if (isDragging) 1.03f else 1f,
+                                        label = "list_drag_scale"
+                                    )
+                                    val itemModifier = if (isDragging) {
+                                        Modifier
+                                            .zIndex(10f)
+                                            .graphicsLayer {
+                                                val origin = listState.layoutInfo.visibleItemsInfo
+                                                    .firstOrNull { it.key == note.id }
+                                                    ?.offset
+                                                    ?.let { Offset(listStartPaddingPx, it.toFloat()) }
+                                                val tx: Float
+                                                val ty: Float
+                                                if (origin != null) {
+                                                    val computed = currentPointerPos - origin - grabOffsetInsideCard
+                                                    lastKnownTranslationXY[0] = computed.x
+                                                    lastKnownTranslationXY[1] = computed.y
+                                                    tx = computed.x
+                                                    ty = computed.y
+                                                } else {
+                                                    tx = lastKnownTranslationXY[0]
+                                                    ty = lastKnownTranslationXY[1]
+                                                }
+                                                translationX = tx
+                                                translationY = ty
+                                                scaleX = dragScale
+                                                scaleY = dragScale
+                                                shape = RoundedCornerShape(22.dp)
+                                                shadowElevation = 24.dp.toPx()
+                                            }
+                                    } else {
+                                        Modifier.animateItem()
+                                    }
+
+                                    NoteCard(
+                                        note = note,
+                                        isDark = isDark,
+                                        isArabic = isArabic,
+                                        isDragging = isDragging,
+                                        onClick = { viewModel.openExistingNote(note) },
+                                        onTogglePin = { viewModel.togglePin(note) },
+                                        onToggleFavorite = { viewModel.toggleFavorite(note) },
+                                        onToggleChecklistItem = { idx ->
+                                            viewModel.toggleChecklistItem(note, idx)
+                                        },
+                                        onDelete = { viewModel.deleteNoteDirectly(note) },
+                                        modifier = itemModifier
+                                    )
+                                }
                             }
                         }
                     }

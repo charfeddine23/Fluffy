@@ -27,6 +27,8 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.UUID
 
@@ -76,6 +78,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
 
     private var cloudSyncJob: Job? = null
     private var lastAppliedRemoteSettingsAt = prefs.getLong("last_remote_settings_at", 0L)
+    private val noteSaveMutex = Mutex()
 
     val vaultItems: StateFlow<List<VaultItemEntity>> = vaultDao.getAllVaultItems()
         .stateIn(
@@ -89,6 +92,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             // Reconcile and guarantee literal recovery from phone storage if DB was reset
             recoverLiteralStorageIfNeeded()
             backfillMissingSyncIds()
+            backfillSortOrderIfNeeded()
 
             // Observe Firebase Authentication & automatically bind real-time Cloud Firestore listeners
             launch {
@@ -150,6 +154,16 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         val notes = repository.getAllNotesOnce()
         notes.filter { it.syncId.isBlank() }.forEach { note ->
             repository.insertOrUpdate(note.copy(syncId = UUID.randomUUID().toString()))
+        }
+    }
+
+    private suspend fun backfillSortOrderIfNeeded() = withContext(Dispatchers.IO) {
+        val notes = repository.getAllNotesOnce()
+        if (notes.size > 1 && notes.all { it.sortOrder == 0L }) {
+            val indexed = notes.mapIndexed { idx, note ->
+                note.copy(sortOrder = idx * 1000L)
+            }
+            repository.updateSortOrders(indexed)
         }
     }
 
@@ -470,7 +484,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         checklist: List<ChecklistItem>,
         audioDurationSec: Int
     ) {
-        val current = editingNote.value ?: return
+        if (editingNote.value == null) return
         val activeChecklist = checklist.filter { it.text.isNotEmpty() }
 
         // Only skip when completely empty (never touch non-empty literal whitespace)
@@ -478,25 +492,33 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
 
-        val ensuredSyncId = current.syncId.ifBlank { UUID.randomUUID().toString() }
-        val updatedNote = current.copy(
-            title = title,
-            content = content,
-            category = category.ifBlank { if (isArabic.value) "عام" else "General" },
-            colorPreset = colorPreset,
-            isPinned = isPinned,
-            isFavorite = isFavorite,
-            checklistJson = ChecklistItem.listToJson(activeChecklist),
-            audioDurationSec = audioDurationSec,
-            updatedAt = System.currentTimeMillis(),
-            syncId = ensuredSyncId
-        )
-
         viewModelScope.launch {
-            val id = repository.insertOrUpdate(updatedNote)
-            val saved = if (current.id == 0L && id > 0) updatedNote.copy(id = id) else updatedNote
-            editingNote.value = saved
-            syncNoteUpsertIfSignedIn(saved)
+            noteSaveMutex.withLock {
+                val current = editingNote.value ?: return@withLock
+                val ensuredSyncId = current.syncId.ifBlank { UUID.randomUUID().toString() }
+                val targetSortOrder = if (current.id == 0L) {
+                    repository.getMinSortOrder() - 1000L
+                } else {
+                    current.sortOrder
+                }
+                val updatedNote = current.copy(
+                    title = title,
+                    content = content,
+                    category = category.ifBlank { if (isArabic.value) "عام" else "General" },
+                    colorPreset = colorPreset,
+                    isPinned = isPinned,
+                    isFavorite = isFavorite,
+                    checklistJson = ChecklistItem.listToJson(activeChecklist),
+                    audioDurationSec = audioDurationSec,
+                    sortOrder = targetSortOrder,
+                    updatedAt = System.currentTimeMillis(),
+                    syncId = ensuredSyncId
+                )
+                val id = repository.insertOrUpdate(updatedNote)
+                val saved = if (current.id == 0L && id > 0) updatedNote.copy(id = id) else updatedNote
+                editingNote.value = saved
+                syncNoteUpsertIfSignedIn(saved)
+            }
         }
     }
 
@@ -510,7 +532,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         checklist: List<ChecklistItem>,
         audioDurationSec: Int
     ) {
-        val current = editingNote.value ?: return
+        if (editingNote.value == null) return
         val activeChecklist = checklist.filter { it.text.isNotEmpty() }
 
         if (title.isEmpty() && content.isEmpty() && activeChecklist.isEmpty() && audioDurationSec == 0) {
@@ -518,26 +540,85 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
 
-        val ensuredSyncId = current.syncId.ifBlank { UUID.randomUUID().toString() }
-        val updatedNote = current.copy(
-            title = title,
-            content = content,
-            category = category.ifBlank { if (isArabic.value) "عام" else "General" },
-            colorPreset = colorPreset,
-            isPinned = isPinned,
-            isFavorite = isFavorite,
-            checklistJson = ChecklistItem.listToJson(activeChecklist),
-            audioDurationSec = audioDurationSec,
-            updatedAt = System.currentTimeMillis(),
-            syncId = ensuredSyncId
-        )
-
         viewModelScope.launch {
-            val id = repository.insertOrUpdate(updatedNote)
-            val saved = if (current.id == 0L && id > 0) updatedNote.copy(id = id) else updatedNote
-            syncNoteUpsertIfSignedIn(saved)
-            closeEditor()
-            showSnackbar(if (isArabic.value) "تم حفظ الملاحظة حرفياً بنجاح ✨" else "Note saved verbatim ✨")
+            noteSaveMutex.withLock {
+                val current = editingNote.value ?: return@withLock
+                val ensuredSyncId = current.syncId.ifBlank { UUID.randomUUID().toString() }
+                val targetSortOrder = if (current.id == 0L) {
+                    repository.getMinSortOrder() - 1000L
+                } else {
+                    current.sortOrder
+                }
+                val updatedNote = current.copy(
+                    title = title,
+                    content = content,
+                    category = category.ifBlank { if (isArabic.value) "عام" else "General" },
+                    colorPreset = colorPreset,
+                    isPinned = isPinned,
+                    isFavorite = isFavorite,
+                    checklistJson = ChecklistItem.listToJson(activeChecklist),
+                    audioDurationSec = audioDurationSec,
+                    sortOrder = targetSortOrder,
+                    updatedAt = System.currentTimeMillis(),
+                    syncId = ensuredSyncId
+                )
+                val id = repository.insertOrUpdate(updatedNote)
+                val saved = if (current.id == 0L && id > 0) updatedNote.copy(id = id) else updatedNote
+                syncNoteUpsertIfSignedIn(saved)
+                closeEditor()
+                showSnackbar(if (isArabic.value) "تم حفظ الملاحظة حرفياً بنجاح ✨" else "Note saved verbatim ✨")
+            }
+        }
+    }
+
+    fun reorderNotes(reorderedVisibleNotes: List<NoteEntity>) {
+        if (reorderedVisibleNotes.size <= 1) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val allNotes = repository.getAllNotesOnce()
+            if (allNotes.isEmpty()) return@launch
+
+            val visibleIds = reorderedVisibleNotes.map { it.id }.toHashSet()
+            val queue = ArrayDeque(reorderedVisibleNotes)
+            val mergedGlobal = mutableListOf<NoteEntity>()
+
+            for (note in allNotes) {
+                if (note.id in visibleIds && queue.isNotEmpty()) {
+                    mergedGlobal.add(queue.removeFirst())
+                } else {
+                    mergedGlobal.add(note)
+                }
+            }
+            while (queue.isNotEmpty()) {
+                mergedGlobal.add(queue.removeFirst())
+            }
+
+            val hasDuplicateSortOrders = allNotes.map { it.sortOrder }.distinct().size != allNotes.size
+            val now = System.currentTimeMillis()
+            val changedNotes = mutableListOf<NoteEntity>()
+            mergedGlobal.forEachIndexed { index, note ->
+                val targetSortOrder = index * 1000L
+                if (hasDuplicateSortOrders || note.sortOrder != targetSortOrder) {
+                    changedNotes.add(
+                        note.copy(
+                            sortOrder = targetSortOrder,
+                            updatedAt = now,
+                            syncId = note.syncId.ifBlank { UUID.randomUUID().toString() }
+                        )
+                    )
+                }
+            }
+
+            if (changedNotes.isNotEmpty()) {
+                repository.updateSortOrders(changedNotes)
+                val uid = currentUser.value?.uid
+                if (uid != null) {
+                    changedNotes.forEach { changed ->
+                        runCatching {
+                            FirebaseSyncRepository.upsertNote(getApplication(), uid, changed)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -847,11 +928,20 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         val existingSyncIds = existingNotes.map { it.syncId }.toHashSet()
         val uid = currentUser.value?.uid
 
+        var nextFallbackSortOrder = (existingNotes.maxOfOrNull { it.sortOrder } ?: 0L) + 1000L
+        val allBundleSortOrdersZero = bundle.notes.size > 1 && bundle.notes.all { it.sortOrder == 0L }
+
         bundle.notes.forEach { note ->
             val key = "${note.createdAt}|${note.title}|${note.content}"
             if (key !in existingKeys && note.syncId !in existingSyncIds) {
+                val resolvedSortOrder = if (allBundleSortOrdersZero || (note.sortOrder == 0L && existingNotes.isNotEmpty())) {
+                    nextFallbackSortOrder.also { nextFallbackSortOrder += 1000L }
+                } else {
+                    note.sortOrder
+                }
                 val prepared = note.copy(
                     id = 0L,
+                    sortOrder = resolvedSortOrder,
                     syncId = note.syncId.ifBlank { UUID.randomUUID().toString() }
                 )
                 db.noteDao().insertNote(prepared)

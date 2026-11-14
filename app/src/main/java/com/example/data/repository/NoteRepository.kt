@@ -15,6 +15,10 @@ class NoteRepository(private val noteDao: NoteDao) {
 
     suspend fun getAllNotesOnce(): List<NoteEntity> = noteDao.getAllNotesOnce()
 
+    suspend fun getMinSortOrder(): Long = noteDao.getMinSortOrder() ?: 0L
+
+    suspend fun updateSortOrders(notes: List<NoteEntity>) = noteDao.updateSortOrders(notes)
+
     suspend fun getNoteBySyncId(syncId: String): NoteEntity? = noteDao.getNoteBySyncId(syncId)
 
     suspend fun insertOrUpdate(note: NoteEntity): Long {

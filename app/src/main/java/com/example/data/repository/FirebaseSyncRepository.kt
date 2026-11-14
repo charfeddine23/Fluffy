@@ -184,6 +184,7 @@ object FirebaseSyncRepository {
             "audioDurationSec" to note.audioDurationSec,
             "createdAt" to note.createdAt,
             "updatedAt" to note.updatedAt,
+            "sortOrder" to note.sortOrder,
             "serverUpdatedAt" to FieldValue.serverTimestamp()
         )
         try {
@@ -446,7 +447,8 @@ object FirebaseSyncRepository {
             audioDurationSec = (getLong("audioDurationSec") ?: 0L).toInt(),
             createdAt = getLong("createdAt") ?: System.currentTimeMillis(),
             updatedAt = getLong("updatedAt") ?: System.currentTimeMillis(),
-            syncId = sid
+            syncId = sid,
+            sortOrder = getLong("sortOrder") ?: 0L
         )
     }
 

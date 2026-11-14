@@ -446,6 +446,7 @@ object LocalDeviceStorageManager {
     private fun noteToJson(n: NoteEntity): JSONObject = JSONObject().apply {
         put("id", n.id)
         put("syncId", n.syncId)
+        put("sortOrder", n.sortOrder)
         put("title", n.title)
         put("content", n.content)
         put("category", n.category)
@@ -472,7 +473,8 @@ object LocalDeviceStorageManager {
         audioDurationSec = obj.optInt("audioDurationSec", 0),
         createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
         updatedAt = obj.optLong("updatedAt", System.currentTimeMillis()),
-        syncId = obj.optString("syncId", "").ifBlank { UUID.randomUUID().toString() }
+        syncId = obj.optString("syncId", "").ifBlank { UUID.randomUUID().toString() },
+        sortOrder = obj.optLong("sortOrder", 0L)
     )
 
     private fun vaultItemToJson(v: VaultItemEntity, includeRawFile: Boolean): JSONObject = JSONObject().apply {

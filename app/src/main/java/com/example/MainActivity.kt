@@ -67,6 +67,7 @@ class MainActivity : FragmentActivity() {
             val isArabic by viewModel.isArabic.collectAsState()
             val isAppLocked by viewModel.isAppLocked.collectAsState()
             val editingNote by viewModel.editingNote.collectAsState()
+            val isCreatingNew by viewModel.isCreatingNew.collectAsState()
             val isVaultOpen by viewModel.isVaultOpen.collectAsState()
             val vaultItems by viewModel.vaultItems.collectAsState()
             val updateState by viewModel.updateState.collectAsState()
@@ -202,6 +203,7 @@ class MainActivity : FragmentActivity() {
                                         is FluffyScreenState.Editor -> {
                                             NoteEditorScreen(
                                                 note = screen.note,
+                                                isCreatingNew = isCreatingNew,
                                                 isDark = isDark,
                                                 isArabic = isArabic,
                                                 onBack = { viewModel.closeEditor() },

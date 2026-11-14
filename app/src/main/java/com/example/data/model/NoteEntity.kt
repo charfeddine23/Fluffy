@@ -19,5 +19,6 @@ data class NoteEntity(
     val audioDurationSec: Int = 0,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
-    val syncId: String = UUID.randomUUID().toString()
+    val syncId: String = UUID.randomUUID().toString(),
+    val sortOrder: Long = 0L
 )
