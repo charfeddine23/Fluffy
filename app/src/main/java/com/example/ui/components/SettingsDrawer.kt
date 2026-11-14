@@ -36,40 +36,25 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.CloudDone
-import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Fingerprint
-import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Login
-import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.PersonOutline
-import androidx.compose.material.icons.filled.Save
-import androidx.compose.material.icons.filled.SwapHoriz
-import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
-import com.example.data.repository.CloudSyncStatus
-import com.example.data.repository.FirebaseUserInfo
 import com.example.ui.theme.AppThemeRegistry
 import com.example.ui.theme.LocalAppThemePreset
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -107,15 +92,6 @@ fun SettingsDrawer(
     isCheckingUpdates: Boolean = false,
     hasPendingUpdate: Boolean = false,
     onCheckForUpdates: () -> Unit = {},
-    currentUser: FirebaseUserInfo? = null,
-    isGuestMode: Boolean = false,
-    cloudSyncStatus: CloudSyncStatus = CloudSyncStatus.Disconnected,
-    onOpenAuthDialog: () -> Unit = {},
-    onReturnToWelcomeScreen: () -> Unit = {},
-    onSyncCloudNow: () -> Unit = {},
-    onSignOutFirebase: () -> Unit = {},
-    onExportLocalBackup: () -> Unit = {},
-    onImportLocalBackup: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     if (isOpen) {
@@ -519,284 +495,6 @@ fun SettingsDrawer(
                         isDark = isDark,
                         onClick = onToggleViewMode
                     )
-
-                    Spacer(modifier = Modifier.height(20.dp))
-
-                    // SECTION 2B: Firebase Auth & Cloud Firestore Sync + Local Phone Storage
-                    DrawerSectionHeader(
-                        title = if (isArabic) "السحابة والمزامنة (Firebase)" else "Firebase Cloud Sync & Storage",
-                        color = Color(0xFF38BDF8)
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    val isSyncBusy = cloudSyncStatus is CloudSyncStatus.Syncing
-
-                    LiquidGlassCard(
-                        isDark = isDark,
-                        tint = if (currentUser != null) GlassTint.EMERALD else GlassTint.CYAN,
-                        shape = RoundedCornerShape(18.dp),
-                        borderWidth = 1.2.dp,
-                        customFill = if (isDark) Color(0xFF1E293B).copy(alpha = 0.85f) else Color(0xFFF1F5F9).copy(alpha = 0.85f),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            // User Auth Status & Primary Action
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Icon(
-                                    imageVector = when {
-                                        currentUser != null -> Icons.Default.CloudDone
-                                        isGuestMode -> Icons.Default.PersonOutline
-                                        else -> Icons.Default.CloudQueue
-                                    },
-                                    contentDescription = null,
-                                    tint = when {
-                                        currentUser != null -> Color(0xFF10B981)
-                                        else -> Color(0xFF38BDF8)
-                                    },
-                                    modifier = Modifier.size(26.dp)
-                                )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = when {
-                                            currentUser != null -> {
-                                                currentUser.displayName?.takeIf { it.isNotBlank() }
-                                                    ?: currentUser.email
-                                                    ?: "Google User"
-                                            }
-                                            isGuestMode -> {
-                                                if (isArabic) "وضع الضيف (Guest Mode)" else "Guest Mode (Local)"
-                                            }
-                                            else -> {
-                                                if (isArabic) "غير متصل بالسحابة" else "Not signed in"
-                                            }
-                                        },
-                                        fontSize = 13.5.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = textColor
-                                    )
-                                    val subText = if (currentUser != null) {
-                                        when (cloudSyncStatus) {
-                                            CloudSyncStatus.Syncing ->
-                                                if (isArabic) "جاري المزامنة الفورية..." else "Syncing with Firestore..."
-                                            is CloudSyncStatus.Synced -> {
-                                                val formatted = SimpleDateFormat("HH:mm", Locale.getDefault())
-                                                    .format(Date(cloudSyncStatus.lastSyncAt))
-                                                if (isArabic)
-                                                    "مزامنة فورية مفعّلة • ${cloudSyncStatus.syncedCount} ملاحظة ($formatted)"
-                                                else
-                                                    "Real-time sync on • ${cloudSyncStatus.syncedCount} notes ($formatted)"
-                                            }
-                                            is CloudSyncStatus.Error ->
-                                                if (isArabic) cloudSyncStatus.messageAr else cloudSyncStatus.messageEn
-                                            CloudSyncStatus.Disconnected ->
-                                                if (isArabic) "جاري الاتصال بـ Cloud Firestore..." else "Connecting to Firestore..."
-                                        }
-                                    } else {
-                                        if (isArabic)
-                                            "حفظ محلي على الهاتف • اربط Google للمزامنة"
-                                        else
-                                            "Saved locally on device • Link Google to sync"
-                                    }
-                                    Text(
-                                        text = subText,
-                                        fontSize = 11.sp,
-                                        color = if (cloudSyncStatus is CloudSyncStatus.Error) Color(0xFFF43F5E) else metaColor
-                                    )
-                                }
-                            }
-
-                            if (currentUser == null) {
-                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .testTag("firebase_auth_open_button")
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .background(Color(0xFF0EA5E9).copy(alpha = 0.20f))
-                                            .clickable(onClick = onOpenAuthDialog)
-                                            .padding(horizontal = 12.dp, vertical = 12.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Login,
-                                            contentDescription = null,
-                                            tint = Color(0xFF38BDF8),
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = if (isArabic) "إنشاء حساب / الربط بحساب Google" else "Create / Link Google Account",
-                                            fontSize = 12.5.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF38BDF8)
-                                        )
-                                    }
-
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .testTag("drawer_switch_account_screen_button")
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .background(Color(0xFF64748B).copy(alpha = 0.14f))
-                                            .clickable(onClick = onReturnToWelcomeScreen)
-                                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.SwapHoriz,
-                                            contentDescription = null,
-                                            tint = metaColor,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = if (isArabic) "شاشة اختيار الحساب أو الضيف" else "Account / Guest Welcome Screen",
-                                            fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = textColor
-                                        )
-                                    }
-                                }
-                            } else {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .testTag("firebase_sync_now_button")
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .background(Color(0xFF0EA5E9).copy(alpha = 0.18f))
-                                            .clickable(enabled = !isSyncBusy, onClick = onSyncCloudNow)
-                                            .padding(horizontal = 10.dp, vertical = 11.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.Center
-                                    ) {
-                                        if (isSyncBusy) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.size(16.dp),
-                                                strokeWidth = 2.dp,
-                                                color = Color(0xFF38BDF8)
-                                            )
-                                        } else {
-                                            Icon(
-                                                imageVector = Icons.Default.Sync,
-                                                contentDescription = "Sync Now",
-                                                tint = Color(0xFF38BDF8),
-                                                modifier = Modifier.size(17.dp)
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = if (isArabic) "مزامنة الآن" else "Sync Now",
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF38BDF8)
-                                        )
-                                    }
-
-                                    Row(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .testTag("firebase_sign_out_button")
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .background(Color(0xFFF43F5E).copy(alpha = 0.16f))
-                                            .clickable(onClick = onSignOutFirebase)
-                                            .padding(horizontal = 10.dp, vertical = 11.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Logout,
-                                            contentDescription = "Sign Out",
-                                            tint = Color(0xFFF43F5E),
-                                            modifier = Modifier.size(17.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = if (isArabic) "تسجيل الخروج" else "Sign Out",
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFFF43F5E)
-                                        )
-                                    }
-                                }
-                            }
-
-                            HorizontalDivider(color = metaColor.copy(alpha = 0.16f))
-
-                            // Literal Phone Storage Export / Import Backup
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .testTag("local_backup_export_button")
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(Color(0xFF10B981).copy(alpha = 0.14f))
-                                        .clickable(onClick = onExportLocalBackup)
-                                        .padding(horizontal = 8.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Save,
-                                        contentDescription = null,
-                                        tint = Color(0xFF10B981),
-                                        modifier = Modifier.size(15.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(5.dp))
-                                    Text(
-                                        text = if (isArabic) "حفظ بالهاتف" else "Save Phone",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF10B981)
-                                    )
-                                }
-
-                                Row(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .testTag("local_backup_import_button")
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(Color(0xFFF59E0B).copy(alpha = 0.14f))
-                                        .clickable(onClick = onImportLocalBackup)
-                                        .padding(horizontal = 8.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.FolderOpen,
-                                        contentDescription = null,
-                                        tint = Color(0xFFF59E0B),
-                                        modifier = Modifier.size(15.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(5.dp))
-                                    Text(
-                                        text = if (isArabic) "استعادة من الهاتف" else "Load Phone",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFFF59E0B)
-                                    )
-                                }
-                            }
-                        }
-                    }
 
                     Spacer(modifier = Modifier.height(20.dp))
 

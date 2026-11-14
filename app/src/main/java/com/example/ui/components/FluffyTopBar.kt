@@ -25,10 +25,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudQueue
-import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Insights
-import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.PersonOutline
 import androidx.compose.material.icons.filled.Search
@@ -62,11 +60,17 @@ fun FluffyTopBar(
     isGridView: Boolean,
     searchQuery: String,
     onSearchChange: (String) -> Unit,
-    onToggleTheme: () -> Unit,
+    onOpenProfile: () -> Unit,
     onToggleLanguage: (() -> Unit)? = null,
     onToggleViewMode: () -> Unit,
     onOpenStats: () -> Unit,
     onOpenSettings: () -> Unit,
+    profilePhotoUrl: String? = null,
+    profileAvatarChoice: String = "",
+    profileFirstName: String = "",
+    profileLastName: String = "",
+    profileDisplayName: String? = null,
+    profileEmail: String? = null,
     isCloudSignedIn: Boolean = false,
     isGuestMode: Boolean = false,
     onOpenCloudAuth: () -> Unit = {},
@@ -164,14 +168,32 @@ fun FluffyTopBar(
                 )
 
 
-                // Theme Toggle (Sun/Moon)
-                GlassIconAction(
-                    icon = if (isDark) Icons.Default.LightMode else Icons.Default.DarkMode,
-                    contentDescription = if (isArabic) "تبديل المظهر" else "Toggle Theme",
-                    isDark = isDark,
-                    testTag = "theme_toggle",
-                    onClick = onToggleTheme
-                )
+                // Circular Profile Photo (Navigates directly to Account & Sync Profile)
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .testTag("topbar_profile_button")
+                        .clip(CircleShape)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = ripple(bounded = true),
+                            onClick = onOpenProfile
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    ProfileAvatar(
+                        avatarChoice = profileAvatarChoice,
+                        photoUrl = profilePhotoUrl,
+                        firstName = profileFirstName,
+                        lastName = profileLastName,
+                        displayName = profileDisplayName,
+                        email = profileEmail,
+                        isDark = isDark,
+                        size = 40.dp,
+                        borderWidth = 1.8.dp,
+                        fontSize = 14.sp
+                    )
+                }
             }
         }
 

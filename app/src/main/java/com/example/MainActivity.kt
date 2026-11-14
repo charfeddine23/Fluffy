@@ -35,7 +35,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.auth.BiometricAuthManager
 import com.example.auth.BiometricAvailability
 import com.example.data.model.NoteEntity
+import com.example.ui.components.FirebaseAuthDialog
 import com.example.ui.components.UpdateAvailableDialog
+import com.example.ui.screens.AccountProfileScreen
 import com.example.ui.screens.ArchiveScreen
 import com.example.ui.screens.AuthWelcomeScreen
 import com.example.ui.screens.BiometricLockScreen
@@ -55,6 +57,7 @@ private sealed interface FluffyScreenState {
     data object Themes : FluffyScreenState
     data object Trash : FluffyScreenState
     data object Archive : FluffyScreenState
+    data object Account : FluffyScreenState
     data class Editor(val note: NoteEntity) : FluffyScreenState
     data object Vault : FluffyScreenState
 }
@@ -76,6 +79,7 @@ class MainActivity : FragmentActivity() {
             val isThemesScreenOpen by viewModel.isThemesScreenOpen.collectAsState()
             val isTrashScreenOpen by viewModel.isTrashScreenOpen.collectAsState()
             val isArchiveScreenOpen by viewModel.isArchiveScreenOpen.collectAsState()
+            val isAccountScreenOpen by viewModel.isAccountScreenOpen.collectAsState()
             val trashedNotes by viewModel.trashedNotes.collectAsState()
             val archivedNotes by viewModel.archivedNotes.collectAsState()
             val isAppLocked by viewModel.isAppLocked.collectAsState()
@@ -90,6 +94,13 @@ class MainActivity : FragmentActivity() {
             val isAuthBusy by viewModel.isAuthBusy.collectAsState()
             val signInErrorMessage by viewModel.authErrorMessage.collectAsState()
             val signInInfoMessage by viewModel.authInfoMessage.collectAsState()
+            val cloudSyncStatus by viewModel.cloudSyncStatus.collectAsState()
+            val showAuthDialog by viewModel.showAuthDialog.collectAsState()
+            val profileFirstName by viewModel.profileFirstName.collectAsState()
+            val profileLastName by viewModel.profileLastName.collectAsState()
+            val profileAvatarChoice by viewModel.profileAvatarChoice.collectAsState()
+            val useGoogleAccountName by viewModel.useGoogleAccountName.collectAsState()
+            val snackbarMessage by viewModel.snackbarMessage.collectAsState()
 
             val activeThemePreset = remember(selectedThemeId, isDark) {
                 AppThemeRegistry.resolve(selectedThemeId, isDark)
@@ -149,6 +160,7 @@ class MainActivity : FragmentActivity() {
                                 currentUser == null && !isGuestMode -> FluffyScreenState.Welcome
                                 isVaultOpen -> FluffyScreenState.Vault
                                 editingNote != null -> FluffyScreenState.Editor(editingNote!!)
+                                isAccountScreenOpen -> FluffyScreenState.Account
                                 isTrashScreenOpen -> FluffyScreenState.Trash
                                 isArchiveScreenOpen -> FluffyScreenState.Archive
                                 isThemesScreenOpen -> FluffyScreenState.Themes
@@ -165,6 +177,7 @@ class MainActivity : FragmentActivity() {
                                             FluffyScreenState.Themes -> "themes"
                                             FluffyScreenState.Trash -> "trash"
                                             FluffyScreenState.Archive -> "archive"
+                                            FluffyScreenState.Account -> "account"
                                             FluffyScreenState.Vault -> "vault"
                                             is FluffyScreenState.Editor -> "editor"
                                         }
@@ -185,7 +198,8 @@ class MainActivity : FragmentActivity() {
                                             targetState is FluffyScreenState.Editor ||
                                                 targetState is FluffyScreenState.Themes ||
                                                 targetState is FluffyScreenState.Trash ||
-                                                targetState is FluffyScreenState.Archive -> {
+                                                targetState is FluffyScreenState.Archive ||
+                                                targetState is FluffyScreenState.Account -> {
                                                 (slideInHorizontally { width -> if (isArabic) -width else width } + fadeIn())
                                                     .togetherWith(slideOutHorizontally { width -> if (isArabic) width else -width } + fadeOut())
                                             }
@@ -213,16 +227,15 @@ class MainActivity : FragmentActivity() {
                                                 onEmailSignIn = { email, password ->
                                                     viewModel.signInWithEmailPassword(email, password)
                                                 },
-                                                onEmailSignUp = { email, password, confirm ->
-                                                    viewModel.signUpWithEmailPassword(email, password, confirm)
+                                                onEmailSignUp = { username, email, password, confirm ->
+                                                    viewModel.signUpWithEmailPassword(username, email, password, confirm)
                                                 },
                                                 onResetPassword = { email ->
                                                     viewModel.sendPasswordResetEmail(email)
                                                 },
                                                 onClearAuthMessages = {
                                                     viewModel.clearAuthMessages()
-                                                },
-                                                onContinueAsGuest = { viewModel.enterGuestMode() }
+                                                }
                                             )
                                         }
                                         FluffyScreenState.Themes -> {
@@ -256,6 +269,52 @@ class MainActivity : FragmentActivity() {
                                                 onUnarchiveNote = { note -> viewModel.toggleArchive(note) },
                                                 onMoveToTrash = { note -> viewModel.deleteNoteDirectly(note) },
                                                 onBack = { viewModel.closeArchiveScreen() }
+                                            )
+                                        }
+                                        FluffyScreenState.Account -> {
+                                            AccountProfileScreen(
+                                                currentUser = currentUser,
+                                                isGuestMode = isGuestMode,
+                                                firstName = profileFirstName,
+                                                lastName = profileLastName,
+                                                avatarChoice = profileAvatarChoice,
+                                                useGoogleAccountName = useGoogleAccountName,
+                                                cloudSyncStatus = cloudSyncStatus,
+                                                isDark = isDark,
+                                                isArabic = isArabic,
+                                                onUpdateProfileName = { first, last ->
+                                                    viewModel.updateProfileName(first, last)
+                                                },
+                                                onToggleUseGoogleAccountName = { enabled ->
+                                                    viewModel.setUseGoogleAccountName(enabled)
+                                                },
+                                                onSelectCustomPhoto = { uri ->
+                                                    viewModel.selectCustomProfilePhoto(uri)
+                                                },
+                                                onSelectPresetAvatar = { presetId ->
+                                                    viewModel.selectPresetAvatar(presetId)
+                                                },
+                                                onUseGooglePhoto = {
+                                                    viewModel.useGoogleProfilePhoto()
+                                                },
+                                                onUseInitialsAvatar = {
+                                                    viewModel.resetProfileAvatarToInitials()
+                                                },
+                                                onOpenAuthDialog = { viewModel.openAuthDialog() },
+                                                onSyncCloudNow = { viewModel.syncCloudNow() },
+                                                onSignOutFirebase = {
+                                                    viewModel.closeAccountScreen()
+                                                    viewModel.signOutFirebase()
+                                                },
+                                                onExportLocalBackup = { uri ->
+                                                    viewModel.exportFullBackupToPhoneUri(uri)
+                                                },
+                                                onImportLocalBackup = { uri ->
+                                                    viewModel.restoreFullBackupFromPhoneUri(uri)
+                                                },
+                                                snackbarMessage = snackbarMessage,
+                                                onClearSnackbar = { viewModel.clearSnackbar() },
+                                                onBack = { viewModel.closeAccountScreen() }
                                             )
                                         }
                                         FluffyScreenState.Vault -> {
@@ -354,6 +413,21 @@ class MainActivity : FragmentActivity() {
                                         }
                                     }
                                 }
+
+                                // Global Liquid Glass Google Account & Guest Mode Sync Dialog
+                                FirebaseAuthDialog(
+                                    visible = showAuthDialog,
+                                    currentUser = currentUser,
+                                    isGuestMode = isGuestMode,
+                                    isAuthBusy = isAuthBusy,
+                                    cloudSyncStatus = cloudSyncStatus,
+                                    isDark = isDark,
+                                    isArabic = isArabic,
+                                    onDismiss = { viewModel.closeAuthDialog() },
+                                    onGoogleIdToken = { idToken -> viewModel.signInWithGoogleIdToken(idToken) },
+                                    onSyncNow = { viewModel.syncCloudNow() },
+                                    onSignOut = { viewModel.signOutFirebase() }
+                                )
 
                                 // Floating Liquid Glass OTA Update Dialog (Compact, Dynamic, Theme-Matched)
                                 UpdateAvailableDialog(

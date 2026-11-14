@@ -122,10 +122,9 @@ fun AuthWelcomeScreen(
     onToggleLanguage: () -> Unit,
     onGoogleIdToken: (String) -> Unit,
     onEmailSignIn: (email: String, password: String) -> Unit = { _, _ -> },
-    onEmailSignUp: (email: String, password: String, confirmPassword: String) -> Unit = { _, _, _ -> },
+    onEmailSignUp: (username: String, email: String, password: String, confirmPassword: String) -> Unit = { _, _, _, _ -> },
     onResetPassword: (email: String) -> Unit = {},
     onClearAuthMessages: () -> Unit = {},
-    onContinueAsGuest: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val googleController = rememberGoogleSignInController(
@@ -136,14 +135,30 @@ fun AuthWelcomeScreen(
     val focusManager = LocalFocusManager.current
 
     var isSignUpMode by remember { mutableStateOf(false) }
+    var username by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
     var confirmPasswordVisible by remember { mutableStateOf(false) }
     var showForgotPasswordDialog by remember { mutableStateOf(false) }
+    var localValidationError by remember { mutableStateOf<String?>(null) }
 
-    val displayedError = authErrorMessage ?: googleController.errorMessage
+    val displayedError = localValidationError ?: authErrorMessage ?: googleController.errorMessage
+
+    fun attemptSignUp() {
+        focusManager.clearFocus()
+        if (username.trim().isEmpty()) {
+            localValidationError = if (isArabic) {
+                "يرجى كتابة اسم المستخدم (حقل إجباري لإنشاء الحساب)"
+            } else {
+                "Username is required. Please enter your name to create an account."
+            }
+            return
+        }
+        localValidationError = null
+        onEmailSignUp(username, email, password, confirmPassword)
+    }
 
     // Ambient floating orbs behind the deep #0F111A glassmorphism canvas
     val infiniteTransition = rememberInfiniteTransition(label = "dark_glass_aura")
@@ -459,11 +474,37 @@ fun AuthWelcomeScreen(
                             .padding(horizontal = 22.dp, vertical = 22.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
+                        // Mandatory Username field displayed directly ABOVE Email when creating an account
+                        AnimatedVisibility(
+                            visible = isSignUpMode,
+                            enter = expandVertically() + fadeIn(),
+                            exit = shrinkVertically() + fadeOut()
+                        ) {
+                            Column {
+                                GlassRoundedTextField(
+                                    value = username,
+                                    onValueChange = {
+                                        username = it
+                                        localValidationError = null
+                                        onClearAuthMessages()
+                                        googleController.clearError()
+                                    },
+                                    placeholder = if (isArabic) "اسم المستخدم *" else "Username *",
+                                    leadingIcon = Icons.Rounded.PersonOutline,
+                                    keyboardType = KeyboardType.Text,
+                                    imeAction = ImeAction.Next,
+                                    testTag = "auth_username_input"
+                                )
+                                Spacer(modifier = Modifier.height(14.dp))
+                            }
+                        }
+
                         // 2. ROUNDED INPUT FIELDS: Email & Password
                         GlassRoundedTextField(
                             value = email,
                             onValueChange = {
                                 email = it
+                                localValidationError = null
                                 onClearAuthMessages()
                                 googleController.clearError()
                             },
@@ -521,9 +562,8 @@ fun AuthWelcomeScreen(
                                     keyboardType = KeyboardType.Password,
                                     imeAction = ImeAction.Done,
                                     onDone = {
-                                        focusManager.clearFocus()
                                         if (!isLoading) {
-                                            onEmailSignUp(email, password, confirmPassword)
+                                            attemptSignUp()
                                         }
                                     },
                                     testTag = "auth_confirm_password_input"
@@ -625,8 +665,9 @@ fun AuthWelcomeScreen(
                                 ) {
                                     focusManager.clearFocus()
                                     if (isSignUpMode) {
-                                        onEmailSignUp(email, password, confirmPassword)
+                                        attemptSignUp()
                                     } else {
+                                        localValidationError = null
                                         onEmailSignIn(email, password)
                                     }
                                 },
@@ -752,50 +793,6 @@ fun AuthWelcomeScreen(
                                 )
                             }
                         }
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        // 5. GUEST MODE BUTTON: Dedicated frosted button / text option for offline use without account
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(48.dp)
-                                .testTag("welcome_guest_mode_button")
-                                .clip(CircleShape)
-                                .background(Color.White.copy(alpha = 0.04f))
-                                .border(
-                                    width = 1.dp,
-                                    color = Color.White.copy(alpha = 0.14f),
-                                    shape = CircleShape
-                                )
-                                .clickable(
-                                    enabled = !isLoading,
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true)
-                                ) {
-                                    onContinueAsGuest()
-                                }
-                                .padding(horizontal = 16.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.PersonOutline,
-                                    contentDescription = null,
-                                    tint = TextSecondary,
-                                    modifier = Modifier.size(19.dp)
-                                )
-                                Text(
-                                    text = if (isArabic) "المتابعة كضيف (بدون حساب)" else "Continue as Guest (No Account)",
-                                    fontSize = 13.5.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = TextSecondary
-                                )
-                            }
-                        }
                     }
                 }
             }
@@ -840,6 +837,7 @@ fun AuthWelcomeScreen(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = ripple(bounded = true)
                         ) {
+                            localValidationError = null
                             onClearAuthMessages()
                             googleController.clearError()
                             isSignUpMode = !isSignUpMode

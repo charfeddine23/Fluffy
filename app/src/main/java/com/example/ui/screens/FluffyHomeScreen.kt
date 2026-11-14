@@ -1,8 +1,6 @@
 package com.example.ui.screens
 
 import android.os.SystemClock
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
@@ -81,7 +79,6 @@ import androidx.compose.ui.zIndex
 import com.example.data.model.GlassTint
 import com.example.data.model.NoteEntity
 import com.example.ui.components.CategoryChips
-import com.example.ui.components.FirebaseAuthDialog
 import com.example.ui.components.FluffyBottomBar
 import com.example.ui.components.FluffyTopBar
 import com.example.ui.components.NoteCard
@@ -117,23 +114,11 @@ fun FluffyHomeScreen(
     val updateState by viewModel.updateState.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()
     val isGuestMode by viewModel.isGuestMode.collectAsState()
-    val isAuthBusy by viewModel.isAuthBusy.collectAsState()
-    val cloudSyncStatus by viewModel.cloudSyncStatus.collectAsState()
-    val showAuthDialog by viewModel.showAuthDialog.collectAsState()
+    val profileFirstName by viewModel.profileFirstName.collectAsState()
+    val profileLastName by viewModel.profileLastName.collectAsState()
+    val profileAvatarChoice by viewModel.profileAvatarChoice.collectAsState()
     val archivedNotes by viewModel.archivedNotes.collectAsState()
     val trashedNotes by viewModel.trashedNotes.collectAsState()
-
-    val exportBackupLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/json")
-    ) { uri ->
-        uri?.let { viewModel.exportFullBackupToPhoneUri(it) }
-    }
-
-    val importBackupLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        uri?.let { viewModel.restoreFullBackupFromPhoneUri(it) }
-    }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val haptic = LocalHapticFeedback.current
@@ -390,14 +375,20 @@ fun FluffyHomeScreen(
                     isGridView = isGridView,
                     searchQuery = searchQuery,
                     onSearchChange = { viewModel.setSearch(it) },
-                    onToggleTheme = { viewModel.toggleDarkMode() },
+                    onOpenProfile = { viewModel.openAccountScreen() },
                     onToggleLanguage = { viewModel.toggleLanguage() },
                     onToggleViewMode = { viewModel.toggleViewMode() },
                     onOpenStats = { viewModel.showStatsSheet.value = true },
                     onOpenSettings = { viewModel.openSettingsDrawer() },
+                    profilePhotoUrl = currentUser?.photoUrl,
+                    profileAvatarChoice = profileAvatarChoice,
+                    profileFirstName = profileFirstName,
+                    profileLastName = profileLastName,
+                    profileDisplayName = currentUser?.displayName,
+                    profileEmail = currentUser?.email,
                     isCloudSignedIn = currentUser != null,
                     isGuestMode = isGuestMode,
-                    onOpenCloudAuth = { viewModel.openAuthDialog() }
+                    onOpenCloudAuth = { viewModel.openAccountScreen() }
                 )
 
                 // Category Chips
@@ -774,41 +765,9 @@ fun FluffyHomeScreen(
                 hasPendingUpdate = updateState is UpdateUiState.Available ||
                     updateState is UpdateUiState.ReadyToInstall ||
                     updateState is UpdateUiState.NeedsInstallPermission,
-                onCheckForUpdates = { viewModel.checkForUpdates(isManual = true) },
-                currentUser = currentUser,
-                isGuestMode = isGuestMode,
-                cloudSyncStatus = cloudSyncStatus,
-                onOpenAuthDialog = {
-                    viewModel.closeSettingsDrawer()
-                    viewModel.openAuthDialog()
-                },
-                onReturnToWelcomeScreen = { viewModel.returnToWelcomeScreen() },
-                onSyncCloudNow = { viewModel.syncCloudNow() },
-                onSignOutFirebase = { viewModel.signOutFirebase() },
-                onExportLocalBackup = {
-                    exportBackupLauncher.launch("Fluffy_Backup_${System.currentTimeMillis()}.json")
-                },
-                onImportLocalBackup = {
-                    importBackupLauncher.launch(arrayOf("application/json", "*/*"))
-                }
+                onCheckForUpdates = { viewModel.checkForUpdates(isManual = true) }
             )
         }
-
-        // Liquid Glass Google Account & Guest Mode Sync Dialog
-        FirebaseAuthDialog(
-            visible = showAuthDialog,
-            currentUser = currentUser,
-            isGuestMode = isGuestMode,
-            isAuthBusy = isAuthBusy,
-            cloudSyncStatus = cloudSyncStatus,
-            isDark = isDark,
-            isArabic = isArabic,
-            onDismiss = { viewModel.closeAuthDialog() },
-            onGoogleIdToken = { idToken -> viewModel.signInWithGoogleIdToken(idToken) },
-            onContinueAsGuest = { viewModel.enterGuestMode() },
-            onSyncNow = { viewModel.syncCloudNow() },
-            onSignOut = { viewModel.signOutFirebase() }
-        )
 
         // Stats Bottom Sheet
         if (showStats) {

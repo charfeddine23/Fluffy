@@ -15,6 +15,7 @@ import com.example.data.repository.FirebaseUserInfo
 import com.example.data.repository.NoteRepository
 import com.example.data.storage.FluffySettingsSnapshot
 import com.example.data.storage.LocalDeviceStorageManager
+import com.example.drive.DriveAutoBackupWorker
 import com.example.ui.theme.AppThemePreset
 import com.example.ui.theme.AppThemeRegistry
 import com.example.update.AppUpdateManager
@@ -56,11 +57,12 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     val isBiometricEnabled = MutableStateFlow(prefs.getBoolean("biometric_enabled", false))
     val isAppLocked = MutableStateFlow(prefs.getBoolean("biometric_enabled", false))
 
-    // Settings Drawer, Themes Gallery, Trash & Archive
+    // Settings Drawer, Themes Gallery, Trash, Archive & Account Profile
     val isSettingsDrawerOpen = MutableStateFlow(false)
     val isThemesScreenOpen = MutableStateFlow(false)
     val isTrashScreenOpen = MutableStateFlow(false)
     val isArchiveScreenOpen = MutableStateFlow(false)
+    val isAccountScreenOpen = MutableStateFlow(false)
 
     // Filter and Search
     val searchQuery = MutableStateFlow("")
@@ -88,6 +90,13 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     val authErrorMessage = MutableStateFlow<String?>(null)
     val authInfoMessage = MutableStateFlow<String?>(null)
     val cloudSyncStatus = MutableStateFlow<CloudSyncStatus>(CloudSyncStatus.Disconnected)
+    val profileFirstName = MutableStateFlow(prefs.getString("profile_first_name", "") ?: "")
+    val profileLastName = MutableStateFlow(prefs.getString("profile_last_name", "") ?: "")
+    val profileAvatarChoice = MutableStateFlow(prefs.getString("profile_avatar_choice", "") ?: "")
+    val useGoogleAccountName = MutableStateFlow(prefs.getBoolean("use_google_account_name", false))
+    val isAutoDriveBackupEnabled = MutableStateFlow(
+        prefs.getBoolean(DriveAutoBackupWorker.KEY_AUTO_BACKUP_24H, false)
+    )
 
     private var cloudSyncJob: Job? = null
     private var lastAppliedRemoteSettingsAt = prefs.getLong("last_remote_settings_at", 0L)
@@ -128,6 +137,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                     val previousUid = currentUser.value?.uid
                     currentUser.value = user
                     if (user != null) {
+                        syncProfileNameFromUser(user.displayName, forceIfGoogleNaming = useGoogleAccountName.value)
                         if (isGuestMode.value) {
                             isGuestMode.value = false
                             prefs.edit().putBoolean("is_guest_mode", false).apply()
@@ -440,6 +450,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         isSettingsDrawerOpen.value = false
         isTrashScreenOpen.value = false
         isArchiveScreenOpen.value = false
+        isAccountScreenOpen.value = false
         isThemesScreenOpen.value = true
     }
 
@@ -451,6 +462,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         isSettingsDrawerOpen.value = false
         isThemesScreenOpen.value = false
         isArchiveScreenOpen.value = false
+        isAccountScreenOpen.value = false
         isTrashScreenOpen.value = true
         viewModelScope.launch {
             purgeExpiredTrashNotes()
@@ -465,11 +477,195 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         isSettingsDrawerOpen.value = false
         isThemesScreenOpen.value = false
         isTrashScreenOpen.value = false
+        isAccountScreenOpen.value = false
         isArchiveScreenOpen.value = true
     }
 
     fun closeArchiveScreen() {
         isArchiveScreenOpen.value = false
+    }
+
+    fun openAccountScreen() {
+        isSettingsDrawerOpen.value = false
+        isThemesScreenOpen.value = false
+        isTrashScreenOpen.value = false
+        isArchiveScreenOpen.value = false
+        isAccountScreenOpen.value = true
+    }
+
+    fun closeAccountScreen() {
+        isAccountScreenOpen.value = false
+    }
+
+    private fun syncProfileNameFromUser(displayName: String?, forceIfGoogleNaming: Boolean = false) {
+        if (!forceIfGoogleNaming && (profileFirstName.value.isNotBlank() || profileLastName.value.isNotBlank())) return
+        val raw = displayName?.trim().orEmpty()
+        if (raw.isBlank()) return
+        val parts = raw.split("\\s+".toRegex()).filter { it.isNotBlank() }
+        val first = parts.firstOrNull().orEmpty()
+        val last = if (parts.size > 1) parts.drop(1).joinToString(" ") else ""
+        profileFirstName.value = first
+        profileLastName.value = last
+        prefs.edit()
+            .putString("profile_first_name", first)
+            .putString("profile_last_name", last)
+            .apply()
+    }
+
+    fun setUseGoogleAccountName(enabled: Boolean) {
+        useGoogleAccountName.value = enabled
+        prefs.edit().putBoolean("use_google_account_name", enabled).apply()
+        if (enabled) {
+            val googleName = currentUser.value?.displayName?.trim().orEmpty()
+            if (googleName.isNotBlank()) {
+                syncProfileNameFromUser(googleName, forceIfGoogleNaming = true)
+                showSnackbar(
+                    if (isArabic.value) "تم تفعيل التسمية حسب حساب Google ✨"
+                    else "Using Google account name ✨"
+                )
+            } else {
+                showSnackbar(
+                    if (isArabic.value) "تم تفعيل التسمية التلقائية من Google ✨"
+                    else "Google account naming enabled ✨"
+                )
+            }
+        } else {
+            showSnackbar(
+                if (isArabic.value) "يمكنك الآن كتابة الاسم واللقب المخصص"
+                else "Custom Name & Surname enabled"
+            )
+        }
+    }
+
+    fun updateProfileName(firstName: String, lastName: String) {
+        val cleanFirst = firstName.trim()
+        val cleanLast = lastName.trim()
+        useGoogleAccountName.value = false
+        profileFirstName.value = cleanFirst
+        profileLastName.value = cleanLast
+        prefs.edit()
+            .putBoolean("use_google_account_name", false)
+            .putString("profile_first_name", cleanFirst)
+            .putString("profile_last_name", cleanLast)
+            .apply()
+
+        val fullName = listOf(cleanFirst, cleanLast).filter { it.isNotBlank() }.joinToString(" ")
+        if (currentUser.value != null && fullName.isNotBlank()) {
+            viewModelScope.launch {
+                FirebaseSyncRepository.updateUserDisplayName(getApplication(), fullName)
+                    .onSuccess { updatedUser ->
+                        currentUser.value = updatedUser
+                    }
+            }
+        }
+        showSnackbar(if (isArabic.value) "تم حفظ الاسم واللقب بنجاح ✨" else "Profile name updated ✨")
+    }
+
+    fun selectPresetAvatar(presetId: String) {
+        val choice = "preset:$presetId"
+        profileAvatarChoice.value = choice
+        prefs.edit().putString("profile_avatar_choice", choice).apply()
+        showSnackbar(if (isArabic.value) "تم تحديث صورة الأفاتار ✨" else "Avatar updated ✨")
+    }
+
+    fun useGoogleProfilePhoto() {
+        profileAvatarChoice.value = "google"
+        prefs.edit().putString("profile_avatar_choice", "google").apply()
+        showSnackbar(if (isArabic.value) "تم تفعيل صورة حساب Google ✨" else "Google profile photo enabled ✨")
+    }
+
+    fun resetProfileAvatarToInitials() {
+        profileAvatarChoice.value = "initials"
+        prefs.edit().putString("profile_avatar_choice", "initials").apply()
+        showSnackbar(if (isArabic.value) "تم تعيين الأحرف الأولى للصورة ✨" else "Monogram avatar enabled ✨")
+    }
+
+    fun selectCustomProfilePhoto(uri: Uri) {
+        viewModelScope.launch {
+            val savedPath = withContext(Dispatchers.IO) {
+                runCatching {
+                    val app = getApplication<Application>()
+                    val dir = java.io.File(app.filesDir, "profile_avatars").apply {
+                        if (!exists()) mkdirs()
+                    }
+                    // Clean up older custom avatar files
+                    dir.listFiles()?.forEach { oldFile ->
+                        if (oldFile.name.startsWith("custom_avatar_")) {
+                            oldFile.delete()
+                        }
+                    }
+
+                    val outFile = java.io.File(dir, "custom_avatar_${System.currentTimeMillis()}.jpg")
+                    val rawBytes = app.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?: return@runCatching null
+
+                    val decoded = android.graphics.BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size)
+                    if (decoded != null) {
+                        val maxDim = 512
+                        val w = decoded.width
+                        val h = decoded.height
+                        val scale = if (w > maxDim || h > maxDim) {
+                            maxDim.toFloat() / maxOf(w, h).toFloat()
+                        } else {
+                            1f
+                        }
+                        val finalBmp = if (scale < 1f) {
+                            android.graphics.Bitmap.createScaledBitmap(
+                                decoded,
+                                (w * scale).toInt().coerceAtLeast(1),
+                                (h * scale).toInt().coerceAtLeast(1),
+                                true
+                            )
+                        } else {
+                            decoded
+                        }
+                        outFile.outputStream().use { stream ->
+                            finalBmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, stream)
+                        }
+                        if (finalBmp !== decoded) {
+                            finalBmp.recycle()
+                        }
+                        decoded.recycle()
+                    } else {
+                        outFile.writeBytes(rawBytes)
+                    }
+                    outFile.absolutePath
+                }.getOrNull()
+            }
+
+            if (!savedPath.isNullOrBlank()) {
+                val choice = "custom:$savedPath"
+                profileAvatarChoice.value = choice
+                prefs.edit().putString("profile_avatar_choice", choice).apply()
+                showSnackbar(
+                    if (isArabic.value) "تم تعيين صورة البروفايل بنجاح ✨"
+                    else "Profile picture updated ✨"
+                )
+            } else {
+                showSnackbar(
+                    if (isArabic.value) "تعذر قراءة الصورة المختارة"
+                    else "Unable to load selected image"
+                )
+            }
+        }
+    }
+
+    fun toggleAutoDriveBackup(enabled: Boolean) {
+        isAutoDriveBackupEnabled.value = enabled
+        prefs.edit().putBoolean(DriveAutoBackupWorker.KEY_AUTO_BACKUP_24H, enabled).apply()
+        if (enabled) {
+            DriveAutoBackupWorker.scheduleEvery24Hours(getApplication())
+            showSnackbar(
+                if (isArabic.value) "تم تفعيل النسخ الاحتياطي التلقائي كل 24 ساعة"
+                else "24h automatic backup enabled"
+            )
+        } else {
+            DriveAutoBackupWorker.cancelScheduledBackup(getApplication())
+            showSnackbar(
+                if (isArabic.value) "تم إيقاف النسخ الاحتياطي التلقائي"
+                else "Automatic backup paused"
+            )
+        }
     }
 
     fun toggleLanguage() {
@@ -955,7 +1151,12 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             isAuthBusy.value = false
             result.onSuccess { user ->
                 isGuestMode.value = false
-                prefs.edit().putBoolean("is_guest_mode", false).apply()
+                useGoogleAccountName.value = true
+                prefs.edit()
+                    .putBoolean("is_guest_mode", false)
+                    .putBoolean("use_google_account_name", true)
+                    .apply()
+                syncProfileNameFromUser(user.displayName, forceIfGoogleNaming = true)
                 currentUser.value = user
                 showAuthDialog.value = false
                 showSnackbar(
@@ -1014,7 +1215,21 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun signUpWithEmailPassword(email: String, password: String, confirmPassword: String) {
+    fun signUpWithEmailPassword(
+        username: String,
+        email: String,
+        password: String,
+        confirmPassword: String
+    ) {
+        val trimmedUsername = username.trim()
+        if (trimmedUsername.isEmpty()) {
+            authErrorMessage.value = if (isArabic.value) {
+                "يرجى كتابة اسم المستخدم (حقل إجباري لإنشاء الحساب)"
+            } else {
+                "Username is required to create an account"
+            }
+            return
+        }
         val trimmedEmail = email.trim()
         if (trimmedEmail.isEmpty() || !android.util.Patterns.EMAIL_ADDRESS.matcher(trimmedEmail).matches()) {
             authErrorMessage.value = if (isArabic.value) {
@@ -1046,17 +1261,29 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             authInfoMessage.value = null
             isAuthBusy.value = true
             val result = FirebaseSyncRepository.signUpWithEmailPassword(getApplication(), trimmedEmail, password)
-            isAuthBusy.value = false
-            result.onSuccess { user ->
+            if (result.isSuccess) {
+                val createdUser = result.getOrNull()!!
+                useGoogleAccountName.value = false
+                prefs.edit()
+                    .putBoolean("is_guest_mode", false)
+                    .putBoolean("use_google_account_name", false)
+                    .apply()
+                syncProfileNameFromUser(trimmedUsername, forceIfGoogleNaming = true)
+
+                val renamedUser = FirebaseSyncRepository.updateUserDisplayName(getApplication(), trimmedUsername)
+                    .getOrElse { createdUser }
+
+                isAuthBusy.value = false
                 isGuestMode.value = false
-                prefs.edit().putBoolean("is_guest_mode", false).apply()
-                currentUser.value = user
+                currentUser.value = renamedUser
                 showAuthDialog.value = false
                 showSnackbar(
                     if (isArabic.value) "تم إنشاء الحساب وتفعيل المزامنة السحابية ✨"
                     else "Account created & Cloud sync enabled ✨"
                 )
-            }.onFailure { err ->
+            } else {
+                isAuthBusy.value = false
+                val err = result.exceptionOrNull() ?: Exception("Sign-up failed")
                 authErrorMessage.value = mapFirebaseAuthError(err)
             }
         }

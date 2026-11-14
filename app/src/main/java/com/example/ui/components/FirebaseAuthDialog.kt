@@ -72,7 +72,6 @@ fun FirebaseAuthDialog(
     isArabic: Boolean,
     onDismiss: () -> Unit,
     onGoogleIdToken: (String) -> Unit,
-    onContinueAsGuest: () -> Unit,
     onSyncNow: () -> Unit,
     onSignOut: () -> Unit
 ) {
@@ -180,7 +179,7 @@ fun FirebaseAuthDialog(
                                         currentUser != null ->
                                             if (isArabic) "مزامنة فورية تلقائية عبر Cloud Firestore" else "Real-time Cloud Firestore auto-sync"
                                         else ->
-                                            if (isArabic) "أنشئ حساب Google أو استمر كضيف محلياً" else "Create Google account or stay offline as Guest"
+                                            if (isArabic) "اربط حساب Google للمزامنة وحفظ ملاحظاتك" else "Link your Google account to sync & protect notes"
                                     },
                                     fontSize = 11.5.sp,
                                     color = metaColor
@@ -416,74 +415,6 @@ fun FirebaseAuthDialog(
                                     color = Color(0xFFF43F5E),
                                     textAlign = TextAlign.Center,
                                     modifier = Modifier.fillMaxWidth()
-                                )
-                            }
-                        }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            HorizontalDivider(
-                                modifier = Modifier.weight(1f),
-                                color = metaColor.copy(alpha = 0.22f)
-                            )
-                            Text(
-                                text = if (isArabic) "  أو  " else "  OR  ",
-                                fontSize = 11.sp,
-                                color = metaColor,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            HorizontalDivider(
-                                modifier = Modifier.weight(1f),
-                                color = metaColor.copy(alpha = 0.22f)
-                            )
-                        }
-
-                        // Guest Mode Action Button
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(50.dp)
-                                .testTag("dialog_guest_mode_button")
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(
-                                    if (isDark) Color(0xFF1E293B).copy(alpha = 0.85f)
-                                    else Color(0xFFF1F5F9)
-                                )
-                                .border(
-                                    width = 1.dp,
-                                    color = Color(0xFF38BDF8).copy(alpha = 0.30f),
-                                    shape = RoundedCornerShape(16.dp)
-                                )
-                                .clickable(
-                                    enabled = !isLoading,
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true)
-                                ) {
-                                    if (isGuestMode) onDismiss() else onContinueAsGuest()
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.PersonOutline,
-                                    contentDescription = null,
-                                    tint = Color(0xFF38BDF8),
-                                    modifier = Modifier.size(19.dp)
-                                )
-                                Text(
-                                    text = if (isGuestMode) {
-                                        if (isArabic) "الاستمرار في وضع الضيف (Guest Mode)" else "Stay in Guest Mode"
-                                    } else {
-                                        if (isArabic) "الدخول كضيف (Guest Mode)" else "Continue as Guest (Guest Mode)"
-                                    },
-                                    fontSize = 13.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = textColor
                                 )
                             }
                         }

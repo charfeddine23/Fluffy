@@ -15,6 +15,7 @@ import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentChange
 import com.google.firebase.firestore.DocumentSnapshot
@@ -187,6 +188,22 @@ object FirebaseSyncRepository {
                 ?: throw IllegalStateException("Firebase is not initialized. Check app/google-services.json")
             auth.sendPasswordResetEmail(email.trim()).await()
             Unit
+        }
+    }
+
+    suspend fun updateUserDisplayName(
+        context: Context,
+        fullName: String
+    ): Result<FirebaseUserInfo> = withContext(Dispatchers.IO) {
+        runCatching {
+            val user = getAuthOrNull(context)?.currentUser
+                ?: throw IllegalStateException("No signed in user")
+            val request = UserProfileChangeRequest.Builder()
+                .setDisplayName(fullName.trim())
+                .build()
+            user.updateProfile(request).await()
+            user.reload().await()
+            user.toUserInfo()
         }
     }
 
