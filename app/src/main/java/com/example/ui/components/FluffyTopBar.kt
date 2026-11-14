@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.PersonOutline
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material3.Icon
@@ -67,6 +68,7 @@ fun FluffyTopBar(
     onOpenStats: () -> Unit,
     onOpenSettings: () -> Unit,
     isCloudSignedIn: Boolean = false,
+    isGuestMode: Boolean = false,
     onOpenCloudAuth: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -232,24 +234,41 @@ fun FluffyTopBar(
                 }
 
                 if (searchQuery.isEmpty()) {
-                    Box(
+                    Row(
                         modifier = Modifier
-                            .size(34.dp)
+                            .height(32.dp)
                             .testTag("topbar_cloud_auth_button")
-                            .clip(CircleShape)
+                            .clip(RoundedCornerShape(16.dp))
                             .background(
-                                if (isCloudSignedIn) Color(0xFF10B981).copy(alpha = 0.16f)
-                                else Color(0xFF38BDF8).copy(alpha = 0.14f)
+                                when {
+                                    isCloudSignedIn -> Color(0xFF10B981).copy(alpha = 0.16f)
+                                    isGuestMode -> Color(0xFF38BDF8).copy(alpha = 0.14f)
+                                    else -> Color(0xFF38BDF8).copy(alpha = 0.14f)
+                                }
                             )
-                            .clickable(onClick = onOpenCloudAuth),
-                        contentAlignment = Alignment.Center
+                            .clickable(onClick = onOpenCloudAuth)
+                            .padding(horizontal = if (!isCloudSignedIn && isGuestMode) 10.dp else 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Icon(
-                            imageVector = if (isCloudSignedIn) Icons.Default.CloudDone else Icons.Default.CloudQueue,
-                            contentDescription = if (isArabic) "الحساب السحابي والمزامنة" else "Cloud Account & Sync",
+                            imageVector = when {
+                                isCloudSignedIn -> Icons.Default.CloudDone
+                                isGuestMode -> Icons.Default.PersonOutline
+                                else -> Icons.Default.CloudQueue
+                            },
+                            contentDescription = if (isArabic) "الحساب السحابي أو وضع الضيف" else "Cloud Account or Guest Mode",
                             tint = if (isCloudSignedIn) Color(0xFF10B981) else Color(0xFF38BDF8),
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(16.dp)
                         )
+                        if (!isCloudSignedIn && isGuestMode) {
+                            Text(
+                                text = if (isArabic) "ضيف" else "Guest",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF38BDF8)
+                            )
+                        }
                     }
                 } else {
                     AnimatedVisibility(

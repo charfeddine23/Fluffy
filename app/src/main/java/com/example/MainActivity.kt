@@ -36,6 +36,7 @@ import com.example.auth.BiometricAuthManager
 import com.example.auth.BiometricAvailability
 import com.example.data.model.NoteEntity
 import com.example.ui.components.UpdateAvailableDialog
+import com.example.ui.screens.AuthWelcomeScreen
 import com.example.ui.screens.BiometricLockScreen
 import com.example.ui.screens.FluffyHomeScreen
 import com.example.ui.screens.NoteEditorScreen
@@ -45,6 +46,7 @@ import com.example.update.AppUpdateManager
 import com.example.viewmodel.FluffyViewModel
 
 private sealed interface FluffyScreenState {
+    data object Welcome : FluffyScreenState
     data object Home : FluffyScreenState
     data class Editor(val note: NoteEntity) : FluffyScreenState
     data object Vault : FluffyScreenState
@@ -69,6 +71,9 @@ class MainActivity : FragmentActivity() {
             val vaultItems by viewModel.vaultItems.collectAsState()
             val updateState by viewModel.updateState.collectAsState()
             val showUpdateDialog by viewModel.showUpdateDialog.collectAsState()
+            val currentUser by viewModel.currentUser.collectAsState()
+            val isGuestMode by viewModel.isGuestMode.collectAsState()
+            val isAuthBusy by viewModel.isAuthBusy.collectAsState()
 
             val context = LocalContext.current
             val lifecycleOwner = LocalLifecycleOwner.current
@@ -121,6 +126,7 @@ class MainActivity : FragmentActivity() {
                             )
                         } else {
                             val activeScreen = when {
+                                currentUser == null && !isGuestMode -> FluffyScreenState.Welcome
                                 isVaultOpen -> FluffyScreenState.Vault
                                 editingNote != null -> FluffyScreenState.Editor(editingNote!!)
                                 else -> FluffyScreenState.Home
@@ -131,6 +137,7 @@ class MainActivity : FragmentActivity() {
                                     targetState = activeScreen,
                                     contentKey = { screen ->
                                         when (screen) {
+                                            FluffyScreenState.Welcome -> "welcome"
                                             FluffyScreenState.Home -> "home"
                                             FluffyScreenState.Vault -> "vault"
                                             is FluffyScreenState.Editor -> "editor"
@@ -138,6 +145,9 @@ class MainActivity : FragmentActivity() {
                                     },
                                     transitionSpec = {
                                         when {
+                                            targetState is FluffyScreenState.Welcome || initialState is FluffyScreenState.Welcome -> {
+                                                fadeIn().togetherWith(fadeOut())
+                                            }
                                             targetState is FluffyScreenState.Vault -> {
                                                 (slideInVertically { -it / 2 } + fadeIn())
                                                     .togetherWith(fadeOut())
@@ -159,6 +169,19 @@ class MainActivity : FragmentActivity() {
                                     label = "screen_transition"
                                 ) { screen ->
                                     when (screen) {
+                                        FluffyScreenState.Welcome -> {
+                                            AuthWelcomeScreen(
+                                                isDark = isDark,
+                                                isArabic = isArabic,
+                                                isAuthBusy = isAuthBusy,
+                                                onToggleTheme = { viewModel.toggleDarkMode() },
+                                                onToggleLanguage = { viewModel.toggleLanguage() },
+                                                onGoogleIdToken = { idToken ->
+                                                    viewModel.signInWithGoogleIdToken(idToken)
+                                                },
+                                                onContinueAsGuest = { viewModel.enterGuestMode() }
+                                            )
+                                        }
                                         FluffyScreenState.Vault -> {
                                             VaultScreen(
                                                 vaultItems = vaultItems,

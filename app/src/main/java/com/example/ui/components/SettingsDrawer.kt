@@ -45,7 +45,9 @@ import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Login
 import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.filled.PersonOutline
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.ViewAgenda
@@ -94,8 +96,10 @@ fun SettingsDrawer(
     hasPendingUpdate: Boolean = false,
     onCheckForUpdates: () -> Unit = {},
     currentUser: FirebaseUserInfo? = null,
+    isGuestMode: Boolean = false,
     cloudSyncStatus: CloudSyncStatus = CloudSyncStatus.Disconnected,
     onOpenAuthDialog: () -> Unit = {},
+    onReturnToWelcomeScreen: () -> Unit = {},
     onSyncCloudNow: () -> Unit = {},
     onSignOutFirebase: () -> Unit = {},
     onExportLocalBackup: () -> Unit = {},
@@ -429,19 +433,32 @@ fun SettingsDrawer(
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 Icon(
-                                    imageVector = if (currentUser != null) Icons.Default.CloudDone else Icons.Default.CloudQueue,
+                                    imageVector = when {
+                                        currentUser != null -> Icons.Default.CloudDone
+                                        isGuestMode -> Icons.Default.PersonOutline
+                                        else -> Icons.Default.CloudQueue
+                                    },
                                     contentDescription = null,
-                                    tint = if (currentUser != null) Color(0xFF10B981) else Color(0xFF38BDF8),
+                                    tint = when {
+                                        currentUser != null -> Color(0xFF10B981)
+                                        else -> Color(0xFF38BDF8)
+                                    },
                                     modifier = Modifier.size(26.dp)
                                 )
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = if (currentUser != null) {
-                                            currentUser.displayName?.takeIf { it.isNotBlank() }
-                                                ?: currentUser.email
-                                                ?: "Firebase User"
-                                        } else {
-                                            if (isArabic) "غير متصل بالسحابة" else "Not signed in"
+                                        text = when {
+                                            currentUser != null -> {
+                                                currentUser.displayName?.takeIf { it.isNotBlank() }
+                                                    ?: currentUser.email
+                                                    ?: "Google User"
+                                            }
+                                            isGuestMode -> {
+                                                if (isArabic) "وضع الضيف (Guest Mode)" else "Guest Mode (Local)"
+                                            }
+                                            else -> {
+                                                if (isArabic) "غير متصل بالسحابة" else "Not signed in"
+                                            }
                                         },
                                         fontSize = 13.5.sp,
                                         fontWeight = FontWeight.Bold,
@@ -466,9 +483,9 @@ fun SettingsDrawer(
                                         }
                                     } else {
                                         if (isArabic)
-                                            "سجّل الدخول بجوجل أو البريد للمزامنة الفورية"
+                                            "حفظ محلي على الهاتف • اربط Google للمزامنة"
                                         else
-                                            "Sign in with Google or Email to auto-sync"
+                                            "Saved locally on device • Link Google to sync"
                                     }
                                     Text(
                                         text = subText,
@@ -479,30 +496,58 @@ fun SettingsDrawer(
                             }
 
                             if (currentUser == null) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .testTag("firebase_auth_open_button")
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(Color(0xFF0EA5E9).copy(alpha = 0.20f))
-                                        .clickable(onClick = onOpenAuthDialog)
-                                        .padding(horizontal = 12.dp, vertical = 12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Login,
-                                        contentDescription = null,
-                                        tint = Color(0xFF38BDF8),
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = if (isArabic) "تسجيل الدخول والمزامنة (Google / Email)" else "Sign In & Sync (Google / Email)",
-                                        fontSize = 12.5.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF38BDF8)
-                                    )
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("firebase_auth_open_button")
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(Color(0xFF0EA5E9).copy(alpha = 0.20f))
+                                            .clickable(onClick = onOpenAuthDialog)
+                                            .padding(horizontal = 12.dp, vertical = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Login,
+                                            contentDescription = null,
+                                            tint = Color(0xFF38BDF8),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = if (isArabic) "إنشاء حساب / الربط بحساب Google" else "Create / Link Google Account",
+                                            fontSize = 12.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF38BDF8)
+                                        )
+                                    }
+
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("drawer_switch_account_screen_button")
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(Color(0xFF64748B).copy(alpha = 0.14f))
+                                            .clickable(onClick = onReturnToWelcomeScreen)
+                                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.SwapHoriz,
+                                            contentDescription = null,
+                                            tint = metaColor,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = if (isArabic) "شاشة اختيار الحساب أو الضيف" else "Account / Guest Welcome Screen",
+                                            fontSize = 11.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = textColor
+                                        )
+                                    }
                                 }
                             } else {
                                 Row(

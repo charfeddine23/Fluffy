@@ -150,28 +150,6 @@ object FirebaseSyncRepository {
             }
         }
 
-    suspend fun signInWithEmail(context: Context, email: String, password: String): Result<FirebaseUserInfo> =
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val auth = getAuthOrNull(context)
-                    ?: throw IllegalStateException("Firebase is not initialized. Check app/google-services.json")
-                val result = auth.signInWithEmailAndPassword(email.trim(), password).await()
-                val user = result.user ?: throw IllegalStateException("No authenticated user returned")
-                user.toUserInfo()
-            }
-        }
-
-    suspend fun registerWithEmail(context: Context, email: String, password: String): Result<FirebaseUserInfo> =
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val auth = getAuthOrNull(context)
-                    ?: throw IllegalStateException("Firebase is not initialized. Check app/google-services.json")
-                val result = auth.createUserWithEmailAndPassword(email.trim(), password).await()
-                val user = result.user ?: throw IllegalStateException("No authenticated user returned")
-                user.toUserInfo()
-            }
-        }
-
     suspend fun signOut(context: Context) {
         runCatching {
             getAuthOrNull(context)?.signOut()

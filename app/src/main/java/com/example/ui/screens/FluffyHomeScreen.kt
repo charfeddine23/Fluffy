@@ -93,6 +93,8 @@ fun FluffyHomeScreen(
     val snackbarMsg by viewModel.snackbarMessage.collectAsState()
     val updateState by viewModel.updateState.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()
+    val isGuestMode by viewModel.isGuestMode.collectAsState()
+    val isAuthBusy by viewModel.isAuthBusy.collectAsState()
     val cloudSyncStatus by viewModel.cloudSyncStatus.collectAsState()
     val showAuthDialog by viewModel.showAuthDialog.collectAsState()
 
@@ -239,6 +241,7 @@ fun FluffyHomeScreen(
                     onOpenStats = { viewModel.showStatsSheet.value = true },
                     onOpenSettings = { viewModel.openSettingsDrawer() },
                     isCloudSignedIn = currentUser != null,
+                    isGuestMode = isGuestMode,
                     onOpenCloudAuth = { viewModel.openAuthDialog() }
                 )
 
@@ -388,11 +391,13 @@ fun FluffyHomeScreen(
                     updateState is UpdateUiState.NeedsInstallPermission,
                 onCheckForUpdates = { viewModel.checkForUpdates(isManual = true) },
                 currentUser = currentUser,
+                isGuestMode = isGuestMode,
                 cloudSyncStatus = cloudSyncStatus,
                 onOpenAuthDialog = {
                     viewModel.closeSettingsDrawer()
                     viewModel.openAuthDialog()
                 },
+                onReturnToWelcomeScreen = { viewModel.returnToWelcomeScreen() },
                 onSyncCloudNow = { viewModel.syncCloudNow() },
                 onSignOutFirebase = { viewModel.signOutFirebase() },
                 onExportLocalBackup = {
@@ -404,21 +409,18 @@ fun FluffyHomeScreen(
             )
         }
 
-        // Liquid Glass Firebase Authentication & Sync Dialog
+        // Liquid Glass Google Account & Guest Mode Sync Dialog
         FirebaseAuthDialog(
             visible = showAuthDialog,
             currentUser = currentUser,
+            isGuestMode = isGuestMode,
+            isAuthBusy = isAuthBusy,
             cloudSyncStatus = cloudSyncStatus,
             isDark = isDark,
             isArabic = isArabic,
             onDismiss = { viewModel.closeAuthDialog() },
             onGoogleIdToken = { idToken -> viewModel.signInWithGoogleIdToken(idToken) },
-            onEmailSignIn = { email, password, onError ->
-                viewModel.signInWithEmail(email, password, onError)
-            },
-            onEmailRegister = { email, password, onError ->
-                viewModel.registerWithEmail(email, password, onError)
-            },
+            onContinueAsGuest = { viewModel.enterGuestMode() },
             onSyncNow = { viewModel.syncCloudNow() },
             onSignOut = { viewModel.signOutFirebase() }
         )

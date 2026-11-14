@@ -66,10 +66,12 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     val updateState = MutableStateFlow<UpdateUiState>(UpdateUiState.Idle)
     val showUpdateDialog = MutableStateFlow(false)
 
-    // Firebase Auth & Real-Time Cloud Firestore Sync State
+    // Firebase Auth & Real-Time Cloud Firestore Sync State + Guest Mode
     val currentUser = MutableStateFlow<FirebaseUserInfo?>(
         FirebaseSyncRepository.currentUser(application)
     )
+    val isGuestMode = MutableStateFlow(prefs.getBoolean("is_guest_mode", false))
+    val isAuthBusy = MutableStateFlow(false)
     val cloudSyncStatus = MutableStateFlow<CloudSyncStatus>(CloudSyncStatus.Disconnected)
 
     private var cloudSyncJob: Job? = null
@@ -94,6 +96,10 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                     val previousUid = currentUser.value?.uid
                     currentUser.value = user
                     if (user != null) {
+                        if (isGuestMode.value) {
+                            isGuestMode.value = false
+                            prefs.edit().putBoolean("is_guest_mode", false).apply()
+                        }
                         if (previousUid != user.uid || cloudSyncJob == null || cloudSyncJob?.isActive != true) {
                             startRealTimeCloudSync(user.uid)
                         }
@@ -620,7 +626,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // --- Firebase Authentication & Manual Cloud Sync Triggers ---
+    // --- Firebase Authentication, Guest Mode & Manual Cloud Sync Triggers ---
 
     fun openAuthDialog() {
         showAuthDialog.value = true
@@ -630,53 +636,42 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         showAuthDialog.value = false
     }
 
+    fun enterGuestMode() {
+        isGuestMode.value = true
+        prefs.edit().putBoolean("is_guest_mode", true).apply()
+        showAuthDialog.value = false
+        showSnackbar(
+            if (isArabic.value) "تم الدخول بوضع الضيف — بياناتك محفوظة محلياً على هاتفك 👤"
+            else "Guest Mode active — notes saved locally on your device 👤"
+        )
+    }
+
+    fun returnToWelcomeScreen() {
+        isSettingsDrawerOpen.value = false
+        showAuthDialog.value = false
+        isGuestMode.value = false
+        prefs.edit().putBoolean("is_guest_mode", false).apply()
+    }
+
     fun signInWithGoogleIdToken(idToken: String) {
         viewModelScope.launch {
+            isAuthBusy.value = true
             val result = FirebaseSyncRepository.signInWithGoogleIdToken(getApplication(), idToken)
+            isAuthBusy.value = false
             result.onSuccess { user ->
+                isGuestMode.value = false
+                prefs.edit().putBoolean("is_guest_mode", false).apply()
                 currentUser.value = user
                 showAuthDialog.value = false
                 showSnackbar(
-                    if (isArabic.value) "تم تسجيل الدخول والمزامنة السحابية ☁️✨"
-                    else "Signed in — Cloud sync active ☁️✨"
+                    if (isArabic.value) "تم إنشاء/ربط حساب Google وتفعيل المزامنة ☁️✨"
+                    else "Google account connected — Cloud sync active ☁️✨"
                 )
             }.onFailure { err ->
                 showSnackbar(
-                    if (isArabic.value) "فشل الدخول: ${err.localizedMessage}"
-                    else "Sign-in failed: ${err.localizedMessage}"
+                    if (isArabic.value) "فشل الدخول عبر Google: ${err.localizedMessage}"
+                    else "Google Sign-In failed: ${err.localizedMessage}"
                 )
-            }
-        }
-    }
-
-    fun signInWithEmail(email: String, password: String, onError: (String) -> Unit) {
-        viewModelScope.launch {
-            val result = FirebaseSyncRepository.signInWithEmail(getApplication(), email, password)
-            result.onSuccess { user ->
-                currentUser.value = user
-                showAuthDialog.value = false
-                showSnackbar(
-                    if (isArabic.value) "أهلاً بك! جاري المزامنة التلقائية ☁️✨"
-                    else "Welcome back! Syncing notes ☁️✨"
-                )
-            }.onFailure { err ->
-                onError(err.localizedMessage ?: "Authentication failed")
-            }
-        }
-    }
-
-    fun registerWithEmail(email: String, password: String, onError: (String) -> Unit) {
-        viewModelScope.launch {
-            val result = FirebaseSyncRepository.registerWithEmail(getApplication(), email, password)
-            result.onSuccess { user ->
-                currentUser.value = user
-                showAuthDialog.value = false
-                showSnackbar(
-                    if (isArabic.value) "تم إنشاء الحساب وتفعيل المزامنة السحابية ☁️✨"
-                    else "Account created — Cloud sync active ☁️✨"
-                )
-            }.onFailure { err ->
-                onError(err.localizedMessage ?: "Registration failed")
             }
         }
     }
@@ -710,10 +705,14 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             cloudSyncJob = null
             FirebaseSyncRepository.signOut(getApplication())
             currentUser.value = null
+            isGuestMode.value = false
+            prefs.edit().putBoolean("is_guest_mode", false).apply()
             cloudSyncStatus.value = CloudSyncStatus.Disconnected
+            showAuthDialog.value = false
+            isSettingsDrawerOpen.value = false
             showSnackbar(
-                if (isArabic.value) "تم تسجيل الخروج من السحابة"
-                else "Signed out from cloud account"
+                if (isArabic.value) "تم تسجيل الخروج من حساب Google"
+                else "Signed out from Google account"
             )
         }
     }
