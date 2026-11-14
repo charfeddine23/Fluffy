@@ -34,10 +34,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GridView
@@ -98,6 +100,10 @@ fun SettingsDrawer(
     onToggleViewMode: () -> Unit,
     selectedThemeId: String = "obsidian_liquid_glass",
     onOpenThemes: () -> Unit = {},
+    trashedCount: Int = 0,
+    archivedCount: Int = 0,
+    onOpenTrash: () -> Unit = {},
+    onOpenArchive: () -> Unit = {},
     isCheckingUpdates: Boolean = false,
     hasPendingUpdate: Boolean = false,
     onCheckForUpdates: () -> Unit = {},
@@ -251,6 +257,40 @@ fun SettingsDrawer(
                             )
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Trash (سلة المهملات) — directly below the Settings header
+                    DrawerQuickFolderRow(
+                        icon = Icons.Default.DeleteOutline,
+                        accentColor = Color(0xFFEF4444),
+                        title = if (isArabic) "سلة المهملات" else "Trash",
+                        subtitle = if (isArabic) "حذف تلقائي خلال 30 يوم" else "Auto-deleted in 30 days",
+                        badgeCount = trashedCount,
+                        isDark = isDark,
+                        testTag = "settings_trash_button",
+                        onClick = {
+                            onClose()
+                            onOpenTrash()
+                        }
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Archive (الأرشيف) — directly below Trash
+                    DrawerQuickFolderRow(
+                        icon = Icons.Default.Archive,
+                        accentColor = Color(0xFF38BDF8),
+                        title = if (isArabic) "الأرشيف" else "Archive",
+                        subtitle = if (isArabic) "الملاحظات المؤرشفة" else "Archived notes",
+                        badgeCount = archivedCount,
+                        isDark = isDark,
+                        testTag = "settings_archive_button",
+                        onClick = {
+                            onClose()
+                            onOpenArchive()
+                        }
+                    )
 
                     Spacer(modifier = Modifier.height(20.dp))
 
@@ -986,6 +1026,95 @@ private fun SettingsRow(
                     color = metaColor
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun DrawerQuickFolderRow(
+    icon: ImageVector,
+    accentColor: Color,
+    title: String,
+    subtitle: String,
+    badgeCount: Int,
+    isDark: Boolean,
+    testTag: String,
+    onClick: () -> Unit
+) {
+    val activePreset = LocalAppThemePreset.current
+    val textColor = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
+    val metaColor = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(testTag)
+            .clip(RoundedCornerShape(16.dp))
+            .background(
+                if (isDark) activePreset.surfaceVariant.copy(alpha = 0.85f)
+                else Color(0xFFF1F5F9).copy(alpha = 0.90f)
+            )
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = ripple(bounded = true),
+                onClick = onClick
+            )
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.weight(1f)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = title,
+                tint = accentColor,
+                modifier = Modifier.size(21.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column {
+                Text(
+                    text = title,
+                    fontSize = 13.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = textColor
+                )
+                Text(
+                    text = subtitle,
+                    fontSize = 11.sp,
+                    color = metaColor
+                )
+            }
+        }
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            if (badgeCount > 0) {
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(accentColor.copy(alpha = 0.18f))
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = badgeCount.toString(),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = accentColor
+                    )
+                }
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = metaColor,
+                modifier = Modifier.size(18.dp)
+            )
         }
     }
 }

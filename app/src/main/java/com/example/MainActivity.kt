@@ -36,11 +36,13 @@ import com.example.auth.BiometricAuthManager
 import com.example.auth.BiometricAvailability
 import com.example.data.model.NoteEntity
 import com.example.ui.components.UpdateAvailableDialog
+import com.example.ui.screens.ArchiveScreen
 import com.example.ui.screens.AuthWelcomeScreen
 import com.example.ui.screens.BiometricLockScreen
 import com.example.ui.screens.FluffyHomeScreen
 import com.example.ui.screens.NoteEditorScreen
 import com.example.ui.screens.ThemesScreen
+import com.example.ui.screens.TrashScreen
 import com.example.ui.screens.VaultScreen
 import com.example.ui.theme.AppThemeRegistry
 import com.example.ui.theme.FluffyTheme
@@ -51,6 +53,8 @@ private sealed interface FluffyScreenState {
     data object Welcome : FluffyScreenState
     data object Home : FluffyScreenState
     data object Themes : FluffyScreenState
+    data object Trash : FluffyScreenState
+    data object Archive : FluffyScreenState
     data class Editor(val note: NoteEntity) : FluffyScreenState
     data object Vault : FluffyScreenState
 }
@@ -70,6 +74,10 @@ class MainActivity : FragmentActivity() {
             val isArabic by viewModel.isArabic.collectAsState()
             val selectedThemeId by viewModel.selectedThemeId.collectAsState()
             val isThemesScreenOpen by viewModel.isThemesScreenOpen.collectAsState()
+            val isTrashScreenOpen by viewModel.isTrashScreenOpen.collectAsState()
+            val isArchiveScreenOpen by viewModel.isArchiveScreenOpen.collectAsState()
+            val trashedNotes by viewModel.trashedNotes.collectAsState()
+            val archivedNotes by viewModel.archivedNotes.collectAsState()
             val isAppLocked by viewModel.isAppLocked.collectAsState()
             val editingNote by viewModel.editingNote.collectAsState()
             val isCreatingNew by viewModel.isCreatingNew.collectAsState()
@@ -139,6 +147,8 @@ class MainActivity : FragmentActivity() {
                                 currentUser == null && !isGuestMode -> FluffyScreenState.Welcome
                                 isVaultOpen -> FluffyScreenState.Vault
                                 editingNote != null -> FluffyScreenState.Editor(editingNote!!)
+                                isTrashScreenOpen -> FluffyScreenState.Trash
+                                isArchiveScreenOpen -> FluffyScreenState.Archive
                                 isThemesScreenOpen -> FluffyScreenState.Themes
                                 else -> FluffyScreenState.Home
                             }
@@ -151,6 +161,8 @@ class MainActivity : FragmentActivity() {
                                             FluffyScreenState.Welcome -> "welcome"
                                             FluffyScreenState.Home -> "home"
                                             FluffyScreenState.Themes -> "themes"
+                                            FluffyScreenState.Trash -> "trash"
+                                            FluffyScreenState.Archive -> "archive"
                                             FluffyScreenState.Vault -> "vault"
                                             is FluffyScreenState.Editor -> "editor"
                                         }
@@ -168,7 +180,10 @@ class MainActivity : FragmentActivity() {
                                                 fadeIn()
                                                     .togetherWith(slideOutVertically { -it / 2 } + fadeOut())
                                             }
-                                            targetState is FluffyScreenState.Editor || targetState is FluffyScreenState.Themes -> {
+                                            targetState is FluffyScreenState.Editor ||
+                                                targetState is FluffyScreenState.Themes ||
+                                                targetState is FluffyScreenState.Trash ||
+                                                targetState is FluffyScreenState.Archive -> {
                                                 (slideInHorizontally { width -> if (isArabic) -width else width } + fadeIn())
                                                     .togetherWith(slideOutHorizontally { width -> if (isArabic) width else -width } + fadeOut())
                                             }
@@ -203,6 +218,28 @@ class MainActivity : FragmentActivity() {
                                                     viewModel.selectTheme(preset)
                                                 },
                                                 onBack = { viewModel.closeThemesScreen() }
+                                            )
+                                        }
+                                        FluffyScreenState.Trash -> {
+                                            TrashScreen(
+                                                trashedNotes = trashedNotes,
+                                                isDark = isDark,
+                                                isArabic = isArabic,
+                                                onRestoreNote = { note -> viewModel.restoreFromTrash(note) },
+                                                onDeletePermanently = { note -> viewModel.deletePermanentlyFromTrash(note) },
+                                                onEmptyTrash = { viewModel.emptyTrash() },
+                                                onBack = { viewModel.closeTrashScreen() }
+                                            )
+                                        }
+                                        FluffyScreenState.Archive -> {
+                                            ArchiveScreen(
+                                                archivedNotes = archivedNotes,
+                                                isDark = isDark,
+                                                isArabic = isArabic,
+                                                onOpenNote = { note -> viewModel.openExistingNote(note) },
+                                                onUnarchiveNote = { note -> viewModel.toggleArchive(note) },
+                                                onMoveToTrash = { note -> viewModel.deleteNoteDirectly(note) },
+                                                onBack = { viewModel.closeArchiveScreen() }
                                             )
                                         }
                                         FluffyScreenState.Vault -> {
@@ -242,6 +279,7 @@ class MainActivity : FragmentActivity() {
                                                     )
                                                 },
                                                 onDelete = { viewModel.deleteCurrentNote() },
+                                                onToggleArchive = { viewModel.toggleArchive(screen.note) },
                                                 onAutoSave = { title, content, category, colorPreset, isPinned, isFav, checklist, audioDuration ->
                                                     viewModel.autoSaveNote(
                                                         title = title,

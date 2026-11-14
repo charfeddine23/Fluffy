@@ -120,6 +120,8 @@ fun FluffyHomeScreen(
     val isAuthBusy by viewModel.isAuthBusy.collectAsState()
     val cloudSyncStatus by viewModel.cloudSyncStatus.collectAsState()
     val showAuthDialog by viewModel.showAuthDialog.collectAsState()
+    val archivedNotes by viewModel.archivedNotes.collectAsState()
+    val trashedNotes by viewModel.trashedNotes.collectAsState()
 
     val exportBackupLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
@@ -613,6 +615,7 @@ fun FluffyHomeScreen(
                                             onToggleChecklistItem = { idx ->
                                                 viewModel.toggleChecklistItem(note, idx)
                                             },
+                                            onArchive = { viewModel.toggleArchive(note) },
                                             onDelete = { viewModel.deleteNoteDirectly(note) },
                                             modifier = cardDragModifier
                                         )
@@ -701,6 +704,7 @@ fun FluffyHomeScreen(
                                             onToggleChecklistItem = { idx ->
                                                 viewModel.toggleChecklistItem(note, idx)
                                             },
+                                            onArchive = { viewModel.toggleArchive(note) },
                                             onDelete = { viewModel.deleteNoteDirectly(note) },
                                             modifier = cardDragModifier
                                         )
@@ -762,6 +766,10 @@ fun FluffyHomeScreen(
                 onToggleViewMode = { viewModel.toggleViewMode() },
                 selectedThemeId = selectedThemeId,
                 onOpenThemes = { viewModel.openThemesScreen() },
+                trashedCount = trashedNotes.size,
+                archivedCount = archivedNotes.size,
+                onOpenTrash = { viewModel.openTrashScreen() },
+                onOpenArchive = { viewModel.openArchiveScreen() },
                 isCheckingUpdates = updateState is UpdateUiState.Checking,
                 hasPendingUpdate = updateState is UpdateUiState.Available ||
                     updateState is UpdateUiState.ReadyToInstall ||

@@ -56,9 +56,11 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     val isBiometricEnabled = MutableStateFlow(prefs.getBoolean("biometric_enabled", false))
     val isAppLocked = MutableStateFlow(prefs.getBoolean("biometric_enabled", false))
 
-    // Settings Drawer & Themes Gallery
+    // Settings Drawer, Themes Gallery, Trash & Archive
     val isSettingsDrawerOpen = MutableStateFlow(false)
     val isThemesScreenOpen = MutableStateFlow(false)
+    val isTrashScreenOpen = MutableStateFlow(false)
+    val isArchiveScreenOpen = MutableStateFlow(false)
 
     // Filter and Search
     val searchQuery = MutableStateFlow("")
@@ -96,12 +98,27 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             initialValue = emptyList()
         )
 
+    val archivedNotes: StateFlow<List<NoteEntity>> = repository.archivedNotes
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    val trashedNotes: StateFlow<List<NoteEntity>> = repository.trashedNotes
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
     init {
         viewModelScope.launch {
             // Reconcile and guarantee literal recovery from phone storage if DB was reset
             recoverLiteralStorageIfNeeded()
             backfillMissingSyncIds()
             backfillSortOrderIfNeeded()
+            purgeExpiredTrashNotes()
 
             // Observe Firebase Authentication & automatically bind real-time Cloud Firestore listeners
             launch {
@@ -124,8 +141,14 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
 
-            // Keep local literal snapshot synced automatically
-            repository.allNotes.collect { notes ->
+            // Keep local literal snapshot synced automatically (active + archived + trashed)
+            combine(
+                repository.allNotes,
+                repository.archivedNotes,
+                repository.trashedNotes
+            ) { active, archived, trashed ->
+                active + archived + trashed
+            }.collect { notes ->
                 withContext(Dispatchers.IO) {
                     LocalDeviceStorageManager.saveNotesLiteralSnapshot(getApplication(), notes)
                 }
@@ -133,6 +156,22 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         }
         persistSettingsSnapshot(syncToCloud = false)
         checkForUpdates(isManual = false)
+    }
+
+    suspend fun purgeExpiredTrashNotes() = withContext(Dispatchers.IO) {
+        val cutoff = System.currentTimeMillis() - TRASH_RETENTION_MILLIS
+        val expired = repository.getExpiredTrashNotes(cutoff)
+        if (expired.isNotEmpty()) {
+            repository.deleteExpiredTrash(cutoff)
+            val uid = currentUser.value?.uid
+            if (uid != null) {
+                expired.forEach { note ->
+                    if (note.syncId.isNotBlank()) {
+                        runCatching { FirebaseSyncRepository.deleteNote(getApplication(), uid, note.syncId) }
+                    }
+                }
+            }
+        }
     }
 
     private suspend fun recoverLiteralStorageIfNeeded() = withContext(Dispatchers.IO) {
@@ -397,11 +436,38 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
 
     fun openThemesScreen() {
         isSettingsDrawerOpen.value = false
+        isTrashScreenOpen.value = false
+        isArchiveScreenOpen.value = false
         isThemesScreenOpen.value = true
     }
 
     fun closeThemesScreen() {
         isThemesScreenOpen.value = false
+    }
+
+    fun openTrashScreen() {
+        isSettingsDrawerOpen.value = false
+        isThemesScreenOpen.value = false
+        isArchiveScreenOpen.value = false
+        isTrashScreenOpen.value = true
+        viewModelScope.launch {
+            purgeExpiredTrashNotes()
+        }
+    }
+
+    fun closeTrashScreen() {
+        isTrashScreenOpen.value = false
+    }
+
+    fun openArchiveScreen() {
+        isSettingsDrawerOpen.value = false
+        isThemesScreenOpen.value = false
+        isTrashScreenOpen.value = false
+        isArchiveScreenOpen.value = true
+    }
+
+    fun closeArchiveScreen() {
+        isArchiveScreenOpen.value = false
     }
 
     fun toggleLanguage() {
@@ -670,19 +736,114 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         val current = editingNote.value ?: return
         viewModelScope.launch {
             if (current.id != 0L) {
-                repository.deleteById(current.id)
-                syncNoteDeleteIfSignedIn(current.syncId)
-                showSnackbar(if (isArabic.value) "تم حذف الملاحظة" else "Note deleted")
+                val now = System.currentTimeMillis()
+                val trashed = current.copy(
+                    isDeleted = true,
+                    deletedAt = now,
+                    isArchived = false,
+                    isPinned = false,
+                    updatedAt = now,
+                    syncId = current.syncId.ifBlank { UUID.randomUUID().toString() }
+                )
+                repository.insertOrUpdate(trashed)
+                syncNoteUpsertIfSignedIn(trashed)
+                showSnackbar(
+                    if (isArabic.value) "تم النقل إلى سلة المهملات (يُحذف تلقائياً خلال 30 يوم)"
+                    else "Moved to Trash (auto-deletes in 30 days)"
+                )
             }
             closeEditor()
         }
     }
 
     fun deleteNoteDirectly(note: NoteEntity) {
+        val now = System.currentTimeMillis()
+        val trashed = note.copy(
+            isDeleted = true,
+            deletedAt = now,
+            isArchived = false,
+            isPinned = false,
+            updatedAt = now,
+            syncId = note.syncId.ifBlank { UUID.randomUUID().toString() }
+        )
+        viewModelScope.launch {
+            repository.insertOrUpdate(trashed)
+            syncNoteUpsertIfSignedIn(trashed)
+            showSnackbar(
+                if (isArabic.value) "تم النقل إلى سلة المهملات (يُحذف تلقائياً خلال 30 يوم)"
+                else "Moved to Trash (auto-deletes in 30 days)"
+            )
+        }
+    }
+
+    fun restoreFromTrash(note: NoteEntity) {
+        val restored = note.copy(
+            isDeleted = false,
+            deletedAt = 0L,
+            updatedAt = System.currentTimeMillis(),
+            syncId = note.syncId.ifBlank { UUID.randomUUID().toString() }
+        )
+        viewModelScope.launch {
+            repository.insertOrUpdate(restored)
+            syncNoteUpsertIfSignedIn(restored)
+            showSnackbar(if (isArabic.value) "تمت استعادة الملاحظة ✨" else "Note restored ✨")
+        }
+    }
+
+    fun deletePermanentlyFromTrash(note: NoteEntity) {
         viewModelScope.launch {
             repository.deleteNote(note)
             syncNoteDeleteIfSignedIn(note.syncId)
-            showSnackbar(if (isArabic.value) "تم حذف الملاحظة" else "Note deleted")
+            showSnackbar(if (isArabic.value) "تم الحذف النهائي" else "Permanently deleted")
+        }
+    }
+
+    fun emptyTrash() {
+        viewModelScope.launch {
+            val trashed = withContext(Dispatchers.IO) {
+                val items = repository.getTrashedNotesOnce()
+                repository.emptyTrash()
+                items
+            }
+            val uid = currentUser.value?.uid
+            if (uid != null) {
+                withContext(Dispatchers.IO) {
+                    trashed.forEach { item ->
+                        if (item.syncId.isNotBlank()) {
+                            runCatching {
+                                FirebaseSyncRepository.deleteNote(getApplication(), uid, item.syncId)
+                            }
+                        }
+                    }
+                }
+            }
+            showSnackbar(if (isArabic.value) "تم تفريغ سلة المهملات نهائياً" else "Trash emptied")
+        }
+    }
+
+    fun toggleArchive(note: NoteEntity) {
+        val nextArchived = !note.isArchived
+        val updated = note.copy(
+            isArchived = nextArchived,
+            isDeleted = false,
+            deletedAt = 0L,
+            isPinned = if (nextArchived) false else note.isPinned,
+            updatedAt = System.currentTimeMillis(),
+            syncId = note.syncId.ifBlank { UUID.randomUUID().toString() }
+        )
+        viewModelScope.launch {
+            repository.insertOrUpdate(updated)
+            syncNoteUpsertIfSignedIn(updated)
+            if (editingNote.value?.id == note.id) {
+                closeEditor()
+            }
+            showSnackbar(
+                if (nextArchived) {
+                    if (isArabic.value) "تمت أرشفة الملاحظة 📦" else "Note archived 📦"
+                } else {
+                    if (isArabic.value) "تم إلغاء أرشفة الملاحظة ✨" else "Note unarchived ✨"
+                }
+            )
         }
     }
 
@@ -1161,5 +1322,9 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
 
     fun dismissUpdateDialog() {
         showUpdateDialog.value = false
+    }
+
+    companion object {
+        const val TRASH_RETENTION_MILLIS = 30L * 24L * 60L * 60L * 1000L
     }
 }

@@ -463,6 +463,8 @@ object LocalDeviceStorageManager {
         put("isPinned", n.isPinned)
         put("isFavorite", n.isFavorite)
         put("isArchived", n.isArchived)
+        put("isDeleted", n.isDeleted)
+        put("deletedAt", n.deletedAt)
         put("checklistJson", n.checklistJson)
         put("audioDurationSec", n.audioDurationSec)
         put("createdAt", n.createdAt)
@@ -483,7 +485,9 @@ object LocalDeviceStorageManager {
         createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
         updatedAt = obj.optLong("updatedAt", System.currentTimeMillis()),
         syncId = obj.optString("syncId", "").ifBlank { UUID.randomUUID().toString() },
-        sortOrder = obj.optLong("sortOrder", 0L)
+        sortOrder = obj.optLong("sortOrder", 0L),
+        isDeleted = obj.optBoolean("isDeleted", false),
+        deletedAt = obj.optLong("deletedAt", 0L)
     )
 
     private fun vaultItemToJson(v: VaultItemEntity, includeRawFile: Boolean): JSONObject = JSONObject().apply {

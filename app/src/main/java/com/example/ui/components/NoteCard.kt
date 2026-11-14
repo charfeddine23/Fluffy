@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.DeleteOutline
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -58,6 +60,7 @@ fun NoteCard(
     onTogglePin: () -> Unit,
     onToggleFavorite: () -> Unit,
     onToggleChecklistItem: (Int) -> Unit,
+    onArchive: () -> Unit = {},
     onDelete: () -> Unit,
     isDragging: Boolean = false,
     modifier: Modifier = Modifier
@@ -322,6 +325,26 @@ fun NoteCard(
                             imageVector = if (note.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                             contentDescription = "Toggle Favorite",
                             tint = if (note.isFavorite) Color(0xFFF43F5E) else metaColor.copy(alpha = 0.6f),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    // Archive Button
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(CircleShape)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = ripple(bounded = true),
+                                onClick = onArchive
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (note.isArchived) Icons.Default.Unarchive else Icons.Default.Archive,
+                            contentDescription = if (isArabic) "أرشفة الملاحظة" else "Archive Note",
+                            tint = metaColor.copy(alpha = 0.7f),
                             modifier = Modifier.size(16.dp)
                         )
                     }

@@ -41,6 +41,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
@@ -55,6 +56,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -107,6 +109,7 @@ fun NoteEditorScreen(
         audioDurationSec: Int
     ) -> Unit,
     onDelete: () -> Unit,
+    onToggleArchive: () -> Unit = {},
     onAutoSave: ((
         title: String,
         content: String,
@@ -889,7 +892,31 @@ fun NoteEditorScreen(
                                     DropdownMenuItem(
                                         text = {
                                             Text(
-                                                text = if (isArabic) "حذف الملاحظة" else "Delete Note",
+                                                text = if (note.isArchived) {
+                                                    if (isArabic) "إلغاء الأرشفة" else "Unarchive Note"
+                                                } else {
+                                                    if (isArabic) "أرشفة الملاحظة" else "Archive Note"
+                                                },
+                                                color = textColor
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = if (note.isArchived) Icons.Default.Unarchive else Icons.Default.Archive,
+                                                contentDescription = null,
+                                                tint = Color(0xFF38BDF8)
+                                            )
+                                        },
+                                        onClick = {
+                                            showMoreMenu = false
+                                            onToggleArchive()
+                                        }
+                                    )
+
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = if (isArabic) "نقل إلى سلة المهملات" else "Move to Trash",
                                                 color = Color(0xFFEF4444)
                                             )
                                         },

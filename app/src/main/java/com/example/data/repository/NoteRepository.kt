@@ -8,12 +8,24 @@ import java.util.UUID
 class NoteRepository(private val noteDao: NoteDao) {
 
     val allNotes: Flow<List<NoteEntity>> = noteDao.getAllNotes()
+    val archivedNotes: Flow<List<NoteEntity>> = noteDao.getArchivedNotes()
+    val trashedNotes: Flow<List<NoteEntity>> = noteDao.getTrashedNotes()
 
     fun getNote(id: Long): Flow<NoteEntity?> = noteDao.getNoteById(id)
 
     fun searchNotes(query: String): Flow<List<NoteEntity>> = noteDao.searchNotes(query)
 
     suspend fun getAllNotesOnce(): List<NoteEntity> = noteDao.getAllNotesOnce()
+
+    suspend fun getTrashedNotesOnce(): List<NoteEntity> = noteDao.getTrashedNotesOnce()
+
+    suspend fun getExpiredTrashNotes(cutoffTimestamp: Long): List<NoteEntity> =
+        noteDao.getExpiredTrashNotes(cutoffTimestamp)
+
+    suspend fun deleteExpiredTrash(cutoffTimestamp: Long) =
+        noteDao.deleteExpiredTrash(cutoffTimestamp)
+
+    suspend fun emptyTrash() = noteDao.emptyTrash()
 
     suspend fun getMinSortOrder(): Long = noteDao.getMinSortOrder() ?: 0L
 

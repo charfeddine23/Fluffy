@@ -12,13 +12,31 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface NoteDao {
-    @Query("SELECT * FROM notes WHERE isArchived = 0 ORDER BY isPinned DESC, sortOrder ASC, createdAt DESC")
+    @Query("SELECT * FROM notes WHERE isArchived = 0 AND isDeleted = 0 ORDER BY isPinned DESC, sortOrder ASC, createdAt DESC")
     fun getAllNotes(): Flow<List<NoteEntity>>
+
+    @Query("SELECT * FROM notes WHERE isArchived = 1 AND isDeleted = 0 ORDER BY updatedAt DESC")
+    fun getArchivedNotes(): Flow<List<NoteEntity>>
+
+    @Query("SELECT * FROM notes WHERE isDeleted = 1 ORDER BY deletedAt DESC")
+    fun getTrashedNotes(): Flow<List<NoteEntity>>
+
+    @Query("SELECT * FROM notes WHERE isDeleted = 1")
+    suspend fun getTrashedNotesOnce(): List<NoteEntity>
+
+    @Query("SELECT * FROM notes WHERE isDeleted = 1 AND deletedAt > 0 AND deletedAt <= :cutoffTimestamp")
+    suspend fun getExpiredTrashNotes(cutoffTimestamp: Long): List<NoteEntity>
+
+    @Query("DELETE FROM notes WHERE isDeleted = 1 AND deletedAt > 0 AND deletedAt <= :cutoffTimestamp")
+    suspend fun deleteExpiredTrash(cutoffTimestamp: Long)
+
+    @Query("DELETE FROM notes WHERE isDeleted = 1")
+    suspend fun emptyTrash()
 
     @Query("SELECT * FROM notes ORDER BY isPinned DESC, sortOrder ASC, createdAt DESC")
     suspend fun getAllNotesOnce(): List<NoteEntity>
 
-    @Query("SELECT MIN(sortOrder) FROM notes")
+    @Query("SELECT MIN(sortOrder) FROM notes WHERE isDeleted = 0")
     suspend fun getMinSortOrder(): Long?
 
     @Query("SELECT * FROM notes WHERE id = :id LIMIT 1")
@@ -58,21 +76,21 @@ interface NoteDao {
 
     @Query("""
         SELECT * FROM notes 
-        WHERE isArchived = 0 
+        WHERE isArchived = 0 AND isDeleted = 0
           AND (title LIKE '%' || :query || '%' OR content LIKE '%' || :query || '%' OR category LIKE '%' || :query || '%')
         ORDER BY isPinned DESC, sortOrder ASC, createdAt DESC
     """)
     fun searchNotes(query: String): Flow<List<NoteEntity>>
 
-    @Query("SELECT * FROM notes WHERE isArchived = 0 AND isFavorite = 1 ORDER BY isPinned DESC, sortOrder ASC, createdAt DESC")
+    @Query("SELECT * FROM notes WHERE isArchived = 0 AND isDeleted = 0 AND isFavorite = 1 ORDER BY isPinned DESC, sortOrder ASC, createdAt DESC")
     fun getFavoriteNotes(): Flow<List<NoteEntity>>
 
-    @Query("SELECT * FROM notes WHERE isArchived = 0 AND isPinned = 1 ORDER BY isPinned DESC, sortOrder ASC, createdAt DESC")
+    @Query("SELECT * FROM notes WHERE isArchived = 0 AND isDeleted = 0 AND isPinned = 1 ORDER BY isPinned DESC, sortOrder ASC, createdAt DESC")
     fun getPinnedNotes(): Flow<List<NoteEntity>>
 
-    @Query("SELECT * FROM notes WHERE isArchived = 0 AND category = :category ORDER BY isPinned DESC, sortOrder ASC, createdAt DESC")
+    @Query("SELECT * FROM notes WHERE isArchived = 0 AND isDeleted = 0 AND category = :category ORDER BY isPinned DESC, sortOrder ASC, createdAt DESC")
     fun getNotesByCategory(category: String): Flow<List<NoteEntity>>
 
-    @Query("SELECT COUNT(*) FROM notes WHERE isArchived = 0")
+    @Query("SELECT COUNT(*) FROM notes WHERE isArchived = 0 AND isDeleted = 0")
     fun getNotesCount(): Flow<Int>
 }

@@ -180,6 +180,8 @@ object FirebaseSyncRepository {
             "isPinned" to note.isPinned,
             "isFavorite" to note.isFavorite,
             "isArchived" to note.isArchived,
+            "isDeleted" to note.isDeleted,
+            "deletedAt" to note.deletedAt,
             "checklistJson" to note.checklistJson,
             "audioDurationSec" to note.audioDurationSec,
             "createdAt" to note.createdAt,
@@ -449,7 +451,9 @@ object FirebaseSyncRepository {
             createdAt = getLong("createdAt") ?: System.currentTimeMillis(),
             updatedAt = getLong("updatedAt") ?: System.currentTimeMillis(),
             syncId = sid,
-            sortOrder = getLong("sortOrder") ?: 0L
+            sortOrder = getLong("sortOrder") ?: 0L,
+            isDeleted = getBoolean("isDeleted") ?: false,
+            deletedAt = getLong("deletedAt") ?: 0L
         )
     }
 
