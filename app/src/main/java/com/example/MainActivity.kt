@@ -88,6 +88,8 @@ class MainActivity : FragmentActivity() {
             val currentUser by viewModel.currentUser.collectAsState()
             val isGuestMode by viewModel.isGuestMode.collectAsState()
             val isAuthBusy by viewModel.isAuthBusy.collectAsState()
+            val signInErrorMessage by viewModel.authErrorMessage.collectAsState()
+            val signInInfoMessage by viewModel.authInfoMessage.collectAsState()
 
             val activeThemePreset = remember(selectedThemeId, isDark) {
                 AppThemeRegistry.resolve(selectedThemeId, isDark)
@@ -201,10 +203,24 @@ class MainActivity : FragmentActivity() {
                                                 isDark = isDark,
                                                 isArabic = isArabic,
                                                 isAuthBusy = isAuthBusy,
+                                                authErrorMessage = signInErrorMessage,
+                                                authInfoMessage = signInInfoMessage,
                                                 onToggleTheme = { viewModel.toggleDarkMode() },
                                                 onToggleLanguage = { viewModel.toggleLanguage() },
                                                 onGoogleIdToken = { idToken ->
                                                     viewModel.signInWithGoogleIdToken(idToken)
+                                                },
+                                                onEmailSignIn = { email, password ->
+                                                    viewModel.signInWithEmailPassword(email, password)
+                                                },
+                                                onEmailSignUp = { email, password, confirm ->
+                                                    viewModel.signUpWithEmailPassword(email, password, confirm)
+                                                },
+                                                onResetPassword = { email ->
+                                                    viewModel.sendPasswordResetEmail(email)
+                                                },
+                                                onClearAuthMessages = {
+                                                    viewModel.clearAuthMessages()
                                                 },
                                                 onContinueAsGuest = { viewModel.enterGuestMode() }
                                             )

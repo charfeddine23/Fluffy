@@ -85,6 +85,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     )
     val isGuestMode = MutableStateFlow(prefs.getBoolean("is_guest_mode", false))
     val isAuthBusy = MutableStateFlow(false)
+    val authErrorMessage = MutableStateFlow<String?>(null)
+    val authInfoMessage = MutableStateFlow<String?>(null)
     val cloudSyncStatus = MutableStateFlow<CloudSyncStatus>(CloudSyncStatus.Disconnected)
 
     private var cloudSyncJob: Job? = null
@@ -939,8 +941,15 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         prefs.edit().putBoolean("is_guest_mode", false).apply()
     }
 
+    fun clearAuthMessages() {
+        authErrorMessage.value = null
+        authInfoMessage.value = null
+    }
+
     fun signInWithGoogleIdToken(idToken: String) {
         viewModelScope.launch {
+            authErrorMessage.value = null
+            authInfoMessage.value = null
             isAuthBusy.value = true
             val result = FirebaseSyncRepository.signInWithGoogleIdToken(getApplication(), idToken)
             isAuthBusy.value = false
@@ -954,11 +963,155 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                     else "Google account connected — Cloud sync active ☁️✨"
                 )
             }.onFailure { err ->
-                showSnackbar(
-                    if (isArabic.value) "فشل الدخول عبر Google: ${err.localizedMessage}"
-                    else "Google Sign-In failed: ${err.localizedMessage}"
-                )
+                val msg = if (isArabic.value) {
+                    "فشل الدخول عبر Google: ${err.localizedMessage ?: "خطأ غير متوقع"}"
+                } else {
+                    "Google Sign-In failed: ${err.localizedMessage ?: "Unexpected error"}"
+                }
+                authErrorMessage.value = msg
+                showSnackbar(msg)
             }
+        }
+    }
+
+    fun signInWithEmailPassword(email: String, password: String) {
+        val trimmedEmail = email.trim()
+        if (trimmedEmail.isEmpty() || !android.util.Patterns.EMAIL_ADDRESS.matcher(trimmedEmail).matches()) {
+            authErrorMessage.value = if (isArabic.value) {
+                "يرجى إدخال بريد إلكتروني صحيح"
+            } else {
+                "Please enter a valid email address"
+            }
+            return
+        }
+        if (password.length < 6) {
+            authErrorMessage.value = if (isArabic.value) {
+                "كلمة المرور يجب أن تكون 6 أحرف على الأقل"
+            } else {
+                "Password must be at least 6 characters"
+            }
+            return
+        }
+
+        viewModelScope.launch {
+            authErrorMessage.value = null
+            authInfoMessage.value = null
+            isAuthBusy.value = true
+            val result = FirebaseSyncRepository.signInWithEmailPassword(getApplication(), trimmedEmail, password)
+            isAuthBusy.value = false
+            result.onSuccess { user ->
+                isGuestMode.value = false
+                prefs.edit().putBoolean("is_guest_mode", false).apply()
+                currentUser.value = user
+                showAuthDialog.value = false
+                showSnackbar(
+                    if (isArabic.value) "تم تسجيل الدخول ومزامنة السحابة بنجاح ✨"
+                    else "Signed in & Cloud sync active ✨"
+                )
+            }.onFailure { err ->
+                authErrorMessage.value = mapFirebaseAuthError(err)
+            }
+        }
+    }
+
+    fun signUpWithEmailPassword(email: String, password: String, confirmPassword: String) {
+        val trimmedEmail = email.trim()
+        if (trimmedEmail.isEmpty() || !android.util.Patterns.EMAIL_ADDRESS.matcher(trimmedEmail).matches()) {
+            authErrorMessage.value = if (isArabic.value) {
+                "يرجى إدخال بريد إلكتروني صحيح"
+            } else {
+                "Please enter a valid email address"
+            }
+            return
+        }
+        if (password.length < 6) {
+            authErrorMessage.value = if (isArabic.value) {
+                "كلمة المرور يجب أن تتكون من 6 أحرف على الأقل"
+            } else {
+                "Password must be at least 6 characters"
+            }
+            return
+        }
+        if (password != confirmPassword) {
+            authErrorMessage.value = if (isArabic.value) {
+                "كلمتا المرور غير متطابقتين"
+            } else {
+                "Passwords do not match"
+            }
+            return
+        }
+
+        viewModelScope.launch {
+            authErrorMessage.value = null
+            authInfoMessage.value = null
+            isAuthBusy.value = true
+            val result = FirebaseSyncRepository.signUpWithEmailPassword(getApplication(), trimmedEmail, password)
+            isAuthBusy.value = false
+            result.onSuccess { user ->
+                isGuestMode.value = false
+                prefs.edit().putBoolean("is_guest_mode", false).apply()
+                currentUser.value = user
+                showAuthDialog.value = false
+                showSnackbar(
+                    if (isArabic.value) "تم إنشاء الحساب وتفعيل المزامنة السحابية ✨"
+                    else "Account created & Cloud sync enabled ✨"
+                )
+            }.onFailure { err ->
+                authErrorMessage.value = mapFirebaseAuthError(err)
+            }
+        }
+    }
+
+    fun sendPasswordResetEmail(email: String) {
+        val trimmedEmail = email.trim()
+        if (trimmedEmail.isEmpty() || !android.util.Patterns.EMAIL_ADDRESS.matcher(trimmedEmail).matches()) {
+            authErrorMessage.value = if (isArabic.value) {
+                "أدخل بريدك الإلكتروني لإرسال رابط استعادة كلمة المرور"
+            } else {
+                "Enter a valid email to receive a password reset link"
+            }
+            return
+        }
+
+        viewModelScope.launch {
+            authErrorMessage.value = null
+            authInfoMessage.value = null
+            isAuthBusy.value = true
+            val result = FirebaseSyncRepository.sendPasswordResetEmail(getApplication(), trimmedEmail)
+            isAuthBusy.value = false
+            result.onSuccess {
+                authInfoMessage.value = if (isArabic.value) {
+                    "تم إرسال رابط إعادة تعيين كلمة المرور إلى $trimmedEmail 📩"
+                } else {
+                    "Password reset link sent to $trimmedEmail 📩"
+                }
+            }.onFailure { err ->
+                authErrorMessage.value = mapFirebaseAuthError(err)
+            }
+        }
+    }
+
+    private fun mapFirebaseAuthError(error: Throwable): String {
+        val msg = error.message.orEmpty()
+        return when {
+            msg.contains("INVALID_LOGIN_CREDENTIALS", ignoreCase = true) ||
+                msg.contains("wrong password", ignoreCase = true) ||
+                msg.contains("credential is incorrect", ignoreCase = true) ||
+                msg.contains("no user record", ignoreCase = true) ->
+                if (isArabic.value) "البريد الإلكتروني أو كلمة المرور غير صحيحة" else "Incorrect email or password"
+            msg.contains("email address is already in use", ignoreCase = true) ||
+                msg.contains("EMAIL_EXISTS", ignoreCase = true) ->
+                if (isArabic.value) "هذا البريد الإلكتروني مسجل مسبقاً، يمكنك تسجيل الدخول مباشرة" else "Email is already registered"
+            msg.contains("badly formatted", ignoreCase = true) ||
+                msg.contains("INVALID_EMAIL", ignoreCase = true) ->
+                if (isArabic.value) "صيغة البريد الإلكتروني غير صالحة" else "Invalid email format"
+            msg.contains("network", ignoreCase = true) ->
+                if (isArabic.value) "تحقق من اتصالك بالإنترنت وحاول مجدداً" else "Network error, please check your connection"
+            msg.contains("WEAK_PASSWORD", ignoreCase = true) ->
+                if (isArabic.value) "كلمة المرور ضعيفة جداً، اختر كلمة مرور أقوى" else "Password is too weak"
+            else ->
+                if (isArabic.value) "تعذر إتمام العملية: ${error.localizedMessage ?: "خطأ غير متوقع"}"
+                else error.localizedMessage ?: "Authentication error"
         }
     }
 
