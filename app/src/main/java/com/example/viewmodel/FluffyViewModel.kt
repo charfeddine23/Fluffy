@@ -15,6 +15,8 @@ import com.example.data.repository.FirebaseUserInfo
 import com.example.data.repository.NoteRepository
 import com.example.data.storage.FluffySettingsSnapshot
 import com.example.data.storage.LocalDeviceStorageManager
+import com.example.ui.theme.AppThemePreset
+import com.example.ui.theme.AppThemeRegistry
 import com.example.update.AppUpdateManager
 import com.example.update.ReleaseUpdateInfo
 import com.example.update.UpdateUiState
@@ -43,13 +45,20 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     val isDarkMode = MutableStateFlow(prefs.getBoolean("is_dark_mode", true))
     val isArabic = MutableStateFlow(prefs.getBoolean("is_arabic", true))
     val isGridView = MutableStateFlow(prefs.getBoolean("is_grid_view", true))
+    val selectedThemeId = MutableStateFlow(
+        prefs.getString(
+            "selected_theme_id",
+            if (isDarkMode.value) AppThemePreset.DEFAULT_DARK_ID else AppThemePreset.DEFAULT_LIGHT_ID
+        ) ?: AppThemePreset.DEFAULT_DARK_ID
+    )
 
     // Biometric Authentication & App Lock
     val isBiometricEnabled = MutableStateFlow(prefs.getBoolean("biometric_enabled", false))
     val isAppLocked = MutableStateFlow(prefs.getBoolean("biometric_enabled", false))
 
-    // Settings Drawer
+    // Settings Drawer & Themes Gallery
     val isSettingsDrawerOpen = MutableStateFlow(false)
+    val isThemesScreenOpen = MutableStateFlow(false)
 
     // Filter and Search
     val searchQuery = MutableStateFlow("")
@@ -363,8 +372,36 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     fun toggleDarkMode() {
         val next = !isDarkMode.value
         isDarkMode.value = next
-        prefs.edit().putBoolean("is_dark_mode", next).apply()
+
+        val currentTheme = AppThemeRegistry.resolve(selectedThemeId.value, !next)
+        val switchedTheme = currentTheme.pairedThemeId?.let { AppThemeRegistry.findById(it) }
+            ?: if (next) AppThemeRegistry.defaultDark else AppThemeRegistry.defaultLight
+
+        selectedThemeId.value = switchedTheme.id
+        prefs.edit()
+            .putBoolean("is_dark_mode", next)
+            .putString("selected_theme_id", switchedTheme.id)
+            .apply()
         persistSettingsSnapshot(syncToCloud = true)
+    }
+
+    fun selectTheme(preset: AppThemePreset) {
+        selectedThemeId.value = preset.id
+        isDarkMode.value = preset.isDark
+        prefs.edit()
+            .putString("selected_theme_id", preset.id)
+            .putBoolean("is_dark_mode", preset.isDark)
+            .apply()
+        persistSettingsSnapshot(syncToCloud = true)
+    }
+
+    fun openThemesScreen() {
+        isSettingsDrawerOpen.value = false
+        isThemesScreenOpen.value = true
+    }
+
+    fun closeThemesScreen() {
+        isThemesScreenOpen.value = false
     }
 
     fun toggleLanguage() {
@@ -397,7 +434,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         isGridView = isGridView.value,
         isBiometricEnabled = isBiometricEnabled.value,
         selectedCategory = selectedCategory.value,
-        cloudSyncEnabled = true
+        cloudSyncEnabled = true,
+        selectedThemeId = selectedThemeId.value
     )
 
     private fun persistSettingsSnapshot(syncToCloud: Boolean = true) {
@@ -418,11 +456,13 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun applyRestoredSettings(s: FluffySettingsSnapshot, fromRemote: Boolean) {
+        val resolvedTheme = AppThemeRegistry.resolve(s.selectedThemeId, s.isDarkMode)
         isDarkMode.value = s.isDarkMode
         isArabic.value = s.isArabic
         isGridView.value = s.isGridView
         isBiometricEnabled.value = s.isBiometricEnabled
         selectedCategory.value = s.selectedCategory
+        selectedThemeId.value = resolvedTheme.id
 
         prefs.edit()
             .putBoolean("is_dark_mode", s.isDarkMode)
@@ -430,6 +470,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             .putBoolean("is_grid_view", s.isGridView)
             .putBoolean("biometric_enabled", s.isBiometricEnabled)
             .putString("selected_category", s.selectedCategory)
+            .putString("selected_theme_id", resolvedTheme.id)
             .apply()
 
         persistSettingsSnapshot(syncToCloud = !fromRemote)
@@ -592,10 +633,13 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                 mergedGlobal.add(queue.removeFirst())
             }
 
+            val partitionedGlobal = mergedGlobal.filter { it.isPinned } +
+                mergedGlobal.filter { !it.isPinned }
+
             val hasDuplicateSortOrders = allNotes.map { it.sortOrder }.distinct().size != allNotes.size
             val now = System.currentTimeMillis()
             val changedNotes = mutableListOf<NoteEntity>()
-            mergedGlobal.forEachIndexed { index, note ->
+            partitionedGlobal.forEachIndexed { index, note ->
                 val targetSortOrder = index * 1000L
                 if (hasDuplicateSortOrders || note.sortOrder != targetSortOrder) {
                     changedNotes.add(

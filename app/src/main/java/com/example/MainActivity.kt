@@ -40,7 +40,9 @@ import com.example.ui.screens.AuthWelcomeScreen
 import com.example.ui.screens.BiometricLockScreen
 import com.example.ui.screens.FluffyHomeScreen
 import com.example.ui.screens.NoteEditorScreen
+import com.example.ui.screens.ThemesScreen
 import com.example.ui.screens.VaultScreen
+import com.example.ui.theme.AppThemeRegistry
 import com.example.ui.theme.FluffyTheme
 import com.example.update.AppUpdateManager
 import com.example.viewmodel.FluffyViewModel
@@ -48,6 +50,7 @@ import com.example.viewmodel.FluffyViewModel
 private sealed interface FluffyScreenState {
     data object Welcome : FluffyScreenState
     data object Home : FluffyScreenState
+    data object Themes : FluffyScreenState
     data class Editor(val note: NoteEntity) : FluffyScreenState
     data object Vault : FluffyScreenState
 }
@@ -65,6 +68,8 @@ class MainActivity : FragmentActivity() {
             val viewModel: FluffyViewModel = viewModel()
             val isDark by viewModel.isDarkMode.collectAsState()
             val isArabic by viewModel.isArabic.collectAsState()
+            val selectedThemeId by viewModel.selectedThemeId.collectAsState()
+            val isThemesScreenOpen by viewModel.isThemesScreenOpen.collectAsState()
             val isAppLocked by viewModel.isAppLocked.collectAsState()
             val editingNote by viewModel.editingNote.collectAsState()
             val isCreatingNew by viewModel.isCreatingNew.collectAsState()
@@ -75,6 +80,10 @@ class MainActivity : FragmentActivity() {
             val currentUser by viewModel.currentUser.collectAsState()
             val isGuestMode by viewModel.isGuestMode.collectAsState()
             val isAuthBusy by viewModel.isAuthBusy.collectAsState()
+
+            val activeThemePreset = remember(selectedThemeId, isDark) {
+                AppThemeRegistry.resolve(selectedThemeId, isDark)
+            }
 
             val context = LocalContext.current
             val lifecycleOwner = LocalLifecycleOwner.current
@@ -94,7 +103,7 @@ class MainActivity : FragmentActivity() {
             val layoutDirection = if (isArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
 
             CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {
-                FluffyTheme(darkTheme = isDark) {
+                FluffyTheme(darkTheme = isDark, themePreset = activeThemePreset) {
                     Surface(
                         modifier = Modifier.fillMaxSize(),
                         color = Color.Transparent
@@ -130,6 +139,7 @@ class MainActivity : FragmentActivity() {
                                 currentUser == null && !isGuestMode -> FluffyScreenState.Welcome
                                 isVaultOpen -> FluffyScreenState.Vault
                                 editingNote != null -> FluffyScreenState.Editor(editingNote!!)
+                                isThemesScreenOpen -> FluffyScreenState.Themes
                                 else -> FluffyScreenState.Home
                             }
 
@@ -140,6 +150,7 @@ class MainActivity : FragmentActivity() {
                                         when (screen) {
                                             FluffyScreenState.Welcome -> "welcome"
                                             FluffyScreenState.Home -> "home"
+                                            FluffyScreenState.Themes -> "themes"
                                             FluffyScreenState.Vault -> "vault"
                                             is FluffyScreenState.Editor -> "editor"
                                         }
@@ -157,7 +168,7 @@ class MainActivity : FragmentActivity() {
                                                 fadeIn()
                                                     .togetherWith(slideOutVertically { -it / 2 } + fadeOut())
                                             }
-                                            targetState is FluffyScreenState.Editor -> {
+                                            targetState is FluffyScreenState.Editor || targetState is FluffyScreenState.Themes -> {
                                                 (slideInHorizontally { width -> if (isArabic) -width else width } + fadeIn())
                                                     .togetherWith(slideOutHorizontally { width -> if (isArabic) width else -width } + fadeOut())
                                             }
@@ -181,6 +192,17 @@ class MainActivity : FragmentActivity() {
                                                     viewModel.signInWithGoogleIdToken(idToken)
                                                 },
                                                 onContinueAsGuest = { viewModel.enterGuestMode() }
+                                            )
+                                        }
+                                        FluffyScreenState.Themes -> {
+                                            ThemesScreen(
+                                                selectedThemeId = selectedThemeId,
+                                                isDark = isDark,
+                                                isArabic = isArabic,
+                                                onSelectTheme = { preset ->
+                                                    viewModel.selectTheme(preset)
+                                                },
+                                                onBack = { viewModel.closeThemesScreen() }
                                             )
                                         }
                                         FluffyScreenState.Vault -> {

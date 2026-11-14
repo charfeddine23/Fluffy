@@ -24,7 +24,8 @@ data class FluffySettingsSnapshot(
     val isGridView: Boolean,
     val isBiometricEnabled: Boolean,
     val selectedCategory: String,
-    val cloudSyncEnabled: Boolean = true
+    val cloudSyncEnabled: Boolean = true,
+    val selectedThemeId: String = "obsidian_liquid_glass"
 )
 
 data class FluffyBackupBundle(
@@ -432,16 +433,24 @@ object LocalDeviceStorageManager {
         put("isBiometricEnabled", s.isBiometricEnabled)
         put("selectedCategory", s.selectedCategory)
         put("cloudSyncEnabled", s.cloudSyncEnabled)
+        put("selectedThemeId", s.selectedThemeId)
     }
 
-    private fun jsonToSettings(obj: JSONObject): FluffySettingsSnapshot = FluffySettingsSnapshot(
-        isDarkMode = obj.optBoolean("isDarkMode", true),
-        isArabic = obj.optBoolean("isArabic", true),
-        isGridView = obj.optBoolean("isGridView", true),
-        isBiometricEnabled = obj.optBoolean("isBiometricEnabled", false),
-        selectedCategory = obj.optString("selectedCategory", "ALL"),
-        cloudSyncEnabled = obj.optBoolean("cloudSyncEnabled", true)
-    )
+    private fun jsonToSettings(obj: JSONObject): FluffySettingsSnapshot {
+        val dark = obj.optBoolean("isDarkMode", true)
+        return FluffySettingsSnapshot(
+            isDarkMode = dark,
+            isArabic = obj.optBoolean("isArabic", true),
+            isGridView = obj.optBoolean("isGridView", true),
+            isBiometricEnabled = obj.optBoolean("isBiometricEnabled", false),
+            selectedCategory = obj.optString("selectedCategory", "ALL"),
+            cloudSyncEnabled = obj.optBoolean("cloudSyncEnabled", true),
+            selectedThemeId = obj.optString(
+                "selectedThemeId",
+                if (dark) "obsidian_liquid_glass" else "frosted_arctic_glass"
+            )
+        )
+    }
 
     private fun noteToJson(n: NoteEntity): JSONObject = JSONObject().apply {
         put("id", n.id)

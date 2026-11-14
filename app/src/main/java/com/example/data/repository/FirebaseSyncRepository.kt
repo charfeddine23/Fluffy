@@ -295,6 +295,7 @@ object FirebaseSyncRepository {
             "isBiometricEnabled" to settings.isBiometricEnabled,
             "selectedCategory" to settings.selectedCategory,
             "cloudSyncEnabled" to settings.cloudSyncEnabled,
+            "selectedThemeId" to settings.selectedThemeId,
             "updatedAt" to updatedAt,
             "serverUpdatedAt" to FieldValue.serverTimestamp()
         )
@@ -454,13 +455,16 @@ object FirebaseSyncRepository {
 
     private fun DocumentSnapshot.toSettingsPayloadOrNull(): RemoteSettingsPayload? {
         if (!exists()) return null
+        val isDark = getBoolean("isDarkMode") ?: true
         val snapshot = FluffySettingsSnapshot(
-            isDarkMode = getBoolean("isDarkMode") ?: true,
+            isDarkMode = isDark,
             isArabic = getBoolean("isArabic") ?: true,
             isGridView = getBoolean("isGridView") ?: true,
             isBiometricEnabled = getBoolean("isBiometricEnabled") ?: false,
             selectedCategory = getString("selectedCategory") ?: "ALL",
-            cloudSyncEnabled = getBoolean("cloudSyncEnabled") ?: true
+            cloudSyncEnabled = getBoolean("cloudSyncEnabled") ?: true,
+            selectedThemeId = getString("selectedThemeId")
+                ?: if (isDark) "obsidian_liquid_glass" else "frosted_arctic_glass"
         )
         return RemoteSettingsPayload(
             snapshot = snapshot,

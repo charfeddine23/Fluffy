@@ -36,6 +36,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.data.model.GlassTint
+import com.example.ui.theme.LocalAppThemePreset
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -81,12 +82,19 @@ fun FrostedBackdrop(
         label = "pulse_scale"
     )
 
-    // Palette tokens for backdrop
-    val baseBackground = if (isDark) Color(0xFF070A12) else Color(0xFFF6F8FC)
-    val orbColor1 = if (isDark) Color(0xFF0EA5E9).copy(alpha = 0.32f) else Color(0xFF38BDF8).copy(alpha = 0.40f)
-    val orbColor2 = if (isDark) Color(0xFF8B5CF6).copy(alpha = 0.30f) else Color(0xFFC084FC).copy(alpha = 0.36f)
-    val orbColor3 = if (isDark) Color(0xFFEC4899).copy(alpha = 0.26f) else Color(0xFFF472B6).copy(alpha = 0.32f)
-    val orbColor4 = if (isDark) Color(0xFF312E81).copy(alpha = 0.45f) else Color(0xFFFBBF24).copy(alpha = 0.28f)
+    val activePreset = LocalAppThemePreset.current
+    val effectiveDark = activePreset.isDark
+
+    // Dynamic palette tokens derived from the active theme preset
+    val baseBackground = activePreset.background
+    val orbColor1 = activePreset.orb1
+    val orbColor2 = activePreset.orb2
+    val orbColor3 = activePreset.orb3
+    val orbColor4 = if (effectiveDark) {
+        activePreset.secondary.copy(alpha = if (activePreset.isGlassStyle) 0.28f else 0.16f)
+    } else {
+        activePreset.tertiary.copy(alpha = if (activePreset.isGlassStyle) 0.22f else 0.12f)
+    }
 
     Box(
         modifier = modifier
@@ -174,111 +182,137 @@ fun FrostedBackdrop(
  * 2. Chromatic Dispersion Border: Refractive iridescent rim that separates light like an optical prism.
  * 3. Inner Specular Highlight & Inner Shadow: Light bevel along top/left, ambient occlusion along bottom/right.
  */
+@Composable
 fun Modifier.liquidGlass(
     isDark: Boolean,
     tint: GlassTint = GlassTint.FROST,
     shape: Shape = RoundedCornerShape(24.dp),
     borderWidth: Dp = 1.5.dp,
     customFill: Color? = null
-): Modifier = this
-    .clip(shape)
-    .drawBehind {
-        val width = size.width
-        val height = size.height
-
-        // 1. Frosted Liquid Fill
-        val baseFill = customFill ?: if (isDark) tint.darkFill else tint.lightFill
-        val specularSheen = if (customFill != null) {
-            val a = customFill.alpha
-            Brush.linearGradient(
-                colors = listOf(
-                    customFill.copy(alpha = (a * 1.08f).coerceIn(0.01f, 1f)),
-                    customFill,
-                    customFill.copy(alpha = (a * 0.92f).coerceIn(0.01f, 1f))
-                ),
-                start = Offset(0f, 0f),
-                end = Offset(width, height)
-            )
-        } else if (isDark) {
-            Brush.linearGradient(
-                colors = listOf(
-                    baseFill.copy(alpha = (baseFill.alpha * 1.25f).coerceAtMost(0.95f)),
-                    baseFill,
-                    baseFill.copy(alpha = (baseFill.alpha * 0.85f).coerceAtLeast(0.15f))
-                ),
-                start = Offset(0f, 0f),
-                end = Offset(width, height)
-            )
-        } else {
-            Brush.linearGradient(
-                colors = listOf(
-                    Color(0xF0FFFFFF).copy(alpha = 0.88f),
-                    baseFill,
-                    Color(0xD0FFFFFF).copy(alpha = 0.72f)
-                ),
-                start = Offset(0f, 0f),
-                end = Offset(width, height)
-            )
-        }
-        drawRect(brush = specularSheen)
-
-        // 2. Inner Specular Highlight (Top/Left inner rim)
-        val highlightColor = if (isDark) Color(0x60FFFFFF) else Color(0x99FFFFFF)
-        val shadowColor = if (isDark) Color(0x40000000) else Color(0x18000000)
-
-        // Top-left bevel highlight
-        drawLine(
-            brush = Brush.horizontalGradient(
-                colors = listOf(highlightColor, highlightColor.copy(alpha = 0.1f))
-            ),
-            start = Offset(12f, 2f),
-            end = Offset(width - 12f, 2f),
-            strokeWidth = 3f
+): Modifier {
+    val activePreset = LocalAppThemePreset.current
+    val effectiveDark = activePreset.isDark
+    val presetFill = when {
+        customFill != null -> customFill
+        tint == GlassTint.FROST -> activePreset.surface.copy(
+            alpha = when {
+                activePreset.isGlassStyle && effectiveDark -> 0.56f
+                activePreset.isGlassStyle && !effectiveDark -> 0.80f
+                !activePreset.isGlassStyle && effectiveDark -> 0.88f
+                else -> 0.94f
+            }
         )
-        drawLine(
-            brush = Brush.verticalGradient(
-                colors = listOf(highlightColor, highlightColor.copy(alpha = 0.1f))
-            ),
-            start = Offset(2f, 12f),
-            end = Offset(2f, height - 12f),
-            strokeWidth = 3f
-        )
+        else -> if (effectiveDark) tint.darkFill else tint.lightFill
+    }
 
-        // Bottom-right inner ambient shadow
-        drawLine(
-            brush = Brush.horizontalGradient(
-                colors = listOf(shadowColor.copy(alpha = 0.05f), shadowColor)
-            ),
-            start = Offset(12f, height - 2f),
-            end = Offset(width - 12f, height - 2f),
-            strokeWidth = 2.5f
+    val borderColors = if (tint == GlassTint.FROST) {
+        listOf(
+            activePreset.primary.copy(alpha = if (effectiveDark) 0.82f else 0.70f),
+            activePreset.secondary.copy(alpha = if (effectiveDark) 0.78f else 0.65f),
+            activePreset.tertiary.copy(alpha = if (effectiveDark) 0.75f else 0.62f),
+            activePreset.primary.copy(alpha = if (effectiveDark) 0.72f else 0.60f)
         )
-        drawLine(
-            brush = Brush.verticalGradient(
-                colors = listOf(shadowColor.copy(alpha = 0.05f), shadowColor)
-            ),
-            start = Offset(width - 2f, 12f),
-            end = Offset(width - 2f, height - 12f),
-            strokeWidth = 2.5f
+    } else {
+        listOf(
+            tint.chromaticLeading.copy(alpha = if (effectiveDark) 0.85f else 0.75f),
+            Color(0xFF38BDF8).copy(alpha = if (effectiveDark) 0.75f else 0.65f),
+            Color(0xFFC084FC).copy(alpha = if (effectiveDark) 0.85f else 0.75f),
+            Color(0xFFF472B6).copy(alpha = if (effectiveDark) 0.80f else 0.70f),
+            Color(0xFFFDE047).copy(alpha = if (effectiveDark) 0.60f else 0.50f),
+            tint.chromaticTrailing.copy(alpha = if (effectiveDark) 0.75f else 0.65f)
         )
     }
-    // 3. Chromatic Dispersion Border (Prism Refraction Edge)
-    .border(
-        width = borderWidth,
-        brush = Brush.linearGradient(
-            colors = listOf(
-                tint.chromaticLeading.copy(alpha = if (isDark) 0.85f else 0.75f),
-                Color(0xFF38BDF8).copy(alpha = if (isDark) 0.75f else 0.65f),
-                Color(0xFFC084FC).copy(alpha = if (isDark) 0.85f else 0.75f),
-                Color(0xFFF472B6).copy(alpha = if (isDark) 0.80f else 0.70f),
-                Color(0xFFFDE047).copy(alpha = if (isDark) 0.60f else 0.50f),
-                tint.chromaticTrailing.copy(alpha = if (isDark) 0.75f else 0.65f)
+
+    return this
+        .clip(shape)
+        .drawBehind {
+            val width = size.width
+            val height = size.height
+
+            // 1. Frosted / Tinted Fill
+            val specularSheen = if (customFill != null || tint == GlassTint.FROST) {
+                val a = presetFill.alpha
+                Brush.linearGradient(
+                    colors = listOf(
+                        presetFill.copy(alpha = (a * 1.08f).coerceIn(0.01f, 1f)),
+                        presetFill,
+                        presetFill.copy(alpha = (a * 0.92f).coerceIn(0.01f, 1f))
+                    ),
+                    start = Offset(0f, 0f),
+                    end = Offset(width, height)
+                )
+            } else if (effectiveDark) {
+                Brush.linearGradient(
+                    colors = listOf(
+                        presetFill.copy(alpha = (presetFill.alpha * 1.25f).coerceAtMost(0.95f)),
+                        presetFill,
+                        presetFill.copy(alpha = (presetFill.alpha * 0.85f).coerceAtLeast(0.15f))
+                    ),
+                    start = Offset(0f, 0f),
+                    end = Offset(width, height)
+                )
+            } else {
+                Brush.linearGradient(
+                    colors = listOf(
+                        Color(0xF0FFFFFF).copy(alpha = 0.88f),
+                        presetFill,
+                        Color(0xD0FFFFFF).copy(alpha = 0.72f)
+                    ),
+                    start = Offset(0f, 0f),
+                    end = Offset(width, height)
+                )
+            }
+            drawRect(brush = specularSheen)
+
+            // 2. Inner Specular Highlight (Top/Left inner rim)
+            val highlightColor = if (effectiveDark) Color(0x55FFFFFF) else Color(0x99FFFFFF)
+            val shadowColor = if (effectiveDark) Color(0x40000000) else Color(0x18000000)
+
+            drawLine(
+                brush = Brush.horizontalGradient(
+                    colors = listOf(highlightColor, highlightColor.copy(alpha = 0.1f))
+                ),
+                start = Offset(12f, 2f),
+                end = Offset(width - 12f, 2f),
+                strokeWidth = 3f
+            )
+            drawLine(
+                brush = Brush.verticalGradient(
+                    colors = listOf(highlightColor, highlightColor.copy(alpha = 0.1f))
+                ),
+                start = Offset(2f, 12f),
+                end = Offset(2f, height - 12f),
+                strokeWidth = 3f
+            )
+
+            drawLine(
+                brush = Brush.horizontalGradient(
+                    colors = listOf(shadowColor.copy(alpha = 0.05f), shadowColor)
+                ),
+                start = Offset(12f, height - 2f),
+                end = Offset(width - 12f, height - 2f),
+                strokeWidth = 2.5f
+            )
+            drawLine(
+                brush = Brush.verticalGradient(
+                    colors = listOf(shadowColor.copy(alpha = 0.05f), shadowColor)
+                ),
+                start = Offset(width - 2f, 12f),
+                end = Offset(width - 2f, height - 12f),
+                strokeWidth = 2.5f
+            )
+        }
+        // 3. Chromatic Dispersion Border
+        .border(
+            width = borderWidth,
+            brush = Brush.linearGradient(
+                colors = borderColors,
+                start = Offset(0f, 0f),
+                end = Offset(1200f, 1200f)
             ),
-            start = Offset(0f, 0f),
-            end = Offset(1200f, 1200f)
-        ),
-        shape = shape
-    )
+            shape = shape
+        )
+}
 
 /**
  * Liquid Glass Card wrapper for notes, dialogs, and panels.

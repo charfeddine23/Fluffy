@@ -33,6 +33,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudQueue
@@ -45,6 +46,7 @@ import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Login
 import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PersonOutline
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -61,6 +63,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import com.example.data.repository.CloudSyncStatus
 import com.example.data.repository.FirebaseUserInfo
+import com.example.ui.theme.AppThemeRegistry
+import com.example.ui.theme.LocalAppThemePreset
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -92,6 +96,8 @@ fun SettingsDrawer(
     onToggleTheme: () -> Unit,
     onToggleLanguage: () -> Unit,
     onToggleViewMode: () -> Unit,
+    selectedThemeId: String = "obsidian_liquid_glass",
+    onOpenThemes: () -> Unit = {},
     isCheckingUpdates: Boolean = false,
     hasPendingUpdate: Boolean = false,
     onCheckForUpdates: () -> Unit = {},
@@ -155,11 +161,8 @@ fun SettingsDrawer(
                     .windowInsetsPadding(WindowInsets.navigationBars)
                     .padding(vertical = 12.dp, horizontal = 12.dp)
             ) {
-                val settingsDrawerFill = if (isDark) {
-                    Color(0xFF0F172A).copy(alpha = 0.85f)
-                } else {
-                    Color(0xFFFFFFFF).copy(alpha = 0.85f)
-                }
+                val activePreset = LocalAppThemePreset.current
+                val settingsDrawerFill = activePreset.surface.copy(alpha = 0.90f)
 
                 LiquidGlassCard(
                     isDark = isDark,
@@ -360,6 +363,83 @@ fun SettingsDrawer(
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
+
+                    // Themes Gallery option (Directly above Dark / Light Mode toggle)
+                    val currentPreset = AppThemeRegistry.resolve(selectedThemeId, isDark)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("settings_themes_button")
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(
+                                if (isDark) currentPreset.surfaceVariant.copy(alpha = 0.85f)
+                                else currentPreset.surfaceVariant.copy(alpha = 0.92f)
+                            )
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = ripple(bounded = true),
+                                onClick = {
+                                    onClose()
+                                    onOpenThemes()
+                                }
+                            )
+                            .padding(horizontal = 14.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Palette,
+                                contentDescription = "Themes",
+                                tint = currentPreset.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "Themes",
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = textColor
+                                )
+                                Text(
+                                    text = currentPreset.name,
+                                    fontSize = 11.sp,
+                                    color = metaColor
+                                )
+                            }
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            listOf(
+                                currentPreset.primary,
+                                currentPreset.secondary,
+                                currentPreset.tertiary
+                            ).forEach { dot ->
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(dot)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = null,
+                                tint = metaColor,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
 
                     // Theme toggle option
                     SettingsRow(

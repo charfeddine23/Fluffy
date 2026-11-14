@@ -42,6 +42,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -56,6 +57,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -63,6 +65,8 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -72,6 +76,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.zIndex
 import com.example.data.model.GlassTint
 import com.example.data.model.NoteEntity
@@ -100,6 +105,7 @@ fun FluffyHomeScreen(
     val isDark by viewModel.isDarkMode.collectAsState()
     val isArabic by viewModel.isArabic.collectAsState()
     val isGridView by viewModel.isGridView.collectAsState()
+    val selectedThemeId by viewModel.selectedThemeId.collectAsState()
     val isBiometricEnabled by viewModel.isBiometricEnabled.collectAsState()
     val isSettingsDrawerOpen by viewModel.isSettingsDrawerOpen.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
@@ -143,11 +149,14 @@ fun FluffyHomeScreen(
     var lastSwapPointerPos by remember { mutableStateOf(Offset.Zero) }
     val lastKnownTranslationXY = remember { floatArrayOf(0f, 0f) }
 
+    var containerCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val gridPhysicalRects = remember { mutableMapOf<Long, Rect>() }
+    val listPhysicalRects = remember { mutableMapOf<Long, Rect>() }
+
     val currentDisplayedNotes by rememberUpdatedState(displayedNotes)
     val currentIsGridView by rememberUpdatedState(isGridView)
     val currentNotes by rememberUpdatedState(notes)
 
-    val listStartPaddingPx = with(density) { 16.dp.toPx() }
     val swapHysteresisPx = with(density) { 28.dp.toPx() }
 
     LaunchedEffect(notes, draggedNoteId, pendingCommitOrderIds) {
@@ -170,28 +179,34 @@ fun FluffyHomeScreen(
         }
     }
 
-    fun trySwapDraggedNote(pointerPos: Offset, activeDragId: Long, inGrid: Boolean) {
-        val candidateKey: Long? = if (inGrid) {
-            gridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-                val id = info.key as? Long ?: return@firstOrNull false
-                if (id == activeDragId) return@firstOrNull false
-                val left = info.offset.x.toFloat()
-                val right = left + info.size.width
-                val top = info.offset.y.toFloat()
-                val bottom = top + info.size.height
-                pointerPos.x in left..right && pointerPos.y in top..bottom
-            }?.key as? Long
+    fun visibleKeysForMode(inGrid: Boolean): Set<Long> {
+        return if (inGrid) {
+            gridState.layoutInfo.visibleItemsInfo.mapNotNullTo(HashSet()) { it.key as? Long }
         } else {
-            listState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-                val id = info.key as? Long ?: return@firstOrNull false
-                if (id == activeDragId) return@firstOrNull false
-                val top = info.offset.toFloat()
-                val bottom = top + info.size
-                pointerPos.y in top..bottom
-            }?.key as? Long
+            listState.layoutInfo.visibleItemsInfo.mapNotNullTo(HashSet()) { it.key as? Long }
         }
+    }
+
+    fun trySwapDraggedNote(pointerPos: Offset, activeDragId: Long, inGrid: Boolean) {
+        val currentList = currentDisplayedNotes
+        val draggedNote = currentList.firstOrNull { it.id == activeDragId } ?: return
+        val visibleKeys = visibleKeysForMode(inGrid)
+        val rects = if (inGrid) gridPhysicalRects else listPhysicalRects
+
+        val candidateKey: Long? = rects.entries.firstOrNull { (id, rect) ->
+            if (id == activeDragId || id !in visibleKeys) return@firstOrNull false
+            if (inGrid) {
+                rect.contains(pointerPos)
+            } else {
+                pointerPos.y in rect.top..rect.bottom
+            }
+        }?.key
 
         if (candidateKey == null) return
+
+        val candidateNote = currentList.firstOrNull { it.id == candidateKey } ?: return
+        // Pinned notes ALWAYS remain in the pinned top section and only swap with other pinned notes
+        if (draggedNote.isPinned != candidateNote.isPinned) return
 
         val now = SystemClock.uptimeMillis()
         val elapsed = now - lastSwapTimeMs
@@ -199,7 +214,6 @@ fun FluffyHomeScreen(
         val allowSwap = candidateKey != lastSwappedKey || (elapsed > 260L && movedDist > swapHysteresisPx)
         if (!allowSwap) return
 
-        val currentList = currentDisplayedNotes
         val fromIdx = currentList.indexOfFirst { it.id == activeDragId }
         val toIdx = currentList.indexOfFirst { it.id == candidateKey }
         if (fromIdx != -1 && toIdx != -1 && fromIdx != toIdx) {
@@ -307,6 +321,10 @@ fun FluffyHomeScreen(
 
                         while (true) {
                             val event = awaitPointerEvent(PointerEventPass.Initial)
+                            if (draggedNoteId != null) {
+                                twoFingerStartedInCenter = false
+                                continue
+                            }
                             val pressed = event.changes.filter { it.pressed }
                             if (pressed.isEmpty()) break
 
@@ -414,32 +432,22 @@ fun FluffyHomeScreen(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth()
+                            .onGloballyPositioned { coords ->
+                                containerCoords = coords
+                            }
                             .pointerInput(Unit) {
                                 val touchSlop = viewConfiguration.touchSlop
 
                                 fun findHitNoteAndOrigin(pos: Offset): Pair<Long, Offset>? {
-                                    return if (currentIsGridView) {
-                                        gridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-                                            val left = info.offset.x.toFloat()
-                                            val right = left + info.size.width
-                                            val top = info.offset.y.toFloat()
-                                            val bottom = top + info.size.height
-                                            pos.x in left..right && pos.y in top..bottom
-                                        }?.let { info ->
-                                            val id = info.key as? Long ?: return@let null
-                                            id to Offset(info.offset.x.toFloat(), info.offset.y.toFloat())
-                                        }
-                                    } else {
-                                        val rightEdge = size.width.toFloat() - listStartPaddingPx
-                                        listState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
-                                            val top = info.offset.toFloat()
-                                            val bottom = top + info.size
-                                            pos.x in listStartPaddingPx..rightEdge && pos.y in top..bottom
-                                        }?.let { info ->
-                                            val id = info.key as? Long ?: return@let null
-                                            id to Offset(listStartPaddingPx, info.offset.toFloat())
+                                    val inGrid = currentIsGridView
+                                    val visibleKeys = visibleKeysForMode(inGrid)
+                                    val rects = if (inGrid) gridPhysicalRects else listPhysicalRects
+                                    for ((id, rect) in rects) {
+                                        if (id in visibleKeys && rect.contains(pos)) {
+                                            return id to rect.topLeft
                                         }
                                     }
+                                    return null
                                 }
 
                                 awaitEachGesture {
@@ -483,9 +491,12 @@ fun FluffyHomeScreen(
 
                                     if (!holdActivated) return@awaitEachGesture
                                     val hit = findHitNoteAndOrigin(latestPos) ?: return@awaitEachGesture
-                                    if (currentDisplayedNotes.size <= 1) return@awaitEachGesture
-
                                     val (hitNoteId, cardOrigin) = hit
+                                    val listSnapshot = currentDisplayedNotes
+                                    val hitNote = listSnapshot.firstOrNull { it.id == hitNoteId } ?: return@awaitEachGesture
+                                    // Allow dragging only when there are other notes in the same (pinned/unpinned) group
+                                    if (listSnapshot.count { it.isPinned == hitNote.isPinned } <= 1) return@awaitEachGesture
+
                                     draggedNoteId = hitNoteId
                                     currentPointerPos = latestPos
                                     grabOffsetInsideCard = latestPos - cardOrigin
@@ -540,51 +551,72 @@ fun FluffyHomeScreen(
                                         targetValue = if (isDragging) 1.04f else 1f,
                                         label = "grid_drag_scale"
                                     )
-                                    val itemModifier = if (isDragging) {
-                                        Modifier
-                                            .zIndex(10f)
-                                            .graphicsLayer {
-                                                val origin = gridState.layoutInfo.visibleItemsInfo
-                                                    .firstOrNull { it.key == note.id }
-                                                    ?.offset
-                                                    ?.let { Offset(it.x.toFloat(), it.y.toFloat()) }
-                                                val tx: Float
-                                                val ty: Float
-                                                if (origin != null) {
-                                                    val computed = currentPointerPos - origin - grabOffsetInsideCard
-                                                    lastKnownTranslationXY[0] = computed.x
-                                                    lastKnownTranslationXY[1] = computed.y
-                                                    tx = computed.x
-                                                    ty = computed.y
-                                                } else {
-                                                    tx = lastKnownTranslationXY[0]
-                                                    ty = lastKnownTranslationXY[1]
-                                                }
-                                                translationX = tx
-                                                translationY = ty
-                                                scaleX = dragScale
-                                                scaleY = dragScale
-                                                shape = RoundedCornerShape(22.dp)
-                                                shadowElevation = 24.dp.toPx()
-                                            }
-                                    } else {
-                                        Modifier.animateItem()
+                                    val slotRectState = remember { mutableStateOf<Rect?>(null) }
+                                    DisposableEffect(note.id) {
+                                        onDispose {
+                                            gridPhysicalRects.remove(note.id)
+                                        }
                                     }
 
-                                    NoteCard(
-                                        note = note,
-                                        isDark = isDark,
-                                        isArabic = isArabic,
-                                        isDragging = isDragging,
-                                        onClick = { viewModel.openExistingNote(note) },
-                                        onTogglePin = { viewModel.togglePin(note) },
-                                        onToggleFavorite = { viewModel.toggleFavorite(note) },
-                                        onToggleChecklistItem = { idx ->
-                                            viewModel.toggleChecklistItem(note, idx)
-                                        },
-                                        onDelete = { viewModel.deleteNoteDirectly(note) },
-                                        modifier = itemModifier
-                                    )
+                                    val outerSlotModifier = (if (isDragging) {
+                                        Modifier.zIndex(10f)
+                                    } else {
+                                        Modifier.animateItem()
+                                    }).onGloballyPositioned { coords ->
+                                        val container = containerCoords
+                                        if (container != null && container.isAttached && coords.isAttached) {
+                                            val topLeft = container.localPositionOf(coords, Offset.Zero)
+                                            val rect = Rect(topLeft, coords.size.toSize())
+                                            gridPhysicalRects[note.id] = rect
+                                            if (isDragging && slotRectState.value != rect) {
+                                                slotRectState.value = rect
+                                            }
+                                        }
+                                    }
+
+                                    val cardDragModifier = if (isDragging) {
+                                        Modifier.graphicsLayer {
+                                            val origin = slotRectState.value?.topLeft
+                                                ?: gridPhysicalRects[note.id]?.topLeft
+                                            val tx: Float
+                                            val ty: Float
+                                            if (origin != null) {
+                                                val computed = currentPointerPos - origin - grabOffsetInsideCard
+                                                lastKnownTranslationXY[0] = computed.x
+                                                lastKnownTranslationXY[1] = computed.y
+                                                tx = computed.x
+                                                ty = computed.y
+                                            } else {
+                                                tx = lastKnownTranslationXY[0]
+                                                ty = lastKnownTranslationXY[1]
+                                            }
+                                            translationX = tx
+                                            translationY = ty
+                                            scaleX = dragScale
+                                            scaleY = dragScale
+                                            shape = RoundedCornerShape(22.dp)
+                                            shadowElevation = 24.dp.toPx()
+                                        }
+                                    } else {
+                                        Modifier
+                                    }
+
+                                    Box(modifier = outerSlotModifier) {
+                                        NoteCard(
+                                            note = note,
+                                            isDark = isDark,
+                                            isArabic = isArabic,
+                                            isDragging = isDragging,
+                                            onClick = { viewModel.openExistingNote(note) },
+                                            onTogglePin = { viewModel.togglePin(note) },
+                                            onToggleFavorite = { viewModel.toggleFavorite(note) },
+                                            onToggleChecklistItem = { idx ->
+                                                viewModel.toggleChecklistItem(note, idx)
+                                            },
+                                            onDelete = { viewModel.deleteNoteDirectly(note) },
+                                            modifier = cardDragModifier
+                                        )
+                                    }
                                 }
                             }
                         } else {
@@ -607,51 +639,72 @@ fun FluffyHomeScreen(
                                         targetValue = if (isDragging) 1.03f else 1f,
                                         label = "list_drag_scale"
                                     )
-                                    val itemModifier = if (isDragging) {
-                                        Modifier
-                                            .zIndex(10f)
-                                            .graphicsLayer {
-                                                val origin = listState.layoutInfo.visibleItemsInfo
-                                                    .firstOrNull { it.key == note.id }
-                                                    ?.offset
-                                                    ?.let { Offset(listStartPaddingPx, it.toFloat()) }
-                                                val tx: Float
-                                                val ty: Float
-                                                if (origin != null) {
-                                                    val computed = currentPointerPos - origin - grabOffsetInsideCard
-                                                    lastKnownTranslationXY[0] = computed.x
-                                                    lastKnownTranslationXY[1] = computed.y
-                                                    tx = computed.x
-                                                    ty = computed.y
-                                                } else {
-                                                    tx = lastKnownTranslationXY[0]
-                                                    ty = lastKnownTranslationXY[1]
-                                                }
-                                                translationX = tx
-                                                translationY = ty
-                                                scaleX = dragScale
-                                                scaleY = dragScale
-                                                shape = RoundedCornerShape(22.dp)
-                                                shadowElevation = 24.dp.toPx()
-                                            }
-                                    } else {
-                                        Modifier.animateItem()
+                                    val slotRectState = remember { mutableStateOf<Rect?>(null) }
+                                    DisposableEffect(note.id) {
+                                        onDispose {
+                                            listPhysicalRects.remove(note.id)
+                                        }
                                     }
 
-                                    NoteCard(
-                                        note = note,
-                                        isDark = isDark,
-                                        isArabic = isArabic,
-                                        isDragging = isDragging,
-                                        onClick = { viewModel.openExistingNote(note) },
-                                        onTogglePin = { viewModel.togglePin(note) },
-                                        onToggleFavorite = { viewModel.toggleFavorite(note) },
-                                        onToggleChecklistItem = { idx ->
-                                            viewModel.toggleChecklistItem(note, idx)
-                                        },
-                                        onDelete = { viewModel.deleteNoteDirectly(note) },
-                                        modifier = itemModifier
-                                    )
+                                    val outerSlotModifier = (if (isDragging) {
+                                        Modifier.zIndex(10f)
+                                    } else {
+                                        Modifier.animateItem()
+                                    }).onGloballyPositioned { coords ->
+                                        val container = containerCoords
+                                        if (container != null && container.isAttached && coords.isAttached) {
+                                            val topLeft = container.localPositionOf(coords, Offset.Zero)
+                                            val rect = Rect(topLeft, coords.size.toSize())
+                                            listPhysicalRects[note.id] = rect
+                                            if (isDragging && slotRectState.value != rect) {
+                                                slotRectState.value = rect
+                                            }
+                                        }
+                                    }
+
+                                    val cardDragModifier = if (isDragging) {
+                                        Modifier.graphicsLayer {
+                                            val origin = slotRectState.value?.topLeft
+                                                ?: listPhysicalRects[note.id]?.topLeft
+                                            val tx: Float
+                                            val ty: Float
+                                            if (origin != null) {
+                                                val computed = currentPointerPos - origin - grabOffsetInsideCard
+                                                lastKnownTranslationXY[0] = computed.x
+                                                lastKnownTranslationXY[1] = computed.y
+                                                tx = computed.x
+                                                ty = computed.y
+                                            } else {
+                                                tx = lastKnownTranslationXY[0]
+                                                ty = lastKnownTranslationXY[1]
+                                            }
+                                            translationX = tx
+                                            translationY = ty
+                                            scaleX = dragScale
+                                            scaleY = dragScale
+                                            shape = RoundedCornerShape(22.dp)
+                                            shadowElevation = 24.dp.toPx()
+                                        }
+                                    } else {
+                                        Modifier
+                                    }
+
+                                    Box(modifier = outerSlotModifier) {
+                                        NoteCard(
+                                            note = note,
+                                            isDark = isDark,
+                                            isArabic = isArabic,
+                                            isDragging = isDragging,
+                                            onClick = { viewModel.openExistingNote(note) },
+                                            onTogglePin = { viewModel.togglePin(note) },
+                                            onToggleFavorite = { viewModel.toggleFavorite(note) },
+                                            onToggleChecklistItem = { idx ->
+                                                viewModel.toggleChecklistItem(note, idx)
+                                            },
+                                            onDelete = { viewModel.deleteNoteDirectly(note) },
+                                            modifier = cardDragModifier
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -707,6 +760,8 @@ fun FluffyHomeScreen(
                 onToggleTheme = { viewModel.toggleDarkMode() },
                 onToggleLanguage = { viewModel.toggleLanguage() },
                 onToggleViewMode = { viewModel.toggleViewMode() },
+                selectedThemeId = selectedThemeId,
+                onOpenThemes = { viewModel.openThemesScreen() },
                 isCheckingUpdates = updateState is UpdateUiState.Checking,
                 hasPendingUpdate = updateState is UpdateUiState.Available ||
                     updateState is UpdateUiState.ReadyToInstall ||
