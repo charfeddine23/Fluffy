@@ -92,9 +92,9 @@ jobs:
             printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
             echo "Created app/google-services.json from GOOGLE_SERVICES_JSON secret."
           elif [ -f "app/google-services.json" ]; then
-            echo "GOOGLE_SERVICES_JSON secret not set; using existing app/google-services.json."
+            echo "Using repository app/google-services.json."
           else
-            echo "Warning: neither GOOGLE_SERVICES_JSON secret nor app/google-services.json was found."
+            echo "::warning::Neither GOOGLE_SERVICES_JSON secret nor app/google-services.json was found. Firebase features require app/google-services.json."
           fi
 
       - name: Build Signed Release APK
@@ -104,10 +104,13 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'android' }}
           VERSION_NAME: ${{ steps.versioning.outputs.version_name }}
           VERSION_CODE: ${{ steps.versioning.outputs.version_code }}
+          JAVA_TOOL_OPTIONS: "-Djava.awt.headless=true"
+          GRADLE_OPTS: "-Djava.awt.headless=true"
         run: |
           ./gradlew assembleRelease \
             -PversionName="${VERSION_NAME}" \
             -PversionCode="${VERSION_CODE}" \
+            -Djava.awt.headless=true \
             --no-daemon
 
       - name: Package & Rename APK ([app_name].v1.x.x.apk)
