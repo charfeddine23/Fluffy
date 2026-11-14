@@ -3,6 +3,11 @@ package com.example.ui.screens
 import android.content.Context
 import android.content.Intent
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -10,13 +15,16 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
@@ -41,14 +49,18 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -105,7 +117,7 @@ fun NoteEditorScreen(
 ) {
     val context = LocalContext.current
 
-    // Local mutable state for editing
+    // Local mutable state for literal editing
     var title by remember { mutableStateOf(note.title) }
     var content by remember { mutableStateOf(note.content) }
     var category by remember { mutableStateOf(note.category) }
@@ -113,7 +125,10 @@ fun NoteEditorScreen(
     var isPinned by remember { mutableStateOf(note.isPinned) }
     var isFavorite by remember { mutableStateOf(note.isFavorite) }
     var audioDurationSec by remember { mutableIntStateOf(note.audioDurationSec) }
+
     var showVoiceRecorderDialog by remember { mutableStateOf(false) }
+    var showStylePanel by remember { mutableStateOf(false) }
+    var showMoreMenu by remember { mutableStateOf(false) }
 
     val checklistItems = remember {
         mutableStateListOf<ChecklistItem>().apply {
@@ -122,7 +137,7 @@ fun NoteEditorScreen(
     }
 
     // Real-time automatic background save with 500ms debounce
-    androidx.compose.runtime.LaunchedEffect(
+    LaunchedEffect(
         title, content, category, selectedTint.id,
         isPinned, isFavorite, checklistItems.toList(), audioDurationSec
     ) {
@@ -133,7 +148,7 @@ fun NoteEditorScreen(
         )
     }
 
-    // Handle Android system back gesture to save or pop
+    // Handle Android system back gesture to save or close
     BackHandler {
         onSave(
             title, content, category, selectedTint.id,
@@ -142,8 +157,14 @@ fun NoteEditorScreen(
     }
 
     val textColor = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
-    val bodyColor = if (isDark) Color(0xFFCBD5E1) else Color(0xFF334155)
+    val bodyColor = if (isDark) Color(0xFFE2E8F0) else Color(0xFF1E293B)
     val metaColor = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
+    val pillFill = if (isDark) Color(0xFF1E293B).copy(alpha = 0.72f) else Color.White.copy(alpha = 0.72f)
+
+    val wordCount = remember(content) {
+        if (content.isBlank()) 0 else content.trim().split("\\s+".toRegex()).size
+    }
+    val charCount = content.length
 
     FrostedBackdrop(isDark = isDark) {
         Column(
@@ -153,25 +174,19 @@ fun NoteEditorScreen(
                 .windowInsetsPadding(WindowInsets.navigationBars)
                 .imePadding()
         ) {
-            // Top Action Bar
+            // 1. Minimal Top Bar (Keep-style order: Back on start; Pin + Save on end)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Back Button
                 Box(
                     modifier = Modifier
-                        .size(42.dp)
+                        .size(44.dp)
                         .testTag("editor_back_button")
-                        .liquidGlass(
-                            isDark = isDark,
-                            tint = GlassTint.FROST,
-                            shape = CircleShape,
-                            borderWidth = 1.2.dp
-                        )
+                        .clip(CircleShape)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = ripple(bounded = true)
@@ -185,486 +200,597 @@ fun NoteEditorScreen(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
+                        contentDescription = if (isArabic) "رجوع وحفظ" else "Back",
                         tint = textColor,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                 }
 
-                // Actions: Pin, Favorite, Share, Delete, Done
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Pin Toggle
+                    // Pin Button
                     Box(
                         modifier = Modifier
-                            .size(38.dp)
+                            .size(44.dp)
                             .testTag("editor_pin_toggle")
-                            .clip(CircleShape)
-                            .background(if (isPinned) Color(0xFFFBBF24).copy(alpha = 0.25f) else Color.Transparent)
-                            .clickable { isPinned = !isPinned },
+                            .liquidGlass(
+                                isDark = isDark,
+                                tint = if (isPinned) GlassTint.AMBER else GlassTint.FROST,
+                                shape = RoundedCornerShape(14.dp),
+                                borderWidth = 1.dp,
+                                customFill = if (isPinned) Color(0xFFFBBF24).copy(alpha = 0.25f) else pillFill
+                            )
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = ripple(bounded = true)
+                            ) { isPinned = !isPinned },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.PushPin,
-                            contentDescription = "Pin",
-                            tint = if (isPinned) Color(0xFFFBBF24) else metaColor,
+                            contentDescription = if (isArabic) "تثبيت" else "Pin",
+                            tint = if (isPinned) Color(0xFFFBBF24) else textColor,
                             modifier = Modifier.size(20.dp)
                         )
-                    }
-
-                    // Favorite Toggle
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .testTag("editor_fav_toggle")
-                            .clip(CircleShape)
-                            .background(if (isFavorite) Color(0xFFF43F5E).copy(alpha = 0.25f) else Color.Transparent)
-                            .clickable { isFavorite = !isFavorite },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                            contentDescription = "Favorite",
-                            tint = if (isFavorite) Color(0xFFF43F5E) else metaColor,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    // Share Note
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .clip(CircleShape)
-                            .clickable {
-                                shareNoteText(context, title, content, checklistItems)
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Share,
-                            contentDescription = "Share",
-                            tint = metaColor,
-                            modifier = Modifier.size(19.dp)
-                        )
-                    }
-
-                    // Delete Note (if not new)
-                    if (note.id != 0L) {
-                        Box(
-                            modifier = Modifier
-                                .size(38.dp)
-                                .clip(CircleShape)
-                                .clickable { onDelete() },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Delete,
-                                contentDescription = "Delete",
-                                tint = Color(0xFFEF4444).copy(alpha = 0.8f),
-                                modifier = Modifier.size(19.dp)
-                            )
-                        }
                     }
 
                     // Save / Done Button
                     Box(
                         modifier = Modifier
-                            .height(38.dp)
+                            .size(44.dp)
                             .testTag("editor_save_button")
                             .liquidGlass(
                                 isDark = isDark,
                                 tint = selectedTint,
-                                shape = RoundedCornerShape(19.dp),
-                                borderWidth = 1.6.dp,
-                                customFill = if (isDark) selectedTint.accentColor.copy(alpha = 0.35f) else selectedTint.accentColor.copy(alpha = 0.2f)
+                                shape = RoundedCornerShape(14.dp),
+                                borderWidth = 1.2.dp,
+                                customFill = selectedTint.accentColor.copy(alpha = if (isDark) 0.28f else 0.18f)
                             )
-                            .clickable {
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = ripple(bounded = true)
+                            ) {
                                 onSave(
                                     title, content, category, selectedTint.id,
                                     isPinned, isFavorite, checklistItems.toList(), audioDurationSec
                                 )
-                            }
-                            .padding(horizontal = 14.dp),
+                            },
                         contentAlignment = Alignment.Center
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = if (isArabic) "حفظ" else "Save",
+                            tint = textColor,
+                            modifier = Modifier.size(21.dp)
+                        )
+                    }
+                }
+            }
+
+            // 2. Full-Height Writing Area (Title right at top + Writing Canvas stretching edge-to-edge down to bottom toolbar)
+            BoxWithConstraints(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                val minCanvasHeight = maxHeight
+                val scrollState = rememberScrollState()
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = minCanvasHeight)
+                        .verticalScroll(scrollState)
+                        .padding(horizontal = 20.dp, vertical = 6.dp)
+                ) {
+                    // Title Input directly at top
+                    BasicTextField(
+                        value = title,
+                        onValueChange = { title = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("editor_title_input"),
+                        textStyle = TextStyle(
+                            fontSize = 23.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = textColor
+                        ),
+                        cursorBrush = SolidColor(selectedTint.accentColor),
+                        decorationBox = { innerTextField ->
+                            if (title.isEmpty()) {
+                                Text(
+                                    text = if (isArabic) "العنوان" else "Title",
+                                    style = TextStyle(
+                                        fontSize = 23.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = metaColor.copy(alpha = 0.6f)
+                                    )
+                                )
+                            }
+                            innerTextField()
+                        }
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Attached Voice Memo Card (only shown when a voice memo is attached)
+                    if (audioDurationSec > 0) {
+                        LiquidGlassCard(
+                            isDark = isDark,
+                            tint = GlassTint.ROSE,
+                            shape = RoundedCornerShape(16.dp),
+                            borderWidth = 1.2.dp,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = "Save",
-                                tint = textColor,
-                                modifier = Modifier.size(16.dp)
-                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.GraphicEq,
+                                        contentDescription = null,
+                                        tint = Color(0xFFEC4899),
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Column {
+                                        Text(
+                                            text = if (isArabic) "تسجيل صوتي مرفق" else "Attached Voice Memo",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = textColor
+                                        )
+                                        Text(
+                                            text = "${audioDurationSec / 60}:${String.format("%02d", audioDurationSec % 60)}",
+                                            fontSize = 11.sp,
+                                            color = metaColor
+                                        )
+                                    }
+                                }
+
+                                IconButton(
+                                    onClick = { audioDurationSec = 0 },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = if (isArabic) "حذف التسجيل" else "Remove Voice Memo",
+                                        tint = metaColor,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Checklist Items (only shown if checklist items exist)
+                    if (checklistItems.isNotEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp)
+                        ) {
+                            checklistItems.forEachIndexed { index, item ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = if (item.isDone) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
+                                        contentDescription = if (isArabic) "تحديد المهمة" else "Toggle checklist item",
+                                        tint = if (item.isDone) selectedTint.accentColor else metaColor,
+                                        modifier = Modifier
+                                            .size(22.dp)
+                                            .clickable {
+                                                checklistItems[index] = item.copy(isDone = !item.isDone)
+                                            }
+                                    )
+
+                                    Spacer(modifier = Modifier.width(8.dp))
+
+                                    BasicTextField(
+                                        value = item.text,
+                                        onValueChange = { newText ->
+                                            checklistItems[index] = item.copy(text = newText)
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        textStyle = TextStyle(
+                                            fontSize = 15.sp,
+                                            color = if (item.isDone) metaColor else textColor,
+                                            textDecoration = if (item.isDone) TextDecoration.LineThrough else TextDecoration.None
+                                        ),
+                                        cursorBrush = SolidColor(selectedTint.accentColor),
+                                        decorationBox = { inner ->
+                                            if (item.text.isEmpty()) {
+                                                Text(
+                                                    text = if (isArabic) "عنصر مهمة..." else "Checklist item...",
+                                                    fontSize = 15.sp,
+                                                    color = metaColor.copy(alpha = 0.55f)
+                                                )
+                                            }
+                                            inner()
+                                        }
+                                    )
+
+                                    IconButton(
+                                        onClick = { checklistItems.removeAt(index) },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = if (isArabic) "إزالة العنصر" else "Remove",
+                                            tint = metaColor,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        checklistItems.add(ChecklistItem(text = "", isDone = false))
+                                    }
+                                    .padding(vertical = 6.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Add,
+                                    contentDescription = null,
+                                    tint = selectedTint.accentColor,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (isArabic) "عنصر جديد" else "List item",
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = selectedTint.accentColor
+                                )
+                            }
+                        }
+                    }
+
+                    // Main Full-Screen Note Content Input stretching down to the bottom edge
+                    val remainingMinHeight = (minCanvasHeight - 64.dp).coerceAtLeast(220.dp)
+                    BasicTextField(
+                        value = content,
+                        onValueChange = { content = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .defaultMinSize(minHeight = remainingMinHeight)
+                            .testTag("editor_content_input"),
+                        textStyle = TextStyle(
+                            fontSize = 16.sp,
+                            color = bodyColor,
+                            lineHeight = 24.sp
+                        ),
+                        cursorBrush = SolidColor(selectedTint.accentColor),
+                        decorationBox = { innerTextField ->
+                            Box(modifier = Modifier.fillMaxWidth()) {
+                                if (content.isEmpty()) {
+                                    Text(
+                                        text = if (isArabic) "اكتب أفكارك وملاحظاتك هنا بحرية..." else "Note",
+                                        style = TextStyle(
+                                            fontSize = 16.sp,
+                                            color = metaColor.copy(alpha = 0.6f),
+                                            lineHeight = 24.sp
+                                        )
+                                    )
+                                }
+                                innerTextField()
+                            }
+                        }
+                    )
+                }
+            }
+
+            // Expandable Style / Glass Tint + Category Panel right above the bottom toolbar
+            AnimatedVisibility(
+                visible = showStylePanel,
+                enter = expandVertically(expandFrom = Alignment.Bottom) + fadeIn(),
+                exit = shrinkVertically(shrinkTowards = Alignment.Bottom) + fadeOut()
+            ) {
+                LiquidGlassCard(
+                    isDark = isDark,
+                    tint = selectedTint,
+                    shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+                    borderWidth = 1.2.dp,
+                    customFill = if (isDark) Color(0xFF0F172A).copy(alpha = 0.90f) else Color.White.copy(alpha = 0.92f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
-                                text = if (isArabic) "حفظ" else "Save",
-                                fontSize = 13.sp,
+                                text = if (isArabic) "لون الزجاج السائل" else "Glass Tint",
+                                fontSize = 12.5.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = textColor
+                                color = metaColor
                             )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                GlassTint.entries.forEach { tint ->
+                                    val isSelected = selectedTint == tint
+                                    Box(
+                                        modifier = Modifier
+                                            .size(28.dp)
+                                            .testTag("tint_${tint.id}")
+                                            .clip(CircleShape)
+                                            .background(tint.accentColor)
+                                            .border(
+                                                width = if (isSelected) 3.dp else 0.dp,
+                                                color = if (isSelected) Color.White else Color.Transparent,
+                                                shape = CircleShape
+                                            )
+                                            .clickable { selectedTint = tint }
+                                    )
+                                }
+                            }
+                        }
+
+                        val categories = listOf("أفكار", "مهام", "عمل", "شخصي", "دراسة", "عام")
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            categories.forEach { cat ->
+                                val isSelected = category.equals(cat, ignoreCase = true)
+                                Box(
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .background(
+                                            if (isSelected) selectedTint.accentColor.copy(alpha = 0.35f)
+                                            else if (isDark) Color(0x22FFFFFF) else Color(0x15000000)
+                                        )
+                                        .border(
+                                            width = if (isSelected) 1.5.dp else 0.5.dp,
+                                            color = if (isSelected) selectedTint.accentColor else Color(0x33FFFFFF),
+                                            shape = CircleShape
+                                        )
+                                        .clickable { category = cat }
+                                        .padding(horizontal = 14.dp, vertical = 7.dp)
+                                ) {
+                                    Text(
+                                        text = cat,
+                                        fontSize = 12.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (isSelected) textColor else metaColor
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
 
-            // Scrollable Content Body
-            Column(
+            // 3. Bottom Action Toolbar (Keep-style order: Voice Memo + Checklist + Palette on start; Word count + More menu on end)
+            Row(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 20.dp, vertical = 8.dp)
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                // Glass Tint Selector Row
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text(
-                        text = if (isArabic) "لون الزجاج السائل:" else "Glass Tint:",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = metaColor
-                    )
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        GlassTint.entries.forEach { tint ->
-                            val isSelected = selectedTint == tint
-                            Box(
-                                modifier = Modifier
-                                    .size(28.dp)
-                                    .testTag("tint_${tint.id}")
-                                    .clip(CircleShape)
-                                    .background(tint.accentColor)
-                                    .border(
-                                        width = if (isSelected) 3.dp else 0.dp,
-                                        color = if (isSelected) Color.White else Color.Transparent,
-                                        shape = CircleShape
-                                    )
-                                    .clickable { selectedTint = tint }
-                            )
-                        }
-                    }
-                }
-
-                // Category Chips Selector
-                val categories = listOf("أفكار", "مهام", "عمل", "شخصي", "دراسة", "عام")
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    categories.forEach { cat ->
-                        val isSelected = category.equals(cat, ignoreCase = true)
-                        Box(
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .background(
-                                    if (isSelected) selectedTint.accentColor.copy(alpha = 0.35f)
-                                    else if (isDark) Color(0x22FFFFFF) else Color(0x15000000)
-                                )
-                                .border(
-                                    width = if (isSelected) 1.5.dp else 0.5.dp,
-                                    color = if (isSelected) selectedTint.accentColor else Color(0x33FFFFFF),
-                                    shape = CircleShape
-                                )
-                                .clickable { category = cat }
-                                .padding(horizontal = 14.dp, vertical = 6.dp)
-                        ) {
-                            Text(
-                                text = cat,
-                                fontSize = 12.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                color = if (isSelected) textColor else metaColor
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Title Input
-                BasicTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("editor_title_input"),
-                    textStyle = TextStyle(
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = textColor
-                    ),
-                    cursorBrush = SolidColor(selectedTint.accentColor),
-                    decorationBox = { innerTextField ->
-                        if (title.isEmpty()) {
-                            Text(
-                                text = if (isArabic) "عنوان الملاحظة..." else "Note Title...",
-                                style = TextStyle(
-                                    fontSize = 24.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = metaColor.copy(alpha = 0.5f)
-                                )
-                            )
-                        }
-                        innerTextField()
-                    }
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Voice Note Card (if attached or add button)
-                if (audioDurationSec > 0) {
-                    LiquidGlassCard(
-                        isDark = isDark,
-                        tint = GlassTint.ROSE,
-                        shape = RoundedCornerShape(18.dp),
-                        borderWidth = 1.2.dp,
+                    // Add Voice Memo button (now anchored at bottom)
+                    Box(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 8.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Default.GraphicEq,
-                                    contentDescription = null,
-                                    tint = Color(0xFFEC4899),
-                                    modifier = Modifier.size(24.dp)
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Column {
-                                    Text(
-                                        text = if (isArabic) "تسجيل صوتي مرفق" else "Attached Voice Memo",
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = textColor
-                                    )
-                                    Text(
-                                        text = "${audioDurationSec / 60}:${String.format("%02d", audioDurationSec % 60)}",
-                                        fontSize = 11.sp,
-                                        color = metaColor
-                                    )
-                                }
-                            }
-
-                            IconButton(onClick = { audioDurationSec = 0 }) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Remove Voice Memo",
-                                    tint = metaColor,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    }
-                } else {
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(if (isDark) Color(0x1AFFFFFF) else Color(0x10000000))
-                            .clickable { showVoiceRecorderDialog = true }
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .size(44.dp)
+                            .testTag("editor_add_voice_button")
+                            .liquidGlass(
+                                isDark = isDark,
+                                tint = if (audioDurationSec > 0) GlassTint.ROSE else GlassTint.FROST,
+                                shape = CircleShape,
+                                borderWidth = 1.dp,
+                                customFill = if (audioDurationSec > 0) Color(0xFFEC4899).copy(alpha = 0.25f) else pillFill
+                            )
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = ripple(bounded = true)
+                            ) { showVoiceRecorderDialog = true },
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.Mic,
-                            contentDescription = null,
-                            tint = Color(0xFFEC4899),
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = if (isArabic) "+ إضافة تسجيل صوتي" else "+ Add Voice Memo",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = textColor
+                            contentDescription = if (isArabic) "إضافة تسجيل صوتي" else "Add Voice Memo",
+                            tint = if (audioDurationSec > 0) Color(0xFFEC4899) else textColor,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
-                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Add Checklist button (now anchored at bottom)
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .testTag("editor_add_checklist_button")
+                            .liquidGlass(
+                                isDark = isDark,
+                                tint = if (checklistItems.isNotEmpty()) selectedTint else GlassTint.FROST,
+                                shape = CircleShape,
+                                borderWidth = 1.dp,
+                                customFill = if (checklistItems.isNotEmpty()) selectedTint.accentColor.copy(alpha = 0.24f) else pillFill
+                            )
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = ripple(bounded = true)
+                            ) {
+                                checklistItems.add(ChecklistItem(text = "", isDone = false))
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CheckBox,
+                            contentDescription = if (isArabic) "إضافة قائمة مهام" else "Add Checklist",
+                            tint = if (checklistItems.isNotEmpty()) selectedTint.accentColor else textColor,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    // Glass Tint & Category Palette button
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .testTag("editor_palette_button")
+                            .liquidGlass(
+                                isDark = isDark,
+                                tint = if (showStylePanel) selectedTint else GlassTint.FROST,
+                                shape = CircleShape,
+                                borderWidth = 1.dp,
+                                customFill = if (showStylePanel) selectedTint.accentColor.copy(alpha = 0.26f) else pillFill
+                            )
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = ripple(bounded = true)
+                            ) { showStylePanel = !showStylePanel },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Palette,
+                            contentDescription = if (isArabic) "لون الزجاج والقسم" else "Color & Category",
+                            tint = if (showStylePanel) selectedTint.accentColor else textColor,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
 
-                // Checklist Section
-                if (checklistItems.isNotEmpty()) {
-                    Text(
-                        text = if (isArabic) "قائمة المهام:" else "Checklist:",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = selectedTint.accentColor,
-                        modifier = Modifier.padding(vertical = 4.dp)
-                    )
+                // Right/End section: subtle word count + More Menu (Favorite, Share, Delete)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (charCount > 0) {
+                        Text(
+                            text = if (isArabic) "$wordCount ك • $charCount ح" else "$wordCount w • $charCount c",
+                            fontSize = 11.sp,
+                            color = metaColor
+                        )
+                    }
 
-                    checklistItems.forEachIndexed { index, item ->
-                        Row(
+                    Box {
+                        Box(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                                .size(44.dp)
+                                .testTag("editor_more_button")
+                                .liquidGlass(
+                                    isDark = isDark,
+                                    tint = GlassTint.FROST,
+                                    shape = CircleShape,
+                                    borderWidth = 1.dp,
+                                    customFill = pillFill
+                                )
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = ripple(bounded = true)
+                                ) { showMoreMenu = true },
+                            contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = if (item.isDone) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
-                                contentDescription = "Toggle",
-                                tint = if (item.isDone) selectedTint.accentColor else metaColor,
-                                modifier = Modifier
-                                    .size(22.dp)
-                                    .clickable {
-                                        checklistItems[index] = item.copy(isDone = !item.isDone)
-                                    }
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = if (isArabic) "خيارات إضافية" else "More options",
+                                tint = textColor,
+                                modifier = Modifier.size(20.dp)
                             )
+                        }
 
-                            Spacer(modifier = Modifier.width(8.dp))
-
-                            BasicTextField(
-                                value = item.text,
-                                onValueChange = { newText ->
-                                    checklistItems[index] = item.copy(text = newText)
+                        DropdownMenu(
+                            expanded = showMoreMenu,
+                            onDismissRequest = { showMoreMenu = false },
+                            containerColor = if (isDark) Color(0xFF1E293B) else Color.White
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = if (isFavorite) {
+                                            if (isArabic) "إزالة من المفضلة" else "Remove Favorite"
+                                        } else {
+                                            if (isArabic) "إضافة للمفضلة" else "Add to Favorites"
+                                        },
+                                        color = textColor
+                                    )
                                 },
-                                modifier = Modifier.weight(1f),
-                                textStyle = TextStyle(
-                                    fontSize = 14.sp,
-                                    color = if (item.isDone) metaColor else textColor,
-                                    textDecoration = if (item.isDone) TextDecoration.LineThrough else TextDecoration.None
-                                ),
-                                cursorBrush = SolidColor(selectedTint.accentColor),
-                                decorationBox = { inner ->
-                                    if (item.text.isEmpty()) {
-                                        Text(
-                                            text = if (isArabic) "عنصر مهمة..." else "Checklist item...",
-                                            fontSize = 14.sp,
-                                            color = metaColor.copy(alpha = 0.5f)
-                                        )
-                                    }
-                                    inner()
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                        contentDescription = null,
+                                        tint = if (isFavorite) Color(0xFFF43F5E) else metaColor
+                                    )
+                                },
+                                onClick = {
+                                    isFavorite = !isFavorite
+                                    showMoreMenu = false
                                 }
                             )
 
-                            IconButton(
-                                onClick = { checklistItems.removeAt(index) },
-                                modifier = Modifier.size(28.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Remove",
-                                    tint = metaColor,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    // Add new item button
-                    Row(
-                        modifier = Modifier
-                            .clickable {
-                                checklistItems.add(ChecklistItem(text = "", isDone = false))
-                            }
-                            .padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = null,
-                            tint = selectedTint.accentColor,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = if (isArabic) "إضافة عنصر جديد للقائمة" else "Add new item",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = selectedTint.accentColor
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(14.dp))
-                } else {
-                    // Option to convert/add checklist
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(if (isDark) Color(0x1AFFFFFF) else Color(0x10000000))
-                            .clickable {
-                                checklistItems.add(ChecklistItem(text = "", isDone = false))
-                            }
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = null,
-                            tint = selectedTint.accentColor,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = if (isArabic) "+ إضافة قائمة مهام" else "+ Add Checklist",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = textColor
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(14.dp))
-                }
-
-                // Main Note Content Input
-                BasicTextField(
-                    value = content,
-                    onValueChange = { content = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f, fill = false)
-                        .testTag("editor_content_input"),
-                    textStyle = TextStyle(
-                        fontSize = 15.sp,
-                        color = bodyColor,
-                        lineHeight = 22.sp
-                    ),
-                    cursorBrush = SolidColor(selectedTint.accentColor),
-                    decorationBox = { innerTextField ->
-                        if (content.isEmpty()) {
-                            Text(
-                                text = if (isArabic) "اكتب أفكارك وملاحظاتك هنا بحرية..." else "Write your thoughts and ideas here...",
-                                style = TextStyle(
-                                    fontSize = 15.sp,
-                                    color = metaColor.copy(alpha = 0.5f),
-                                    lineHeight = 22.sp
-                                )
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = if (isArabic) "مشاركة الملاحظة" else "Share Note",
+                                        color = textColor
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Share,
+                                        contentDescription = null,
+                                        tint = Color(0xFF38BDF8)
+                                    )
+                                },
+                                onClick = {
+                                    showMoreMenu = false
+                                    shareNoteText(context, title, content, checklistItems)
+                                }
                             )
+
+                            if (note.id != 0L) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = if (isArabic) "حذف الملاحظة" else "Delete Note",
+                                            color = Color(0xFFEF4444)
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Default.Delete,
+                                            contentDescription = null,
+                                            tint = Color(0xFFEF4444)
+                                        )
+                                    },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        onDelete()
+                                    }
+                                )
+                            }
                         }
-                        innerTextField()
                     }
-                )
-
-                Spacer(modifier = Modifier.height(30.dp))
-
-                // Word count & Character count indicator
-                val wordCount = if (content.isBlank()) 0 else content.trim().split("\\s+".toRegex()).size
-                val charCount = content.length
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    Text(
-                        text = if (isArabic) "$wordCount كلمة  •  $charCount حرف" else "$wordCount words • $charCount chars",
-                        fontSize = 11.sp,
-                        color = metaColor
-                    )
                 }
-
-                Spacer(modifier = Modifier.height(30.dp))
             }
         }
 
