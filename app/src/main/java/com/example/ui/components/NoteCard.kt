@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
@@ -46,6 +47,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.model.ChecklistItem
 import com.example.data.model.GlassTint
 import com.example.data.model.NoteEntity
+import com.example.data.storage.AudioCloudPolicy
 import com.example.ui.glass.LiquidGlassCard
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -139,27 +141,38 @@ fun NoteCard(
                     }
 
                     // Voice Note badge
-                    if (note.audioDurationSec > 0) {
+                    if (note.audioDurationSec > 0 || note.audioFilePath.isNotBlank()) {
+                        val effectiveSize = AudioCloudPolicy.effectiveAudioByteSize(note.audioByteSize, note.audioFilePath)
+                        val isLocalOnlyAudio = AudioCloudPolicy.isAudioOverCloudLimit(effectiveSize)
+                        val badgeColor = if (isLocalOnlyAudio) Color(0xFFF59E0B) else Color(0xFFEC4899)
                         Box(
                             modifier = Modifier
                                 .clip(CircleShape)
-                                .background(Color(0xFFEC4899).copy(alpha = 0.2f))
+                                .background(badgeColor.copy(alpha = 0.2f))
                                 .padding(horizontal = 6.dp, vertical = 3.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
-                                    imageVector = Icons.Default.GraphicEq,
-                                    contentDescription = "Voice Memo",
-                                    tint = Color(0xFFEC4899),
+                                    imageVector = if (isLocalOnlyAudio) Icons.Default.CloudOff else Icons.Default.GraphicEq,
+                                    contentDescription = if (isLocalOnlyAudio) {
+                                        if (isArabic) "محلي فقط (> 900 م.ب)" else "Local only (> 900 MB)"
+                                    } else {
+                                        "Voice Memo"
+                                    },
+                                    tint = badgeColor,
                                     modifier = Modifier.size(13.dp)
                                 )
                                 Spacer(modifier = Modifier.width(3.dp))
                                 Text(
-                                    text = formatDuration(note.audioDurationSec),
+                                    text = if (isLocalOnlyAudio) {
+                                        if (isArabic) "${formatDuration(note.audioDurationSec)} • محلي" else "${formatDuration(note.audioDurationSec)} • Local"
+                                    } else {
+                                        formatDuration(note.audioDurationSec)
+                                    },
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFFEC4899)
+                                    color = badgeColor
                                 )
                             }
                         }

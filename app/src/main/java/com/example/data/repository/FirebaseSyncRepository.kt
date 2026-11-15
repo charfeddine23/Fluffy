@@ -9,6 +9,7 @@ import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.example.data.model.NoteEntity
 import com.example.data.model.VaultItemEntity
+import com.example.data.storage.AudioCloudPolicy
 import com.example.data.storage.FluffySettingsSnapshot
 import com.google.firebase.Firebase
 import com.google.firebase.FirebaseApp
@@ -226,7 +227,19 @@ object FirebaseSyncRepository {
     suspend fun upsertNote(context: Context, userId: String, note: NoteEntity) {
         val db = getFirestoreOrNull(context) ?: return
         val syncKey = note.syncId.ifBlank { return }
+        val allowAudioInCloud = AudioCloudPolicy.canStoreNoteAudioInCloud(note)
+        val isPureAudioNote = note.content.isBlank() &&
+            note.checklistJson.isBlank() &&
+            (note.title.isBlank() || note.category == "صوتي" || note.category == "Audio")
+
+        // Rule: Audio recordings exceeding 900 MB MUST NOT be stored in the cloud.
+        if (!allowAudioInCloud && isPureAudioNote) {
+            return
+        }
+
         val path = "$COLLECTION_USERS/$userId/$COLLECTION_NOTES/$syncKey"
+        val cloudAudioDuration = if (allowAudioInCloud) note.audioDurationSec else 0
+        val cloudAudioByteSize = if (allowAudioInCloud) note.audioByteSize else 0L
         val data = hashMapOf(
             "syncId" to syncKey,
             "userId" to userId,
@@ -240,7 +253,9 @@ object FirebaseSyncRepository {
             "isDeleted" to note.isDeleted,
             "deletedAt" to note.deletedAt,
             "checklistJson" to note.checklistJson,
-            "audioDurationSec" to note.audioDurationSec,
+            "audioDurationSec" to cloudAudioDuration,
+            "audioByteSize" to cloudAudioByteSize,
+            "audioExcludedOverLimit" to !allowAudioInCloud,
             "createdAt" to note.createdAt,
             "updatedAt" to note.updatedAt,
             "sortOrder" to note.sortOrder,
@@ -412,6 +427,9 @@ object FirebaseSyncRepository {
     // --- Cloud Firestore Immutable Vault Sync (users/{userId}/vault/{vaultId}) ---
 
     suspend fun upsertVaultItemIfAbsent(context: Context, userId: String, item: VaultItemEntity) {
+        // Rule: Audio recordings exceeding 900 MB MUST NOT be stored in the cloud.
+        if (!AudioCloudPolicy.canStoreVaultItemInCloud(item)) return
+
         val db = getFirestoreOrNull(context) ?: return
         val path = "$COLLECTION_USERS/$userId/$COLLECTION_VAULT/${item.id}"
         try {
@@ -505,6 +523,8 @@ object FirebaseSyncRepository {
             isArchived = getBoolean("isArchived") ?: false,
             checklistJson = getString("checklistJson") ?: "",
             audioDurationSec = (getLong("audioDurationSec") ?: 0L).toInt(),
+            audioFilePath = getString("audioFilePath") ?: "",
+            audioByteSize = getLong("audioByteSize") ?: 0L,
             createdAt = getLong("createdAt") ?: System.currentTimeMillis(),
             updatedAt = getLong("updatedAt") ?: System.currentTimeMillis(),
             syncId = sid,

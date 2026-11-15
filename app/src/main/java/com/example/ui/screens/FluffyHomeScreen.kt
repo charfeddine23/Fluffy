@@ -85,8 +85,11 @@ import com.example.ui.components.NoteCard
 import com.example.ui.components.SettingsDrawer
 import com.example.ui.components.StatsBottomSheet
 import com.example.ui.components.VoiceRecorderDialog
+import com.example.ui.glass.BlurryScreenEdges
 import com.example.ui.glass.FrostedBackdrop
 import com.example.ui.glass.LiquidGlassCard
+import com.example.ui.glass.blurryEdgeMask
+import com.example.ui.glass.rememberTwoMillimetersDp
 import com.example.update.UpdateUiState
 import com.example.viewmodel.FluffyViewModel
 import kotlinx.coroutines.delay
@@ -119,6 +122,7 @@ fun FluffyHomeScreen(
     val profileAvatarChoice by viewModel.profileAvatarChoice.collectAsState()
     val archivedNotes by viewModel.archivedNotes.collectAsState()
     val trashedNotes by viewModel.trashedNotes.collectAsState()
+    val audioNotes by viewModel.audioNotes.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
     val haptic = LocalHapticFeedback.current
@@ -254,7 +258,9 @@ fun FluffyHomeScreen(
         }
     }
 
-    FrostedBackdrop(isDark = isDark) {
+    val twoMmEdgeDp = rememberTwoMillimetersDp()
+
+    FrostedBackdrop(isDark = isDark, showBlurryEdges = false) {
         var dragStartX by remember { mutableFloatStateOf(0f) }
         var totalDragX by remember { mutableFloatStateOf(0f) }
         var drawerTriggered by remember { mutableStateOf(false) }
@@ -425,6 +431,7 @@ fun FluffyHomeScreen(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth()
+                            .blurryEdgeMask(twoMmEdgeDp)
                             .onGloballyPositioned { coords ->
                                 containerCoords = coords
                             }
@@ -742,6 +749,12 @@ fun FluffyHomeScreen(
                 }
             }
 
+            // Symmetric 2mm blurry frosted edges on both sides (beneath the flush SettingsDrawer)
+            BlurryScreenEdges(
+                isDark = isDark,
+                edgeWidthDp = twoMmEdgeDp
+            )
+
             // Settings Drawer (Opened via left/right half-screen swipe or menu icon)
             SettingsDrawer(
                 isOpen = isSettingsDrawerOpen,
@@ -759,8 +772,10 @@ fun FluffyHomeScreen(
                 onOpenThemes = { viewModel.openThemesScreen() },
                 trashedCount = trashedNotes.size,
                 archivedCount = archivedNotes.size,
+                audioCount = audioNotes.size,
                 onOpenTrash = { viewModel.openTrashScreen() },
                 onOpenArchive = { viewModel.openArchiveScreen() },
+                onOpenAudioPlayer = { viewModel.openAudioPlayerScreen() },
                 isCheckingUpdates = updateState is UpdateUiState.Checking,
                 hasPendingUpdate = updateState is UpdateUiState.Available ||
                     updateState is UpdateUiState.ReadyToInstall ||
@@ -785,12 +800,13 @@ fun FluffyHomeScreen(
                 isDark = isDark,
                 isArabic = isArabic,
                 onDismiss = { viewModel.showVoiceRecorder.value = false },
-                onSaveVoiceNote = { duration ->
+                onSaveVoiceNote = { duration, filePath, byteSize ->
                     viewModel.showVoiceRecorder.value = false
                     viewModel.openNewNote()
-                    // Set duration on newly created note
                     viewModel.editingNote.value = viewModel.editingNote.value?.copy(
-                        audioDurationSec = duration
+                        audioDurationSec = duration,
+                        audioFilePath = filePath,
+                        audioByteSize = byteSize
                     )
                 }
             )

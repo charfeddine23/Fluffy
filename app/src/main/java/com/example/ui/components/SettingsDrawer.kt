@@ -48,6 +48,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Fingerprint
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LightMode
@@ -104,8 +105,10 @@ fun SettingsDrawer(
     onOpenThemes: () -> Unit = {},
     trashedCount: Int = 0,
     archivedCount: Int = 0,
+    audioCount: Int = 0,
     onOpenTrash: () -> Unit = {},
     onOpenArchive: () -> Unit = {},
+    onOpenAudioPlayer: () -> Unit = {},
     isCheckingUpdates: Boolean = false,
     hasPendingUpdate: Boolean = false,
     onCheckForUpdates: () -> Unit = {},
@@ -353,6 +356,26 @@ fun SettingsDrawer(
                             onClick = {
                                 onClose()
                                 onOpenArchive()
+                            }
+                        )
+
+                        HorizontalDivider(
+                            color = dividerColor,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
+
+                        CalmNavigationRow(
+                            icon = Icons.Rounded.GraphicEq,
+                            iconTint = Color(0xFFEC4899),
+                            title = if (isArabic) "قارئ التسجيلات الصوتية" else "Audio Recordings",
+                            subtitle = if (isArabic) "تشغيل واستيراد الصوتيات" else "Play & import audio",
+                            badgeCount = audioCount,
+                            textColor = textColor,
+                            subTextColor = subTextColor,
+                            testTag = "settings_audio_player_button",
+                            onClick = {
+                                onClose()
+                                onOpenAudioPlayer()
                             }
                         )
                     }

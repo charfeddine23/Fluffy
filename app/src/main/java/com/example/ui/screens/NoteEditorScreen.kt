@@ -50,7 +50,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
@@ -67,6 +66,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -83,9 +83,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.audio.rememberAudioPlaybackController
 import com.example.data.model.ChecklistItem
 import com.example.data.model.GlassTint
 import com.example.data.model.NoteEntity
+import com.example.data.storage.AudioCloudPolicy
+import com.example.ui.components.AudioPlayerCard
 import com.example.ui.components.VoiceRecorderDialog
 import com.example.ui.glass.FrostedBackdrop
 import com.example.ui.glass.LiquidGlassCard
@@ -106,7 +109,9 @@ fun NoteEditorScreen(
         isPinned: Boolean,
         isFavorite: Boolean,
         checklist: List<ChecklistItem>,
-        audioDurationSec: Int
+        audioDurationSec: Int,
+        audioFilePath: String,
+        audioByteSize: Long
     ) -> Unit,
     onDelete: () -> Unit,
     onToggleArchive: () -> Unit = {},
@@ -118,10 +123,13 @@ fun NoteEditorScreen(
         isPinned: Boolean,
         isFavorite: Boolean,
         checklist: List<ChecklistItem>,
-        audioDurationSec: Int
+        audioDurationSec: Int,
+        audioFilePath: String,
+        audioByteSize: Long
     ) -> Unit)? = null
 ) {
     val context = LocalContext.current
+    val playbackController = rememberAudioPlaybackController()
 
     // New drafts open in Edit/Writing mode; saved notes reopen in View-Only mode
     var isEditMode by remember { mutableStateOf(isCreatingNew || note.id == 0L) }
@@ -134,6 +142,10 @@ fun NoteEditorScreen(
     var isPinned by remember { mutableStateOf(note.isPinned) }
     var isFavorite by remember { mutableStateOf(note.isFavorite) }
     var audioDurationSec by remember { mutableIntStateOf(note.audioDurationSec) }
+    var audioFilePath by remember { mutableStateOf(note.audioFilePath) }
+    var audioByteSize by remember {
+        mutableLongStateOf(AudioCloudPolicy.effectiveAudioByteSize(note.audioByteSize, note.audioFilePath))
+    }
 
     var showVoiceRecorderDialog by remember { mutableStateOf(false) }
     var showStylePanel by remember { mutableStateOf(false) }
@@ -148,28 +160,33 @@ fun NoteEditorScreen(
     // Real-time automatic background save with 500ms debounce (active only in Writing/Edit mode)
     LaunchedEffect(
         isEditMode, title, content, category, selectedTint.id,
-        isPinned, isFavorite, checklistItems.toList(), audioDurationSec
+        isPinned, isFavorite, checklistItems.toList(),
+        audioDurationSec, audioFilePath, audioByteSize
     ) {
         if (!isEditMode) return@LaunchedEffect
         kotlinx.coroutines.delay(500)
         onAutoSave?.invoke(
             title, content, category, selectedTint.id,
-            isPinned, isFavorite, checklistItems.toList(), audioDurationSec
+            isPinned, isFavorite, checklistItems.toList(),
+            audioDurationSec, audioFilePath, audioByteSize
         )
     }
 
     // Handle Android system back gesture cleanly for both Edit & View modes
     BackHandler {
+        playbackController.stop()
         if (isEditMode) {
             onSave(
                 title, content, category, selectedTint.id,
-                isPinned, isFavorite, checklistItems.toList(), audioDurationSec
+                isPinned, isFavorite, checklistItems.toList(),
+                audioDurationSec, audioFilePath, audioByteSize
             )
         } else {
             if (isPinned != note.isPinned) {
                 onAutoSave?.invoke(
                     title, content, category, selectedTint.id,
-                    isPinned, isFavorite, checklistItems.toList(), audioDurationSec
+                    isPinned, isFavorite, checklistItems.toList(),
+                    audioDurationSec, audioFilePath, audioByteSize
                 )
             }
             onBack()
@@ -214,13 +231,15 @@ fun NoteEditorScreen(
                             if (isEditMode) {
                                 onSave(
                                     title, content, category, selectedTint.id,
-                                    isPinned, isFavorite, checklistItems.toList(), audioDurationSec
+                                    isPinned, isFavorite, checklistItems.toList(),
+                                    audioDurationSec, audioFilePath, audioByteSize
                                 )
                             } else {
                                 if (isPinned != note.isPinned) {
                                     onAutoSave?.invoke(
                                         title, content, category, selectedTint.id,
-                                        isPinned, isFavorite, checklistItems.toList(), audioDurationSec
+                                        isPinned, isFavorite, checklistItems.toList(),
+                                        audioDurationSec, audioFilePath, audioByteSize
                                     )
                                 }
                                 onBack()
@@ -260,7 +279,8 @@ fun NoteEditorScreen(
                                 if (!isEditMode) {
                                     onAutoSave?.invoke(
                                         title, content, category, selectedTint.id,
-                                        isPinned, isFavorite, checklistItems.toList(), audioDurationSec
+                                        isPinned, isFavorite, checklistItems.toList(),
+                                        audioDurationSec, audioFilePath, audioByteSize
                                     )
                                 }
                             },
@@ -293,7 +313,8 @@ fun NoteEditorScreen(
                                 ) {
                                     onSave(
                                         title, content, category, selectedTint.id,
-                                        isPinned, isFavorite, checklistItems.toList(), audioDurationSec
+                                        isPinned, isFavorite, checklistItems.toList(),
+                                        audioDurationSec, audioFilePath, audioByteSize
                                     )
                                 },
                             contentAlignment = Alignment.Center
@@ -398,62 +419,27 @@ fun NoteEditorScreen(
                         Spacer(modifier = Modifier.height(14.dp))
                     }
 
-                    // Attached Voice Memo Card (only shown when a voice memo is attached)
-                    if (audioDurationSec > 0) {
-                        LiquidGlassCard(
+                    // Interactive Audio Player Card (only shown when a voice memo / audio file is attached)
+                    if (audioDurationSec > 0 || audioFilePath.isNotBlank()) {
+                        AudioPlayerCard(
+                            trackId = "editor_${note.id}",
+                            title = title.ifBlank {
+                                if (isArabic) "تسجيل صوتي مرفق" else "Attached Voice Memo"
+                            },
+                            filePathOrUri = audioFilePath,
+                            durationSec = audioDurationSec,
+                            byteSize = audioByteSize,
+                            playbackController = playbackController,
                             isDark = isDark,
-                            tint = GlassTint.ROSE,
-                            shape = RoundedCornerShape(16.dp),
-                            borderWidth = 1.2.dp,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 12.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Default.GraphicEq,
-                                        contentDescription = null,
-                                        tint = Color(0xFFEC4899),
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Column {
-                                        Text(
-                                            text = if (isArabic) "تسجيل صوتي مرفق" else "Attached Voice Memo",
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = textColor
-                                        )
-                                        Text(
-                                            text = "${audioDurationSec / 60}:${String.format("%02d", audioDurationSec % 60)}",
-                                            fontSize = 11.sp,
-                                            color = metaColor
-                                        )
-                                    }
-                                }
-
-                                if (isEditMode) {
-                                    IconButton(
-                                        onClick = { audioDurationSec = 0 },
-                                        modifier = Modifier.size(36.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Close,
-                                            contentDescription = if (isArabic) "حذف التسجيل" else "Remove Voice Memo",
-                                            tint = metaColor,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
+                            isArabic = isArabic,
+                            canDelete = isEditMode,
+                            onDelete = {
+                                audioDurationSec = 0
+                                audioFilePath = ""
+                                audioByteSize = 0L
+                            },
+                            modifier = Modifier.padding(bottom = 12.dp)
+                        )
                     }
 
                     // Checklist Items (only shown if checklist items exist)
@@ -720,16 +706,17 @@ fun NoteEditorScreen(
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         // Add Voice Memo button (now anchored at bottom)
+                        val hasAttachedAudio = audioDurationSec > 0 || audioFilePath.isNotBlank()
                         Box(
                             modifier = Modifier
                                 .size(44.dp)
                                 .testTag("editor_add_voice_button")
                                 .liquidGlass(
                                     isDark = isDark,
-                                    tint = if (audioDurationSec > 0) GlassTint.ROSE else GlassTint.FROST,
+                                    tint = if (hasAttachedAudio) GlassTint.ROSE else GlassTint.FROST,
                                     shape = CircleShape,
                                     borderWidth = 1.dp,
-                                    customFill = if (audioDurationSec > 0) Color(0xFFEC4899).copy(alpha = 0.25f) else pillFill
+                                    customFill = if (hasAttachedAudio) Color(0xFFEC4899).copy(alpha = 0.25f) else pillFill
                                 )
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
@@ -740,7 +727,7 @@ fun NoteEditorScreen(
                             Icon(
                                 imageVector = Icons.Default.Mic,
                                 contentDescription = if (isArabic) "إضافة تسجيل صوتي" else "Add Voice Memo",
-                                tint = if (audioDurationSec > 0) Color(0xFFEC4899) else textColor,
+                                tint = if (hasAttachedAudio) Color(0xFFEC4899) else textColor,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -946,8 +933,10 @@ fun NoteEditorScreen(
                 isDark = isDark,
                 isArabic = isArabic,
                 onDismiss = { showVoiceRecorderDialog = false },
-                onSaveVoiceNote = { duration ->
+                onSaveVoiceNote = { duration, filePath, byteSize ->
                     audioDurationSec = duration
+                    audioFilePath = filePath
+                    audioByteSize = byteSize
                     showVoiceRecorderDialog = false
                 }
             )

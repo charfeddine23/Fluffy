@@ -13,6 +13,8 @@ import com.example.data.repository.CloudSyncStatus
 import com.example.data.repository.FirebaseSyncRepository
 import com.example.data.repository.FirebaseUserInfo
 import com.example.data.repository.NoteRepository
+import com.example.data.storage.AudioCloudPolicy
+import com.example.data.storage.AudioStorageManager
 import com.example.data.storage.FluffySettingsSnapshot
 import com.example.data.storage.LocalDeviceStorageManager
 import com.example.drive.DriveAutoBackupWorker
@@ -57,12 +59,13 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     val isBiometricEnabled = MutableStateFlow(prefs.getBoolean("biometric_enabled", false))
     val isAppLocked = MutableStateFlow(prefs.getBoolean("biometric_enabled", false))
 
-    // Settings Drawer, Themes Gallery, Trash, Archive & Account Profile
+    // Settings Drawer, Themes Gallery, Trash, Archive, Audio Player & Account Profile
     val isSettingsDrawerOpen = MutableStateFlow(false)
     val isThemesScreenOpen = MutableStateFlow(false)
     val isTrashScreenOpen = MutableStateFlow(false)
     val isArchiveScreenOpen = MutableStateFlow(false)
     val isAccountScreenOpen = MutableStateFlow(false)
+    val isAudioPlayerScreenOpen = MutableStateFlow(false)
 
     // Filter and Search
     val searchQuery = MutableStateFlow("")
@@ -256,7 +259,20 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                                 if (existing == null) {
                                     repository.insertOrUpdate(remoteNote.copy(id = 0L))
                                 } else if (remoteNote.updatedAt > existing.updatedAt) {
-                                    repository.insertOrUpdate(remoteNote.copy(id = existing.id))
+                                    // Preserve local device audio attachment if local audio exists or exceeds 900 MB cloud limit
+                                    val keepLocalAudio = existing.audioFilePath.isNotBlank() &&
+                                        (remoteNote.audioFilePath.isBlank() || !AudioCloudPolicy.canStoreNoteAudioInCloud(existing))
+                                    val merged = if (keepLocalAudio) {
+                                        remoteNote.copy(
+                                            id = existing.id,
+                                            audioFilePath = existing.audioFilePath,
+                                            audioByteSize = existing.audioByteSize,
+                                            audioDurationSec = maxOf(existing.audioDurationSec, remoteNote.audioDurationSec)
+                                        )
+                                    } else {
+                                        remoteNote.copy(id = existing.id)
+                                    }
+                                    repository.insertOrUpdate(merged)
                                 }
                             }
 
@@ -335,7 +351,19 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             if (local == null) {
                 repository.insertOrUpdate(remote.copy(id = 0L))
             } else if (remote.updatedAt > local.updatedAt) {
-                repository.insertOrUpdate(remote.copy(id = local.id))
+                val keepLocalAudio = local.audioFilePath.isNotBlank() &&
+                    (remote.audioFilePath.isBlank() || !AudioCloudPolicy.canStoreNoteAudioInCloud(local))
+                val merged = if (keepLocalAudio) {
+                    remote.copy(
+                        id = local.id,
+                        audioFilePath = local.audioFilePath,
+                        audioByteSize = local.audioByteSize,
+                        audioDurationSec = maxOf(local.audioDurationSec, remote.audioDurationSec)
+                    )
+                } else {
+                    remote.copy(id = local.id)
+                }
+                repository.insertOrUpdate(merged)
             }
         }
 
@@ -364,7 +392,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         val remoteVaultIds = remoteVault.map { it.item.id }.toHashSet()
 
         localVault.forEach { item ->
-            if (item.id !in remoteVaultIds) {
+            if (item.id !in remoteVaultIds && AudioCloudPolicy.canStoreVaultItemInCloud(item)) {
                 FirebaseSyncRepository.upsertVaultItemIfAbsent(app, uid, item)
             }
         }
@@ -420,6 +448,15 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         notes.size
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
+    val audioNotes: StateFlow<List<NoteEntity>> = combine(
+        repository.allNotes,
+        archivedNotes
+    ) { active, archived ->
+        (active + archived)
+            .filter { !it.isDeleted && (it.audioDurationSec > 0 || it.audioFilePath.isNotBlank()) }
+            .sortedByDescending { it.updatedAt }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     fun toggleDarkMode() {
         val next = !isDarkMode.value
         isDarkMode.value = next
@@ -451,6 +488,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         isTrashScreenOpen.value = false
         isArchiveScreenOpen.value = false
         isAccountScreenOpen.value = false
+        isAudioPlayerScreenOpen.value = false
         isThemesScreenOpen.value = true
     }
 
@@ -463,6 +501,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         isThemesScreenOpen.value = false
         isArchiveScreenOpen.value = false
         isAccountScreenOpen.value = false
+        isAudioPlayerScreenOpen.value = false
         isTrashScreenOpen.value = true
         viewModelScope.launch {
             purgeExpiredTrashNotes()
@@ -478,6 +517,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         isThemesScreenOpen.value = false
         isTrashScreenOpen.value = false
         isAccountScreenOpen.value = false
+        isAudioPlayerScreenOpen.value = false
         isArchiveScreenOpen.value = true
     }
 
@@ -490,11 +530,25 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         isThemesScreenOpen.value = false
         isTrashScreenOpen.value = false
         isArchiveScreenOpen.value = false
+        isAudioPlayerScreenOpen.value = false
         isAccountScreenOpen.value = true
     }
 
     fun closeAccountScreen() {
         isAccountScreenOpen.value = false
+    }
+
+    fun openAudioPlayerScreen() {
+        isSettingsDrawerOpen.value = false
+        isThemesScreenOpen.value = false
+        isTrashScreenOpen.value = false
+        isArchiveScreenOpen.value = false
+        isAccountScreenOpen.value = false
+        isAudioPlayerScreenOpen.value = true
+    }
+
+    fun closeAudioPlayerScreen() {
+        isAudioPlayerScreenOpen.value = false
     }
 
     private fun syncProfileNameFromUser(displayName: String?, forceIfGoogleNaming: Boolean = false) {
@@ -787,13 +841,15 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         isPinned: Boolean,
         isFavorite: Boolean,
         checklist: List<ChecklistItem>,
-        audioDurationSec: Int
+        audioDurationSec: Int,
+        audioFilePath: String = "",
+        audioByteSize: Long = 0L
     ) {
         if (editingNote.value == null) return
         val activeChecklist = checklist.filter { it.text.isNotEmpty() }
 
         // Only skip when completely empty (never touch non-empty literal whitespace)
-        if (title.isEmpty() && content.isEmpty() && activeChecklist.isEmpty() && audioDurationSec == 0) {
+        if (title.isEmpty() && content.isEmpty() && activeChecklist.isEmpty() && audioDurationSec == 0 && audioFilePath.isBlank()) {
             return
         }
 
@@ -806,6 +862,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                 } else {
                     current.sortOrder
                 }
+                val resolvedAudioSize = AudioCloudPolicy.effectiveAudioByteSize(audioByteSize, audioFilePath)
                 val updatedNote = current.copy(
                     title = title,
                     content = content,
@@ -815,6 +872,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                     isFavorite = isFavorite,
                     checklistJson = ChecklistItem.listToJson(activeChecklist),
                     audioDurationSec = audioDurationSec,
+                    audioFilePath = audioFilePath,
+                    audioByteSize = resolvedAudioSize,
                     sortOrder = targetSortOrder,
                     updatedAt = System.currentTimeMillis(),
                     syncId = ensuredSyncId
@@ -835,12 +894,14 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         isPinned: Boolean,
         isFavorite: Boolean,
         checklist: List<ChecklistItem>,
-        audioDurationSec: Int
+        audioDurationSec: Int,
+        audioFilePath: String = "",
+        audioByteSize: Long = 0L
     ) {
         if (editingNote.value == null) return
         val activeChecklist = checklist.filter { it.text.isNotEmpty() }
 
-        if (title.isEmpty() && content.isEmpty() && activeChecklist.isEmpty() && audioDurationSec == 0) {
+        if (title.isEmpty() && content.isEmpty() && activeChecklist.isEmpty() && audioDurationSec == 0 && audioFilePath.isBlank()) {
             closeEditor()
             return
         }
@@ -854,6 +915,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                 } else {
                     current.sortOrder
                 }
+                val resolvedAudioSize = AudioCloudPolicy.effectiveAudioByteSize(audioByteSize, audioFilePath)
                 val updatedNote = current.copy(
                     title = title,
                     content = content,
@@ -863,6 +925,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                     isFavorite = isFavorite,
                     checklistJson = ChecklistItem.listToJson(activeChecklist),
                     audioDurationSec = audioDurationSec,
+                    audioFilePath = audioFilePath,
+                    audioByteSize = resolvedAudioSize,
                     sortOrder = targetSortOrder,
                     updatedAt = System.currentTimeMillis(),
                     syncId = ensuredSyncId
@@ -871,7 +935,93 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                 val saved = if (current.id == 0L && id > 0) updatedNote.copy(id = id) else updatedNote
                 syncNoteUpsertIfSignedIn(saved)
                 closeEditor()
-                showSnackbar(if (isArabic.value) "تم حفظ الملاحظة حرفياً بنجاح ✨" else "Note saved verbatim ✨")
+                if (!AudioCloudPolicy.canStoreNoteAudioInCloud(saved)) {
+                    showSnackbar(
+                        if (isArabic.value) "حجم التسجيل يتعدى 900 م.ب — محفوظ محلياً فقط ولن يُخزَّن سحابياً"
+                        else "Audio exceeds 900 MB — saved locally only, excluded from cloud"
+                    )
+                } else {
+                    showSnackbar(if (isArabic.value) "تم حفظ الملاحظة حرفياً بنجاح ✨" else "Note saved verbatim ✨")
+                }
+            }
+        }
+    }
+
+    fun createAudioRecordingNote(
+        title: String,
+        durationSec: Int,
+        filePath: String,
+        byteSize: Long
+    ) {
+        viewModelScope.launch {
+            val resolvedSize = AudioCloudPolicy.effectiveAudioByteSize(byteSize, filePath)
+            val now = System.currentTimeMillis()
+            val minOrder = withContext(Dispatchers.IO) { repository.getMinSortOrder() }
+            val note = NoteEntity(
+                title = title.ifBlank { if (isArabic.value) "تسجيل صوتي" else "Voice Recording" },
+                content = "",
+                category = if (isArabic.value) "صوتي" else "Audio",
+                colorPreset = GlassTint.ROSE.id,
+                audioDurationSec = durationSec.coerceAtLeast(1),
+                audioFilePath = filePath,
+                audioByteSize = resolvedSize,
+                createdAt = now,
+                updatedAt = now,
+                syncId = UUID.randomUUID().toString(),
+                sortOrder = minOrder - 1000L
+            )
+            val id = repository.insertOrUpdate(note)
+            val saved = if (id > 0) note.copy(id = id) else note
+            syncNoteUpsertIfSignedIn(saved)
+            if (AudioCloudPolicy.isAudioOverCloudLimit(resolvedSize)) {
+                showSnackbar(
+                    if (isArabic.value) "التسجيل أكبر من 900 ميغابايت — تم حفظه محلياً ولن يُخزَّن سحابياً"
+                    else "Audio > 900 MB — saved locally only and excluded from cloud"
+                )
+            } else {
+                showSnackbar(if (isArabic.value) "تم حفظ التسجيل الصوتي بنجاح 🎙️" else "Voice recording saved 🎙️")
+            }
+        }
+    }
+
+    fun importAudioFileAsNote(uri: Uri) {
+        viewModelScope.launch {
+            try {
+                val imported = AudioStorageManager.importAudioFromUri(getApplication(), uri)
+                val now = System.currentTimeMillis()
+                val minOrder = withContext(Dispatchers.IO) { repository.getMinSortOrder() }
+                val note = NoteEntity(
+                    title = imported.displayTitle,
+                    content = "",
+                    category = if (isArabic.value) "صوتي" else "Audio",
+                    colorPreset = GlassTint.ROSE.id,
+                    audioDurationSec = imported.durationSec,
+                    audioFilePath = imported.filePathOrUri,
+                    audioByteSize = imported.byteSize,
+                    createdAt = now,
+                    updatedAt = now,
+                    syncId = UUID.randomUUID().toString(),
+                    sortOrder = minOrder - 1000L
+                )
+                val id = repository.insertOrUpdate(note)
+                val saved = if (id > 0) note.copy(id = id) else note
+                syncNoteUpsertIfSignedIn(saved)
+                if (imported.isLocalOnlyOverLimit) {
+                    showSnackbar(
+                        if (isArabic.value) "التسجيل يتعدى 900 ميغابايت — محفوظ محلياً فقط ولن يُخزَّن سحابياً"
+                        else "Recording exceeds 900 MB — stored locally only, not in cloud"
+                    )
+                } else {
+                    showSnackbar(
+                        if (isArabic.value) "تمت إضافة التسجيل الصوتي إلى القارئ 🎧"
+                        else "Audio recording added to player 🎧"
+                    )
+                }
+            } catch (e: Exception) {
+                showSnackbar(
+                    if (isArabic.value) "تعذر استيراد الملف الصوتي: ${e.localizedMessage}"
+                    else "Failed to import audio: ${e.localizedMessage}"
+                )
             }
         }
     }
@@ -1414,15 +1564,23 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                     uri = uri
                 )
                 vaultDao.insertImmutableItem(item)
-                currentUser.value?.uid?.let { uid ->
-                    launch(Dispatchers.IO) {
-                        FirebaseSyncRepository.upsertVaultItemIfAbsent(getApplication(), uid, item)
+                val allowedInCloud = AudioCloudPolicy.canStoreVaultItemInCloud(item)
+                if (allowedInCloud) {
+                    currentUser.value?.uid?.let { uid ->
+                        launch(Dispatchers.IO) {
+                            FirebaseSyncRepository.upsertVaultItemIfAbsent(getApplication(), uid, item)
+                        }
                     }
+                    showSnackbar(
+                        if (isArabic.value) "تم حفظ الملف حرفياً في ذاكرة الهاتف والـ Vault 🔒"
+                        else "File saved verbatim in phone storage & Vault 🔒"
+                    )
+                } else {
+                    showSnackbar(
+                        if (isArabic.value) "التسجيل يتعدى 900 م.ب — محفوظ في الهاتف فقط ولن يُخزَّن سحابياً 🔒"
+                        else "Audio > 900 MB — saved locally only, excluded from cloud 🔒"
+                    )
                 }
-                showSnackbar(
-                    if (isArabic.value) "تم حفظ الملف حرفياً في ذاكرة الهاتف والـ Vault 🔒"
-                    else "File saved verbatim in phone storage & Vault 🔒"
-                )
             } catch (e: Exception) {
                 showSnackbar(
                     if (isArabic.value) "تعذر حفظ الملف: ${e.localizedMessage}"

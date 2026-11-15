@@ -39,6 +39,7 @@ import com.example.ui.components.FirebaseAuthDialog
 import com.example.ui.components.UpdateAvailableDialog
 import com.example.ui.screens.AccountProfileScreen
 import com.example.ui.screens.ArchiveScreen
+import com.example.ui.screens.AudioRecordingsScreen
 import com.example.ui.screens.AuthWelcomeScreen
 import com.example.ui.screens.BiometricLockScreen
 import com.example.ui.screens.FluffyHomeScreen
@@ -58,6 +59,7 @@ private sealed interface FluffyScreenState {
     data object Trash : FluffyScreenState
     data object Archive : FluffyScreenState
     data object Account : FluffyScreenState
+    data object AudioPlayer : FluffyScreenState
     data class Editor(val note: NoteEntity) : FluffyScreenState
     data object Vault : FluffyScreenState
 }
@@ -80,8 +82,10 @@ class MainActivity : FragmentActivity() {
             val isTrashScreenOpen by viewModel.isTrashScreenOpen.collectAsState()
             val isArchiveScreenOpen by viewModel.isArchiveScreenOpen.collectAsState()
             val isAccountScreenOpen by viewModel.isAccountScreenOpen.collectAsState()
+            val isAudioPlayerScreenOpen by viewModel.isAudioPlayerScreenOpen.collectAsState()
             val trashedNotes by viewModel.trashedNotes.collectAsState()
             val archivedNotes by viewModel.archivedNotes.collectAsState()
+            val audioNotes by viewModel.audioNotes.collectAsState()
             val isAppLocked by viewModel.isAppLocked.collectAsState()
             val editingNote by viewModel.editingNote.collectAsState()
             val isCreatingNew by viewModel.isCreatingNew.collectAsState()
@@ -161,6 +165,7 @@ class MainActivity : FragmentActivity() {
                                 isVaultOpen -> FluffyScreenState.Vault
                                 editingNote != null -> FluffyScreenState.Editor(editingNote!!)
                                 isAccountScreenOpen -> FluffyScreenState.Account
+                                isAudioPlayerScreenOpen -> FluffyScreenState.AudioPlayer
                                 isTrashScreenOpen -> FluffyScreenState.Trash
                                 isArchiveScreenOpen -> FluffyScreenState.Archive
                                 isThemesScreenOpen -> FluffyScreenState.Themes
@@ -178,6 +183,7 @@ class MainActivity : FragmentActivity() {
                                             FluffyScreenState.Trash -> "trash"
                                             FluffyScreenState.Archive -> "archive"
                                             FluffyScreenState.Account -> "account"
+                                            FluffyScreenState.AudioPlayer -> "audio_player"
                                             FluffyScreenState.Vault -> "vault"
                                             is FluffyScreenState.Editor -> "editor"
                                         }
@@ -199,7 +205,8 @@ class MainActivity : FragmentActivity() {
                                                 targetState is FluffyScreenState.Themes ||
                                                 targetState is FluffyScreenState.Trash ||
                                                 targetState is FluffyScreenState.Archive ||
-                                                targetState is FluffyScreenState.Account -> {
+                                                targetState is FluffyScreenState.Account ||
+                                                targetState is FluffyScreenState.AudioPlayer -> {
                                                 (slideInHorizontally { width -> if (isArabic) -width else width } + fadeIn())
                                                     .togetherWith(slideOutHorizontally { width -> if (isArabic) width else -width } + fadeOut())
                                             }
@@ -317,6 +324,25 @@ class MainActivity : FragmentActivity() {
                                                 onBack = { viewModel.closeAccountScreen() }
                                             )
                                         }
+                                        FluffyScreenState.AudioPlayer -> {
+                                            AudioRecordingsScreen(
+                                                audioNotes = audioNotes,
+                                                vaultItems = vaultItems,
+                                                isDark = isDark,
+                                                isArabic = isArabic,
+                                                onCreateAudioNote = { title, duration, filePath, byteSize ->
+                                                    viewModel.createAudioRecordingNote(title, duration, filePath, byteSize)
+                                                },
+                                                onImportAudioUri = { uri ->
+                                                    viewModel.importAudioFileAsNote(uri)
+                                                },
+                                                onOpenNote = { note ->
+                                                    viewModel.closeAudioPlayerScreen()
+                                                    viewModel.openExistingNote(note)
+                                                },
+                                                onBack = { viewModel.closeAudioPlayerScreen() }
+                                            )
+                                        }
                                         FluffyScreenState.Vault -> {
                                             VaultScreen(
                                                 vaultItems = vaultItems,
@@ -341,7 +367,7 @@ class MainActivity : FragmentActivity() {
                                                 isDark = isDark,
                                                 isArabic = isArabic,
                                                 onBack = { viewModel.closeEditor() },
-                                                onSave = { title, content, category, colorPreset, isPinned, isFav, checklist, audioDuration ->
+                                                onSave = { title, content, category, colorPreset, isPinned, isFav, checklist, audioDuration, audioPath, audioSize ->
                                                     viewModel.saveNote(
                                                         title = title,
                                                         content = content,
@@ -350,12 +376,14 @@ class MainActivity : FragmentActivity() {
                                                         isPinned = isPinned,
                                                         isFavorite = isFav,
                                                         checklist = checklist,
-                                                        audioDurationSec = audioDuration
+                                                        audioDurationSec = audioDuration,
+                                                        audioFilePath = audioPath,
+                                                        audioByteSize = audioSize
                                                     )
                                                 },
                                                 onDelete = { viewModel.deleteCurrentNote() },
                                                 onToggleArchive = { viewModel.toggleArchive(screen.note) },
-                                                onAutoSave = { title, content, category, colorPreset, isPinned, isFav, checklist, audioDuration ->
+                                                onAutoSave = { title, content, category, colorPreset, isPinned, isFav, checklist, audioDuration, audioPath, audioSize ->
                                                     viewModel.autoSaveNote(
                                                         title = title,
                                                         content = content,
@@ -364,7 +392,9 @@ class MainActivity : FragmentActivity() {
                                                         isPinned = isPinned,
                                                         isFavorite = isFav,
                                                         checklist = checklist,
-                                                        audioDurationSec = audioDuration
+                                                        audioDurationSec = audioDuration,
+                                                        audioFilePath = audioPath,
+                                                        audioByteSize = audioSize
                                                     )
                                                 }
                                             )

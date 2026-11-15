@@ -96,6 +96,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.auth.rememberGoogleSignInController
+import com.example.ui.glass.BlurryScreenEdges
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -924,6 +925,11 @@ fun AuthWelcomeScreen(
                 }
             )
         }
+
+        BlurryScreenEdges(
+            isDark = true,
+            edgeColorOverride = DeepVoidBg
+        )
     }
 }
 

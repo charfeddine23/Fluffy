@@ -467,6 +467,8 @@ object LocalDeviceStorageManager {
         put("deletedAt", n.deletedAt)
         put("checklistJson", n.checklistJson)
         put("audioDurationSec", n.audioDurationSec)
+        put("audioFilePath", n.audioFilePath)
+        put("audioByteSize", n.audioByteSize)
         put("createdAt", n.createdAt)
         put("updatedAt", n.updatedAt)
     }
@@ -482,6 +484,8 @@ object LocalDeviceStorageManager {
         isArchived = obj.optBoolean("isArchived", false),
         checklistJson = obj.optString("checklistJson", ""),
         audioDurationSec = obj.optInt("audioDurationSec", 0),
+        audioFilePath = obj.optString("audioFilePath", ""),
+        audioByteSize = obj.optLong("audioByteSize", 0L),
         createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
         updatedAt = obj.optLong("updatedAt", System.currentTimeMillis()),
         syncId = obj.optString("syncId", "").ifBlank { UUID.randomUUID().toString() },

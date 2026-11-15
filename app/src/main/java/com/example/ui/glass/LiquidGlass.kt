@@ -1,5 +1,6 @@
 package com.example.ui.glass
 
+import android.util.TypedValue
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -13,32 +14,220 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.example.data.model.GlassTint
 import com.example.ui.theme.LocalAppThemePreset
 import kotlin.math.cos
 import kotlin.math.sin
+
+/**
+ * Resolves the exact 2mm physical screen dimension into Dp using DisplayMetrics,
+ * with a canonical 160dpi-density fallback (~12.6.dp) if xdpi is irregular.
+ */
+@Composable
+fun rememberTwoMillimetersDp(): Dp {
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    return remember(context, density) {
+        val metrics = context.resources.displayMetrics
+        val mmPx = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_MM, 2f, metrics)
+        val xdpiValid = metrics.xdpi in (metrics.densityDpi * 0.5f)..(metrics.densityDpi * 2.0f)
+        val resolvedPx = if (xdpiValid && mmPx.isFinite() && mmPx > 0f) {
+            mmPx
+        } else {
+            2f * metrics.densityDpi / 25.4f
+        }
+        with(density) { resolvedPx.coerceAtLeast(1f).toDp() }
+    }
+}
+
+/**
+ * Feathers content alpha gently across the 2mm left and right edges so items reaching
+ * the screen borders dissolve smoothly into the blurry frosted edges.
+ */
+fun Modifier.blurryEdgeMask(edgeWidthDp: Dp): Modifier = this
+    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+    .drawWithContent {
+        drawContent()
+        val width = size.width
+        val height = size.height
+        val edgePx = edgeWidthDp.toPx()
+        if (width > edgePx * 2f && height > 0f && edgePx > 0f) {
+            val frac = (edgePx / width).coerceIn(0.005f, 0.18f)
+            val rightStart = 1f - frac
+            drawRect(
+                brush = Brush.horizontalGradient(
+                    colorStops = arrayOf(
+                        0.0f to Color.Transparent,
+                        (frac * 0.30f) to Color.Black.copy(alpha = 0.25f),
+                        (frac * 0.65f) to Color.Black.copy(alpha = 0.72f),
+                        frac to Color.Black,
+                        rightStart to Color.Black,
+                        (rightStart + frac * 0.35f) to Color.Black.copy(alpha = 0.72f),
+                        (rightStart + frac * 0.70f) to Color.Black.copy(alpha = 0.25f),
+                        1.0f to Color.Transparent
+                    )
+                ),
+                blendMode = BlendMode.DstIn
+            )
+        }
+    }
+
+/**
+ * Symmetric 2mm blurry frosted edges anchored on both physical Left and Right sides of the screen.
+ * Purely visual (non-touch-intercepting) so edge swipes and scrolling pass through unaffected.
+ */
+@Composable
+fun BlurryScreenEdges(
+    isDark: Boolean,
+    modifier: Modifier = Modifier,
+    edgeWidthDp: Dp = rememberTwoMillimetersDp(),
+    edgeColorOverride: Color? = null
+) {
+    val activePreset = LocalAppThemePreset.current
+    val effectiveDark = if (edgeColorOverride != null) isDark else (activePreset.isDark || isDark)
+    val edgeBase = edgeColorOverride ?: activePreset.background
+    val edgeSurface = edgeColorOverride ?: activePreset.surface
+    val blurGlowTop = if (effectiveDark) activePreset.orb1.copy(alpha = 0.42f) else activePreset.orb1.copy(alpha = 0.28f)
+    val blurGlowMid = if (effectiveDark) edgeSurface.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.55f)
+    val blurGlowBot = if (effectiveDark) activePreset.orb2.copy(alpha = 0.38f) else activePreset.orb2.copy(alpha = 0.24f)
+
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+        Box(modifier = modifier.fillMaxSize()) {
+            // 1. Native Gaussian-blurred frosted edge strips (API 31+ RenderEffect; soft on older APIs)
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .fillMaxHeight()
+                    .width(edgeWidthDp * 0.52f)
+                    .blur(
+                        radiusX = edgeWidthDp * 0.48f,
+                        radiusY = edgeWidthDp * 0.48f,
+                        edgeTreatment = BlurredEdgeTreatment.Unbounded
+                    )
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(blurGlowTop, blurGlowMid, blurGlowBot)
+                        )
+                    )
+            )
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight()
+                    .width(edgeWidthDp * 0.52f)
+                    .blur(
+                        radiusX = edgeWidthDp * 0.48f,
+                        radiusY = edgeWidthDp * 0.48f,
+                        edgeTreatment = BlurredEdgeTreatment.Unbounded
+                    )
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(blurGlowBot, blurGlowMid, blurGlowTop)
+                        )
+                    )
+            )
+
+            // 2. Smooth multi-stop 2mm optical mist & frosted edge refraction veil on both sides
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val edgePx = edgeWidthDp.toPx().coerceAtLeast(1f)
+                val w = size.width
+                val h = size.height
+                if (w <= edgePx * 2f || h <= 0f) return@Canvas
+
+                val coreAlpha = if (effectiveDark) 0.78f else 0.80f
+                val midAlpha = if (effectiveDark) 0.44f else 0.46f
+                val tailAlpha = if (effectiveDark) 0.14f else 0.16f
+                val hairlineColor = if (effectiveDark) {
+                    activePreset.primary.copy(alpha = 0.16f)
+                } else {
+                    Color.White.copy(alpha = 0.42f)
+                }
+
+                // Left 2mm blurry edge
+                drawRect(
+                    brush = Brush.horizontalGradient(
+                        colorStops = arrayOf(
+                            0.00f to edgeBase.copy(alpha = coreAlpha),
+                            0.32f to edgeSurface.copy(alpha = midAlpha),
+                            0.68f to edgeBase.copy(alpha = tailAlpha),
+                            1.00f to Color.Transparent
+                        ),
+                        startX = 0f,
+                        endX = edgePx
+                    ),
+                    topLeft = Offset.Zero,
+                    size = Size(edgePx, h)
+                )
+
+                // Right 2mm blurry edge
+                drawRect(
+                    brush = Brush.horizontalGradient(
+                        colorStops = arrayOf(
+                            0.00f to Color.Transparent,
+                            0.32f to edgeBase.copy(alpha = tailAlpha),
+                            0.68f to edgeSurface.copy(alpha = midAlpha),
+                            1.00f to edgeBase.copy(alpha = coreAlpha)
+                        ),
+                        startX = w - edgePx,
+                        endX = w
+                    ),
+                    topLeft = Offset(w - edgePx, 0f),
+                    size = Size(edgePx, h)
+                )
+
+                // Subtle 1dp glass edge specular rim on both sides
+                val rimStroke = 1.dp.toPx()
+                drawLine(
+                    color = hairlineColor,
+                    start = Offset(rimStroke * 0.5f, 0f),
+                    end = Offset(rimStroke * 0.5f, h),
+                    strokeWidth = rimStroke
+                )
+                drawLine(
+                    color = hairlineColor,
+                    start = Offset(w - rimStroke * 0.5f, 0f),
+                    end = Offset(w - rimStroke * 0.5f, h),
+                    strokeWidth = rimStroke
+                )
+            }
+        }
+    }
+}
 
 /**
  * Animated dynamic frosted backdrop with floating ambient aura orbs that pulse and move smoothly.
@@ -48,6 +237,7 @@ import kotlin.math.sin
 fun FrostedBackdrop(
     isDark: Boolean,
     modifier: Modifier = Modifier,
+    showBlurryEdges: Boolean = true,
     content: @Composable BoxScope.() -> Unit
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "backdrop_animation")
@@ -173,6 +363,10 @@ fun FrostedBackdrop(
         }
 
         content()
+
+        if (showBlurryEdges) {
+            BlurryScreenEdges(isDark = effectiveDark)
+        }
     }
 }
 

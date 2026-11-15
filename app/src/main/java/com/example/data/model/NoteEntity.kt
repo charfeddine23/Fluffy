@@ -17,6 +17,8 @@ data class NoteEntity(
     val isArchived: Boolean = false,
     val checklistJson: String = "",
     val audioDurationSec: Int = 0,
+    val audioFilePath: String = "",
+    val audioByteSize: Long = 0L,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val syncId: String = UUID.randomUUID().toString(),
