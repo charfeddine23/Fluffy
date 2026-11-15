@@ -56,6 +56,7 @@ import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Unarchive
+import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -74,6 +75,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
@@ -86,12 +88,14 @@ import androidx.compose.ui.unit.sp
 import com.example.audio.rememberAudioPlaybackController
 import com.example.data.model.ChecklistItem
 import com.example.data.model.GlassTint
+import com.example.data.model.NoteBackgroundCanvas
+import com.example.data.model.NoteBackgroundCatalog
 import com.example.data.model.NoteEntity
 import com.example.data.storage.AudioCloudPolicy
 import com.example.ui.components.AudioPlayerCard
+import com.example.ui.components.DocumentStyleBottomSheet
 import com.example.ui.components.VoiceRecorderDialog
 import com.example.ui.glass.FrostedBackdrop
-import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.glass.liquidGlass
 
 @Composable
@@ -106,6 +110,8 @@ fun NoteEditorScreen(
         content: String,
         category: String,
         colorPreset: String,
+        backgroundId: String,
+        customColorArgb: Long,
         isPinned: Boolean,
         isFavorite: Boolean,
         checklist: List<ChecklistItem>,
@@ -120,6 +126,8 @@ fun NoteEditorScreen(
         content: String,
         category: String,
         colorPreset: String,
+        backgroundId: String,
+        customColorArgb: Long,
         isPinned: Boolean,
         isFavorite: Boolean,
         checklist: List<ChecklistItem>,
@@ -139,6 +147,8 @@ fun NoteEditorScreen(
     var content by remember { mutableStateOf(note.content) }
     var category by remember { mutableStateOf(note.category) }
     var selectedTint by remember { mutableStateOf(GlassTint.fromId(note.colorPreset)) }
+    var backgroundId by remember { mutableStateOf(note.backgroundId) }
+    var customColorArgb by remember { mutableLongStateOf(note.customColorArgb) }
     var isPinned by remember { mutableStateOf(note.isPinned) }
     var isFavorite by remember { mutableStateOf(note.isFavorite) }
     var audioDurationSec by remember { mutableIntStateOf(note.audioDurationSec) }
@@ -148,7 +158,8 @@ fun NoteEditorScreen(
     }
 
     var showVoiceRecorderDialog by remember { mutableStateOf(false) }
-    var showStylePanel by remember { mutableStateOf(false) }
+    var showStyleSheet by remember { mutableStateOf(false) }
+    var styleSheetInitialTab by remember { mutableIntStateOf(0) }
     var showMoreMenu by remember { mutableStateOf(false) }
 
     val checklistItems = remember {
@@ -157,16 +168,26 @@ fun NoteEditorScreen(
         }
     }
 
+    fun triggerImmediateSaveIfViewMode() {
+        if (!isEditMode) {
+            onAutoSave?.invoke(
+                title, content, category, selectedTint.id, backgroundId, customColorArgb,
+                isPinned, isFavorite, checklistItems.toList(),
+                audioDurationSec, audioFilePath, audioByteSize
+            )
+        }
+    }
+
     // Real-time automatic background save with 500ms debounce (active only in Writing/Edit mode)
     LaunchedEffect(
-        isEditMode, title, content, category, selectedTint.id,
+        isEditMode, title, content, category, selectedTint.id, backgroundId, customColorArgb,
         isPinned, isFavorite, checklistItems.toList(),
         audioDurationSec, audioFilePath, audioByteSize
     ) {
         if (!isEditMode) return@LaunchedEffect
         kotlinx.coroutines.delay(500)
         onAutoSave?.invoke(
-            title, content, category, selectedTint.id,
+            title, content, category, selectedTint.id, backgroundId, customColorArgb,
             isPinned, isFavorite, checklistItems.toList(),
             audioDurationSec, audioFilePath, audioByteSize
         )
@@ -177,14 +198,19 @@ fun NoteEditorScreen(
         playbackController.stop()
         if (isEditMode) {
             onSave(
-                title, content, category, selectedTint.id,
+                title, content, category, selectedTint.id, backgroundId, customColorArgb,
                 isPinned, isFavorite, checklistItems.toList(),
                 audioDurationSec, audioFilePath, audioByteSize
             )
         } else {
-            if (isPinned != note.isPinned) {
+            if (isPinned != note.isPinned ||
+                selectedTint.id != note.colorPreset ||
+                backgroundId != note.backgroundId ||
+                customColorArgb != note.customColorArgb ||
+                category != note.category
+            ) {
                 onAutoSave?.invoke(
-                    title, content, category, selectedTint.id,
+                    title, content, category, selectedTint.id, backgroundId, customColorArgb,
                     isPinned, isFavorite, checklistItems.toList(),
                     audioDurationSec, audioFilePath, audioByteSize
                 )
@@ -193,10 +219,21 @@ fun NoteEditorScreen(
         }
     }
 
-    val textColor = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
-    val bodyColor = if (isDark) Color(0xFFE2E8F0) else Color(0xFF1E293B)
-    val metaColor = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
-    val pillFill = if (isDark) Color(0xFF1E293B).copy(alpha = 0.72f) else Color.White.copy(alpha = 0.72f)
+    val activeBgPreset = remember(backgroundId) { NoteBackgroundCatalog.findById(backgroundId) }
+    val surfaceColors = remember(isDark, selectedTint, customColorArgb, backgroundId) {
+        NoteBackgroundCatalog.resolveSurfaceColors(
+            themeIsDark = isDark,
+            tint = selectedTint,
+            customColorArgb = customColorArgb,
+            backgroundId = backgroundId
+        )
+    }
+    val effectiveDark = surfaceColors.effectiveDark
+    val textColor = surfaceColors.titleColor
+    val bodyColor = surfaceColors.bodyColor
+    val metaColor = surfaceColors.metaColor
+    val accentColor = surfaceColors.accentColor
+    val pillFill = surfaceColors.pillFill
 
     val wordCount = remember(content) {
         if (content.isBlank()) 0 else content.trim().split("\\s+".toRegex()).size
@@ -204,6 +241,43 @@ fun NoteEditorScreen(
     val charCount = content.length
 
     FrostedBackdrop(isDark = isDark) {
+        // Per-document background or custom document color layer
+        if (activeBgPreset != null) {
+            NoteBackgroundCanvas(
+                preset = activeBgPreset,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else if (customColorArgb != 0L) {
+            val baseDocColor = Color(customColorArgb.toInt())
+            val deepShade = if (surfaceColors.effectiveDark) {
+                Color(0xFF020617).copy(alpha = 0.28f)
+            } else {
+                Color.White.copy(alpha = 0.16f)
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(baseDocColor, baseDocColor)
+                        )
+                    )
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(Color.Transparent, deepShade)
+                        )
+                    )
+            )
+        } else if (selectedTint != GlassTint.FROST) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        selectedTint.accentColor.copy(alpha = if (isDark) 0.14f else 0.12f)
+                    )
+            )
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -211,7 +285,7 @@ fun NoteEditorScreen(
                 .windowInsetsPadding(WindowInsets.navigationBars)
                 .imePadding()
         ) {
-            // 1. Minimal Top Bar: Back on start; Pin + (Save in Edit mode OR Pencil in View-Only mode)
+            // 1. Minimal Top Bar: Back on start; Style/Backgrounds + Pin + (Save in Edit mode OR Pencil in View-Only mode)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -231,14 +305,19 @@ fun NoteEditorScreen(
                             playbackController.stop()
                             if (isEditMode) {
                                 onSave(
-                                    title, content, category, selectedTint.id,
+                                    title, content, category, selectedTint.id, backgroundId, customColorArgb,
                                     isPinned, isFavorite, checklistItems.toList(),
                                     audioDurationSec, audioFilePath, audioByteSize
                                 )
                             } else {
-                                if (isPinned != note.isPinned) {
+                                if (isPinned != note.isPinned ||
+                                    selectedTint.id != note.colorPreset ||
+                                    backgroundId != note.backgroundId ||
+                                    customColorArgb != note.customColorArgb ||
+                                    category != note.category
+                                ) {
                                     onAutoSave?.invoke(
-                                        title, content, category, selectedTint.id,
+                                        title, content, category, selectedTint.id, backgroundId, customColorArgb,
                                         isPinned, isFavorite, checklistItems.toList(),
                                         audioDurationSec, audioFilePath, audioByteSize
                                     )
@@ -260,13 +339,43 @@ fun NoteEditorScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    // Style & 20 Backgrounds quick button (accessible in BOTH View & Edit modes)
+                    val hasCustomVisual = activeBgPreset != null || customColorArgb != 0L || selectedTint != GlassTint.FROST
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .testTag("editor_style_top_button")
+                            .liquidGlass(
+                                isDark = effectiveDark,
+                                tint = selectedTint,
+                                shape = RoundedCornerShape(14.dp),
+                                borderWidth = 1.dp,
+                                customFill = if (hasCustomVisual) accentColor.copy(alpha = 0.22f) else pillFill
+                            )
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = ripple(bounded = true)
+                            ) {
+                                styleSheetInitialTab = if (activeBgPreset != null) 1 else 0
+                                showStyleSheet = true
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (activeBgPreset != null) Icons.Default.Wallpaper else Icons.Default.Palette,
+                            contentDescription = if (isArabic) "ألوان وخلفيات المستند" else "Document Colors & Backgrounds",
+                            tint = if (hasCustomVisual) accentColor else textColor,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
                     // Pin Button (always remains visible in both Edit & View-Only modes)
                     Box(
                         modifier = Modifier
                             .size(44.dp)
                             .testTag("editor_pin_toggle")
                             .liquidGlass(
-                                isDark = isDark,
+                                isDark = effectiveDark,
                                 tint = if (isPinned) GlassTint.AMBER else GlassTint.FROST,
                                 shape = RoundedCornerShape(14.dp),
                                 borderWidth = 1.dp,
@@ -277,13 +386,7 @@ fun NoteEditorScreen(
                                 indication = ripple(bounded = true)
                             ) {
                                 isPinned = !isPinned
-                                if (!isEditMode) {
-                                    onAutoSave?.invoke(
-                                        title, content, category, selectedTint.id,
-                                        isPinned, isFavorite, checklistItems.toList(),
-                                        audioDurationSec, audioFilePath, audioByteSize
-                                    )
-                                }
+                                triggerImmediateSaveIfViewMode()
                             },
                         contentAlignment = Alignment.Center
                     ) {
@@ -302,18 +405,18 @@ fun NoteEditorScreen(
                                 .size(44.dp)
                                 .testTag("editor_save_button")
                                 .liquidGlass(
-                                    isDark = isDark,
+                                    isDark = effectiveDark,
                                     tint = selectedTint,
                                     shape = RoundedCornerShape(14.dp),
                                     borderWidth = 1.2.dp,
-                                    customFill = selectedTint.accentColor.copy(alpha = if (isDark) 0.28f else 0.18f)
+                                    customFill = accentColor.copy(alpha = if (effectiveDark) 0.28f else 0.18f)
                                 )
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = ripple(bounded = true)
                                 ) {
                                     onSave(
-                                        title, content, category, selectedTint.id,
+                                        title, content, category, selectedTint.id, backgroundId, customColorArgb,
                                         isPinned, isFavorite, checklistItems.toList(),
                                         audioDurationSec, audioFilePath, audioByteSize
                                     )
@@ -333,11 +436,11 @@ fun NoteEditorScreen(
                                 .size(44.dp)
                                 .testTag("editor_edit_button")
                                 .liquidGlass(
-                                    isDark = isDark,
+                                    isDark = effectiveDark,
                                     tint = selectedTint,
                                     shape = RoundedCornerShape(14.dp),
                                     borderWidth = 1.2.dp,
-                                    customFill = selectedTint.accentColor.copy(alpha = if (isDark) 0.26f else 0.18f)
+                                    customFill = accentColor.copy(alpha = if (effectiveDark) 0.26f else 0.18f)
                                 )
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
@@ -434,7 +537,7 @@ fun NoteEditorScreen(
                             durationSec = audioDurationSec,
                             byteSize = audioByteSize,
                             playbackController = playbackController,
-                            isDark = isDark,
+                            isDark = effectiveDark,
                             isArabic = isArabic,
                             canDelete = isEditMode,
                             onDelete = {
@@ -602,96 +705,6 @@ fun NoteEditorScreen(
                 }
             }
 
-            // Expandable Style / Glass Tint + Category Panel (only in Edit mode)
-            AnimatedVisibility(
-                visible = isEditMode && showStylePanel,
-                enter = expandVertically(expandFrom = Alignment.Bottom) + fadeIn(),
-                exit = shrinkVertically(shrinkTowards = Alignment.Bottom) + fadeOut()
-            ) {
-                LiquidGlassCard(
-                    isDark = isDark,
-                    tint = selectedTint,
-                    shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-                    borderWidth = 1.2.dp,
-                    customFill = if (isDark) Color(0xFF0F172A).copy(alpha = 0.90f) else Color.White.copy(alpha = 0.92f),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = if (isArabic) "لون الزجاج السائل" else "Glass Tint",
-                                fontSize = 12.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = metaColor
-                            )
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                GlassTint.entries.forEach { tint ->
-                                    val isSelected = selectedTint == tint
-                                    Box(
-                                        modifier = Modifier
-                                            .size(28.dp)
-                                            .testTag("tint_${tint.id}")
-                                            .clip(CircleShape)
-                                            .background(tint.accentColor)
-                                            .border(
-                                                width = if (isSelected) 3.dp else 0.dp,
-                                                color = if (isSelected) Color.White else Color.Transparent,
-                                                shape = CircleShape
-                                            )
-                                            .clickable { selectedTint = tint }
-                                    )
-                                }
-                            }
-                        }
-
-                        val categories = listOf("أفكار", "مهام", "عمل", "شخصي", "دراسة", "عام")
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            categories.forEach { cat ->
-                                val isSelected = category.equals(cat, ignoreCase = true)
-                                Box(
-                                    modifier = Modifier
-                                        .clip(CircleShape)
-                                        .background(
-                                            if (isSelected) selectedTint.accentColor.copy(alpha = 0.35f)
-                                            else if (isDark) Color(0x22FFFFFF) else Color(0x15000000)
-                                        )
-                                        .border(
-                                            width = if (isSelected) 1.5.dp else 0.5.dp,
-                                            color = if (isSelected) selectedTint.accentColor else Color(0x33FFFFFF),
-                                            shape = CircleShape
-                                        )
-                                        .clickable { category = cat }
-                                        .padding(horizontal = 14.dp, vertical = 7.dp)
-                                ) {
-                                    Text(
-                                        text = cat,
-                                        fontSize = 12.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (isSelected) textColor else metaColor
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
             // 3. Bottom Action Toolbar (Hidden completely in View-Only mode; visible only in Edit/Writing mode)
             AnimatedVisibility(
                 visible = isEditMode,
@@ -716,7 +729,7 @@ fun NoteEditorScreen(
                                 .size(44.dp)
                                 .testTag("editor_add_voice_button")
                                 .liquidGlass(
-                                    isDark = isDark,
+                                    isDark = effectiveDark,
                                     tint = if (hasAttachedAudio) GlassTint.ROSE else GlassTint.FROST,
                                     shape = CircleShape,
                                     borderWidth = 1.dp,
@@ -742,11 +755,11 @@ fun NoteEditorScreen(
                                 .size(44.dp)
                                 .testTag("editor_add_checklist_button")
                                 .liquidGlass(
-                                    isDark = isDark,
+                                    isDark = effectiveDark,
                                     tint = if (checklistItems.isNotEmpty()) selectedTint else GlassTint.FROST,
                                     shape = CircleShape,
                                     borderWidth = 1.dp,
-                                    customFill = if (checklistItems.isNotEmpty()) selectedTint.accentColor.copy(alpha = 0.24f) else pillFill
+                                    customFill = if (checklistItems.isNotEmpty()) accentColor.copy(alpha = 0.24f) else pillFill
                                 )
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
@@ -759,33 +772,65 @@ fun NoteEditorScreen(
                             Icon(
                                 imageVector = Icons.Default.CheckBox,
                                 contentDescription = if (isArabic) "إضافة قائمة مهام" else "Add Checklist",
-                                tint = if (checklistItems.isNotEmpty()) selectedTint.accentColor else textColor,
+                                tint = if (checklistItems.isNotEmpty()) accentColor else textColor,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
 
-                        // Glass Tint & Category Palette button
+                        // Document Colors & Category button
                         Box(
                             modifier = Modifier
                                 .size(44.dp)
                                 .testTag("editor_palette_button")
                                 .liquidGlass(
-                                    isDark = isDark,
-                                    tint = if (showStylePanel) selectedTint else GlassTint.FROST,
+                                    isDark = effectiveDark,
+                                    tint = if (customColorArgb != 0L || selectedTint != GlassTint.FROST) selectedTint else GlassTint.FROST,
                                     shape = CircleShape,
                                     borderWidth = 1.dp,
-                                    customFill = if (showStylePanel) selectedTint.accentColor.copy(alpha = 0.26f) else pillFill
+                                    customFill = if (customColorArgb != 0L) accentColor.copy(alpha = 0.26f) else pillFill
                                 )
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = ripple(bounded = true)
-                                ) { showStylePanel = !showStylePanel },
+                                ) {
+                                    styleSheetInitialTab = 0
+                                    showStyleSheet = true
+                                },
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Palette,
-                                contentDescription = if (isArabic) "لون الزجاج والقسم" else "Color & Category",
-                                tint = if (showStylePanel) selectedTint.accentColor else textColor,
+                                contentDescription = if (isArabic) "تلوين المستند" else "Document Color",
+                                tint = if (customColorArgb != 0L) accentColor else textColor,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        // 20 Document Backgrounds button
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .testTag("editor_backgrounds_button")
+                                .liquidGlass(
+                                    isDark = effectiveDark,
+                                    tint = if (activeBgPreset != null) selectedTint else GlassTint.FROST,
+                                    shape = CircleShape,
+                                    borderWidth = 1.dp,
+                                    customFill = if (activeBgPreset != null) accentColor.copy(alpha = 0.26f) else pillFill
+                                )
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = ripple(bounded = true)
+                                ) {
+                                    styleSheetInitialTab = 1
+                                    showStyleSheet = true
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Wallpaper,
+                                contentDescription = if (isArabic) "خلفيات المستند (20)" else "Document Backgrounds (20)",
+                                tint = if (activeBgPreset != null) accentColor else textColor,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -810,7 +855,7 @@ fun NoteEditorScreen(
                                     .size(44.dp)
                                     .testTag("editor_more_button")
                                     .liquidGlass(
-                                        isDark = isDark,
+                                        isDark = effectiveDark,
                                         tint = GlassTint.FROST,
                                         shape = CircleShape,
                                         borderWidth = 1.dp,
@@ -833,7 +878,7 @@ fun NoteEditorScreen(
                             DropdownMenu(
                                 expanded = showMoreMenu,
                                 onDismissRequest = { showMoreMenu = false },
-                                containerColor = if (isDark) Color(0xFF1E293B) else Color.White
+                                containerColor = if (effectiveDark) Color(0xFF1E293B) else Color.White
                             ) {
                                 DropdownMenuItem(
                                     text = {
@@ -931,10 +976,52 @@ fun NoteEditorScreen(
             }
         }
 
+        // Document Colors & 20 Backgrounds Modal Bottom Sheet
+        if (showStyleSheet) {
+            DocumentStyleBottomSheet(
+                isDark = isDark,
+                isArabic = isArabic,
+                selectedTint = selectedTint,
+                customColorArgb = customColorArgb,
+                backgroundId = backgroundId,
+                category = category,
+                initialTab = styleSheetInitialTab,
+                onSelectTint = { newTint ->
+                    selectedTint = newTint
+                    triggerImmediateSaveIfViewMode()
+                },
+                onSelectCustomColor = { argb ->
+                    customColorArgb = argb
+                    if (argb != 0L) {
+                        backgroundId = NoteBackgroundCatalog.NONE_ID
+                    }
+                    triggerImmediateSaveIfViewMode()
+                },
+                onSelectBackground = { bgId ->
+                    backgroundId = bgId
+                    if (bgId != NoteBackgroundCatalog.NONE_ID) {
+                        customColorArgb = 0L
+                    }
+                    triggerImmediateSaveIfViewMode()
+                },
+                onSelectCategory = { newCat ->
+                    category = newCat
+                    triggerImmediateSaveIfViewMode()
+                },
+                onResetStyle = {
+                    selectedTint = GlassTint.FROST
+                    customColorArgb = 0L
+                    backgroundId = NoteBackgroundCatalog.NONE_ID
+                    triggerImmediateSaveIfViewMode()
+                },
+                onDismiss = { showStyleSheet = false }
+            )
+        }
+
         // Voice Recorder Dialog
         if (showVoiceRecorderDialog) {
             VoiceRecorderDialog(
-                isDark = isDark,
+                isDark = effectiveDark,
                 isArabic = isArabic,
                 onDismiss = { showVoiceRecorderDialog = false },
                 onSaveVoiceNote = { duration, filePath, byteSize ->

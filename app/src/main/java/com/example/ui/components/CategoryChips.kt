@@ -34,23 +34,27 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.GlassTint
 import com.example.ui.glass.LiquidGlassPill
+import com.example.ui.theme.LocalAppLanguage
+import com.example.ui.theme.translateText
 
 data class CategoryOption(
     val id: String,
     val labelAr: String,
+    val labelFr: String,
     val labelEn: String,
+    val labelTzm: String,
     val icon: ImageVector,
     val tint: GlassTint
 )
 
 val defaultCategories = listOf(
-    CategoryOption("ALL", "الكل", "All", Icons.Default.WorkspacePremium, GlassTint.FROST),
-    CategoryOption("PINNED", "المثبتة", "Pinned", Icons.Default.PushPin, GlassTint.AMBER),
-    CategoryOption("FAVORITES", "المفضلة", "Favorites", Icons.Default.Favorite, GlassTint.ROSE),
-    CategoryOption("TODO", "المهام", "Checklists", Icons.Default.CheckCircle, GlassTint.CYAN),
-    CategoryOption("أفكار", "أفكار", "Ideas", Icons.Default.Lightbulb, GlassTint.AMETHYST),
-    CategoryOption("عمل", "عمل", "Work", Icons.Default.Work, GlassTint.CYAN),
-    CategoryOption("شخصي", "شخصي", "Personal", Icons.Default.Person, GlassTint.EMERALD)
+    CategoryOption("ALL", "الكل", "Tout", "All", "Akk", Icons.Default.WorkspacePremium, GlassTint.FROST),
+    CategoryOption("PINNED", "المثبتة", "Épinglées", "Pinned", "Yettwabḍen", Icons.Default.PushPin, GlassTint.AMBER),
+    CategoryOption("FAVORITES", "المفضلة", "Favoris", "Favorites", "Imenyafen", Icons.Default.Favorite, GlassTint.ROSE),
+    CategoryOption("TODO", "المهام", "Tâches", "Checklists", "Timahalin", Icons.Default.CheckCircle, GlassTint.CYAN),
+    CategoryOption("أفكار", "أفكار", "Idées", "Ideas", "Tiktiwin", Icons.Default.Lightbulb, GlassTint.AMETHYST),
+    CategoryOption("عمل", "عمل", "Travail", "Work", "Amahil", Icons.Default.Work, GlassTint.CYAN),
+    CategoryOption("شخصي", "شخصي", "Personnel", "Personal", "Udmawan", Icons.Default.Person, GlassTint.EMERALD)
 )
 
 @Composable
@@ -159,9 +163,16 @@ private fun CategoryChipsRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        val lang = LocalAppLanguage.current
         defaultCategories.forEach { option ->
             val isSelected = selectedCategory.equals(option.id, ignoreCase = true)
-            val label = if (isArabic) option.labelAr else option.labelEn
+            val label = translateText(
+                lang,
+                ar = option.labelAr,
+                fr = option.labelFr,
+                en = option.labelEn,
+                tzm = option.labelTzm
+            )
             val textColor = if (isSelected) {
                 if (isDark) Color.White else Color(0xFF0F172A)
             } else {

@@ -45,11 +45,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.GlassTint
+import com.example.data.model.NoteBackgroundCanvas
+import com.example.data.model.NoteBackgroundCatalog
 import com.example.data.model.NoteEntity
 import com.example.ui.glass.FrostedBackdrop
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.glass.liquidGlass
 import com.example.ui.theme.LocalAppThemePreset
+import com.example.ui.theme.tr
 
 @Composable
 fun ArchiveScreen(
@@ -102,7 +105,7 @@ fun ArchiveScreen(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = if (isArabic) "رجوع" else "Back",
+                        contentDescription = tr("رجوع", "Retour", "Back", "Uɣal"),
                         tint = textColor,
                         modifier = Modifier.size(21.dp)
                     )
@@ -110,14 +113,19 @@ fun ArchiveScreen(
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = if (isArabic) "الأرشيف" else "Archive",
+                        text = tr("الأرشيف", "Archives", "Archive", "Iɣbaren"),
                         style = MaterialTheme.typography.titleLarge.copy(
                             fontWeight = FontWeight.ExtraBold,
                             color = textColor
                         )
                     )
                     Text(
-                        text = if (isArabic) "${archivedNotes.size} ملاحظة مؤرشفة" else "${archivedNotes.size} archived notes",
+                        text = tr(
+                            "${archivedNotes.size} ملاحظة مؤرشفة",
+                            "${archivedNotes.size} notes archivées",
+                            "${archivedNotes.size} archived notes",
+                            "${archivedNotes.size} n tira yettwaɣebren"
+                        ),
                         fontSize = 11.5.sp,
                         color = metaColor
                     )
@@ -143,16 +151,18 @@ fun ArchiveScreen(
                             modifier = Modifier.size(56.dp)
                         )
                         Text(
-                            text = if (isArabic) "الأرشيف فارغ" else "Archive is empty",
+                            text = tr("الأرشيف فارغ", "Les archives sont vides", "Archive is empty", "Iɣbaren d ilem"),
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
                             color = textColor
                         )
                         Text(
-                            text = if (isArabic)
-                                "يمكنك أرشفة أي ملاحظة لإخفائها عن الرئيسية مع الاحتفاظ بها هنا."
-                            else
+                            text = tr(
+                                "يمكنك أرشفة أي ملاحظة لإخفائها عن الرئيسية مع الاحتفاظ بها هنا.",
+                                "Archivez des notes pour les masquer de l'accueil tout en les gardant en sécurité ici.",
                                 "Archive notes to tuck them away from Home while keeping them safe here.",
+                                "Tzemreḍ ad tɣebreḍ tira i wakken ad tent-teffreḍ seg usebter agejdan."
+                            ),
                             fontSize = 12.5.sp,
                             color = metaColor,
                             textAlign = TextAlign.Center
@@ -174,15 +184,34 @@ fun ArchiveScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     items(archivedNotes, key = { it.id }) { note ->
+                        val cardTint = GlassTint.fromId(note.colorPreset)
+                        val cardBg = NoteBackgroundCatalog.findById(note.backgroundId)
+                        val cardFill = if (note.customColorArgb != 0L) {
+                            Color(note.customColorArgb.toInt()).copy(alpha = if (isDark) 0.90f else 0.95f)
+                        } else null
+                        val cardSurface = NoteBackgroundCatalog.resolveSurfaceColors(
+                            themeIsDark = isDark,
+                            tint = cardTint,
+                            customColorArgb = note.customColorArgb,
+                            backgroundId = note.backgroundId
+                        )
                         LiquidGlassCard(
-                            isDark = isDark,
-                            tint = GlassTint.fromId(note.colorPreset),
+                            isDark = cardSurface.effectiveDark,
+                            tint = cardTint,
                             shape = RoundedCornerShape(20.dp),
                             borderWidth = 1.2.dp,
+                            customFill = if (cardBg != null) Color.Transparent else cardFill,
                             onClick = { onOpenNote(note) },
                             testTag = "archive_note_card_${note.id}",
                             modifier = Modifier.fillMaxWidth()
                         ) {
+                            if (cardBg != null) {
+                                NoteBackgroundCanvas(
+                                    preset = cardBg,
+                                    isCompactCard = true,
+                                    modifier = Modifier.matchParentSize()
+                                )
+                            }
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -193,7 +222,7 @@ fun ArchiveScreen(
                                     text = note.category,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = activePreset.primary
+                                    color = cardSurface.accentColor
                                 )
 
                                 if (note.title.isNotBlank()) {
@@ -201,7 +230,7 @@ fun ArchiveScreen(
                                         text = note.title,
                                         fontSize = 15.5.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = textColor,
+                                        color = cardSurface.titleColor,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
@@ -211,7 +240,7 @@ fun ArchiveScreen(
                                     Text(
                                         text = note.content,
                                         fontSize = 13.sp,
-                                        color = metaColor,
+                                        color = cardSurface.metaColor,
                                         maxLines = 3,
                                         overflow = TextOverflow.Ellipsis
                                     )

@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.model.GlassTint
 import com.example.ui.glass.liquidGlass
 import com.example.ui.theme.LocalAppThemePreset
+import com.example.ui.theme.tr
 
 @Composable
 fun FluffyTopBar(
@@ -120,7 +121,7 @@ fun FluffyTopBar(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Menu,
-                        contentDescription = if (isArabic) "الإعدادات" else "Settings",
+                        contentDescription = tr("الإعدادات", "Paramètres", "Settings", "Iɣewwaṛen"),
                         tint = textColor,
                         modifier = Modifier.size(20.dp)
                     )
@@ -165,7 +166,7 @@ fun FluffyTopBar(
                 // Stats button
                 GlassIconAction(
                     icon = Icons.Default.Insights,
-                    contentDescription = if (isArabic) "الإحصائيات" else "Statistics",
+                    contentDescription = tr("الإحصائيات", "Statistiques", "Statistics", "Tidaddanin"),
                     isDark = isDark,
                     testTag = "stats_button",
                     onClick = onOpenStats
@@ -174,7 +175,7 @@ fun FluffyTopBar(
                 // View Mode toggle
                 GlassIconAction(
                     icon = if (isGridView) Icons.Default.ViewAgenda else Icons.Default.GridView,
-                    contentDescription = if (isArabic) "تبديل طريقة العرض" else "Toggle View",
+                    contentDescription = tr("تبديل طريقة العرض", "Changer l'affichage", "Toggle View", "Beddel timeẓri"),
                     isDark = isDark,
                     testTag = "view_mode_toggle",
                     onClick = onToggleViewMode
@@ -232,7 +233,7 @@ fun FluffyTopBar(
             ) {
                 Icon(
                     imageVector = Icons.Default.Search,
-                    contentDescription = if (isArabic) "بحث" else "Search",
+                    contentDescription = tr("بحث", "Rechercher", "Search", "Nadi"),
                     tint = hintColor,
                     modifier = Modifier.size(20.dp)
                 )
@@ -242,7 +243,12 @@ fun FluffyTopBar(
                 Box(modifier = Modifier.weight(1f)) {
                     if (searchQuery.isEmpty()) {
                         Text(
-                            text = if (isArabic) "ابحث في الملاحظات والمهام والأقسام..." else "Search notes, checklists, tags...",
+                            text = tr(
+                                "ابحث في الملاحظات والمهام والأقسام...",
+                                "Rechercher notes, tâches, tags...",
+                                "Search notes, checklists, tags...",
+                                "Nadi di tira, timahalin, tags..."
+                            ),
                             style = TextStyle(
                                 fontSize = 14.sp,
                                 color = hintColor
@@ -298,7 +304,7 @@ fun FluffyTopBar(
                         )
                         if (!isCloudSignedIn && isGuestMode) {
                             Text(
-                                text = if (isArabic) "ضيف" else "Guest",
+                                text = tr("ضيف", "Invité", "Guest", "Inebgi"),
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF38BDF8)

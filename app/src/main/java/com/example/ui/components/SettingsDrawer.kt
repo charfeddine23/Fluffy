@@ -53,6 +53,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Archive
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudDone
 import androidx.compose.material.icons.rounded.CloudOff
@@ -60,8 +61,8 @@ import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material.icons.rounded.FolderOpen
-import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.GridView
+import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Lock
@@ -72,16 +73,23 @@ import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.SdStorage
 import androidx.compose.material.icons.rounded.Security
+import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material.icons.rounded.ViewAgenda
+import androidx.compose.material.icons.rounded.VisibilityOff
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -104,16 +112,21 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.example.BuildConfig
 import com.example.data.model.GlassTint
 import com.example.data.repository.CloudSyncStatus
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.glass.liquidGlass
+import com.example.ui.theme.AppLanguage
 import com.example.ui.theme.AppThemeRegistry
+import com.example.ui.theme.LocalAppLanguage
 import com.example.ui.theme.LocalAppThemePreset
+import com.example.ui.theme.tr
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -139,16 +152,20 @@ fun SettingsDrawer(
     onToggleBiometric: (Boolean) -> Unit,
     onLockAppNow: () -> Unit,
     onToggleTheme: () -> Unit,
-    onToggleLanguage: () -> Unit,
+    onSelectLanguage: (AppLanguage) -> Unit = {},
     onToggleViewMode: () -> Unit,
     selectedThemeId: String = "obsidian_liquid_glass",
     onOpenThemes: () -> Unit = {},
     trashedCount: Int = 0,
     archivedCount: Int = 0,
-    audioCount: Int = 0,
     onOpenTrash: () -> Unit = {},
     onOpenArchive: () -> Unit = {},
-    onOpenAudioPlayer: () -> Unit = {},
+    isScreenshotProtectionEnabled: Boolean = false,
+    onToggleScreenshotProtection: (Boolean) -> Unit = {},
+    isVaultLockEnabled: Boolean = false,
+    hasVaultPasskey: Boolean = false,
+    onToggleVaultLock: (Boolean) -> Unit = {},
+    onSetVaultPasskey: (String) -> Unit = {},
     isCheckingUpdates: Boolean = false,
     hasPendingUpdate: Boolean = false,
     onCheckForUpdates: () -> Unit = {},
@@ -165,13 +182,37 @@ fun SettingsDrawer(
     onSyncCloudNow: () -> Unit = {},
     onExportLocalBackup: (Uri) -> Unit = {},
     onImportLocalBackup: (Uri) -> Unit = {},
+    initialSubPage: String? = null,
+    onConsumeInitialSubPage: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    var currentPage by remember { mutableStateOf(SettingsPage.ROOT) }
+    var currentPage by remember {
+        mutableStateOf(
+            when (initialSubPage) {
+                "APPEARANCE" -> SettingsPage.APPEARANCE
+                "SECURITY" -> SettingsPage.SECURITY
+                "ACCOUNT_CLOUD" -> SettingsPage.ACCOUNT_CLOUD
+                else -> SettingsPage.ROOT
+            }
+        )
+    }
+    var showLanguageDialog by remember { mutableStateOf(false) }
+    var showPasskeySetupDialog by remember { mutableStateOf(false) }
+    val currentLanguage = LocalAppLanguage.current
 
-    LaunchedEffect(isOpen) {
-        if (!isOpen) {
+    LaunchedEffect(isOpen, initialSubPage) {
+        if (isOpen && initialSubPage != null) {
+            currentPage = when (initialSubPage) {
+                "APPEARANCE" -> SettingsPage.APPEARANCE
+                "SECURITY" -> SettingsPage.SECURITY
+                "ACCOUNT_CLOUD" -> SettingsPage.ACCOUNT_CLOUD
+                else -> SettingsPage.ROOT
+            }
+            onConsumeInitialSubPage()
+        } else if (!isOpen) {
             currentPage = SettingsPage.ROOT
+            showLanguageDialog = false
+            showPasskeySetupDialog = false
         }
     }
 
@@ -452,7 +493,7 @@ fun SettingsDrawer(
                             Column {
                                 Text(
                                     text = when (currentPage) {
-                                        SettingsPage.ROOT -> if (isArabic) "الإعدادات" else "Settings"
+                                        SettingsPage.ROOT -> tr("الإعدادات", "Paramètres", "Settings", "Iɣewwaṛen")
                                         SettingsPage.ACCOUNT_CLOUD -> "Account & Cloud"
                                         SettingsPage.APPEARANCE -> "Appearance"
                                         SettingsPage.SECURITY -> "Security"
@@ -465,15 +506,14 @@ fun SettingsDrawer(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
-                                Text(
-                                    text = when (currentPage) {
-                                        SettingsPage.ROOT -> "Fluffy"
-                                        else -> if (isArabic) "الإعدادات" else "Settings"
-                                    },
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = subTextColor
-                                )
+                                if (currentPage != SettingsPage.ROOT) {
+                                    Text(
+                                        text = tr("الإعدادات", "Paramètres", "Settings", "Iɣewwaṛen"),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = subTextColor
+                                    )
+                                }
                             }
                         }
 
@@ -627,7 +667,12 @@ fun SettingsDrawer(
                                                 icon = Icons.Rounded.DeleteOutline,
                                                 iconTint = tertiaryAccent,
                                                 title = "Trash",
-                                                subtitle = if (isArabic) "سلة المهملات • تحذف خلال 30 يوماً" else "Auto-deleted in 30 days",
+                                                subtitle = tr(
+                                                    "سلة المهملات • تحذف خلال 30 يوماً",
+                                                    "Suppression auto sous 30 jours",
+                                                    "Auto-deleted in 30 days",
+                                                    "Tukksa tawurmant deg 30 wussan"
+                                                ),
                                                 badgeCount = trashedCount,
                                                 textColor = textColor,
                                                 subTextColor = subTextColor,
@@ -648,7 +693,12 @@ fun SettingsDrawer(
                                                 icon = Icons.Rounded.Archive,
                                                 iconTint = primaryAccent,
                                                 title = "Archives",
-                                                subtitle = if (isArabic) "الملاحظات المؤرشفة" else "Archived notes",
+                                                subtitle = tr(
+                                                    "الملاحظات المؤرشفة",
+                                                    "Notes archivées",
+                                                    "Archived notes",
+                                                    "Tira yettwaɣebren"
+                                                ),
                                                 badgeCount = archivedCount,
                                                 textColor = textColor,
                                                 subTextColor = subTextColor,
@@ -690,9 +740,9 @@ fun SettingsDrawer(
                                                 iconTint = primaryAccent,
                                                 title = "Security",
                                                 subtitle = if (isBiometricEnabled) {
-                                                    if (isArabic) "Biometric Lock • مفعّل" else "Biometric Lock • Enabled"
+                                                    tr("Biometric Lock • مفعّل", "Verrouillage • Activé", "Biometric Lock • Enabled", "Asekkeṛ • Yermed")
                                                 } else {
-                                                    if (isArabic) "Biometric Lock • متوقف" else "Biometric Lock • Off"
+                                                    tr("Biometric Lock • متوقف", "Verrouillage • Désactivé", "Biometric Lock • Off", "Asekkeṛ • Yensa")
                                                 },
                                                 badgeCount = 0,
                                                 textColor = textColor,
@@ -707,9 +757,9 @@ fun SettingsDrawer(
 
                                     Spacer(modifier = Modifier.height(18.dp))
 
-                                    // Secondary Utilities (Audio Player, Language, Updates)
+                                    // Secondary Utilities (Language)
                                     CalmSectionLabel(
-                                        title = if (isArabic) "المزيد" else "More",
+                                        title = tr("المزيد", "Plus", "More", "Ugar"),
                                         color = subTextColor
                                     )
                                     Spacer(modifier = Modifier.height(8.dp))
@@ -722,37 +772,17 @@ fun SettingsDrawer(
                                         customFill = cardTileColor,
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
-                                        Column(modifier = Modifier.fillMaxWidth()) {
-                                            CalmNavigationRow(
-                                                icon = Icons.Rounded.GraphicEq,
-                                                iconTint = secondaryAccent,
-                                                title = if (isArabic) "قارئ التسجيلات الصوتية" else "Audio Recordings",
-                                                subtitle = if (isArabic) "تشغيل واستيراد الصوتيات" else "Play & import audio",
-                                                badgeCount = audioCount,
-                                                textColor = textColor,
-                                                subTextColor = subTextColor,
-                                                testTag = "settings_audio_player_button",
-                                                onClick = {
-                                                    onClose()
-                                                    onOpenAudioPlayer()
-                                                }
-                                            )
-
-                                            HorizontalDivider(
-                                                color = dividerColor,
-                                                modifier = Modifier.padding(horizontal = 16.dp)
-                                            )
-
-                                            CalmSettingRow(
-                                                icon = Icons.Rounded.Language,
-                                                iconTint = primaryAccent,
-                                                title = if (isArabic) "اللغة" else "Language",
-                                                subtitle = if (isArabic) "العربية" else "English",
-                                                textColor = textColor,
-                                                subTextColor = subTextColor,
-                                                onClick = onToggleLanguage
-                                            )
-                                        }
+                                        CalmNavigationRow(
+                                            icon = Icons.Rounded.Language,
+                                            iconTint = primaryAccent,
+                                            title = tr("اللغة", "Langue", "Language", "Tutlayt"),
+                                            subtitle = currentLanguage.nativeName,
+                                            badgeCount = 0,
+                                            textColor = textColor,
+                                            subTextColor = subTextColor,
+                                            testTag = "settings_language_button",
+                                            onClick = { showLanguageDialog = true }
+                                        )
                                     }
 
                                     Spacer(modifier = Modifier.height(14.dp))
@@ -1250,9 +1280,9 @@ fun SettingsDrawer(
                                                 iconTint = primaryAccent,
                                                 title = "Theme Mode",
                                                 subtitle = if (isDark) {
-                                                    if (isArabic) "الوضع الليلي" else "Dark Mode"
+                                                    tr("الوضع الليلي", "Mode sombre", "Dark Mode", "Askar abarkan")
                                                 } else {
-                                                    if (isArabic) "الوضع النهاري" else "Light Mode"
+                                                    tr("الوضع النهاري", "Mode clair", "Light Mode", "Askar aceɛlal")
                                                 },
                                                 textColor = textColor,
                                                 subTextColor = subTextColor,
@@ -1270,9 +1300,9 @@ fun SettingsDrawer(
                                                 iconTint = tertiaryAccent,
                                                 title = "Notes Layout",
                                                 subtitle = if (isGridView) {
-                                                    if (isArabic) "شبكة عمودين" else "Grid View"
+                                                    tr("شبكة عمودين", "Vue grille", "Grid View", "Timeẓri n tferkit")
                                                 } else {
-                                                    if (isArabic) "قائمة عمودية" else "List View"
+                                                    tr("قائمة عمودية", "Vue liste", "List View", "Timeẓri n tebdart")
                                                 },
                                                 textColor = textColor,
                                                 subTextColor = subTextColor,
@@ -1283,6 +1313,7 @@ fun SettingsDrawer(
                                 }
 
                                 SettingsPage.SECURITY -> {
+                                    // 1. App Biometric Lock
                                     LiquidGlassCard(
                                         isDark = effectiveDark,
                                         tint = GlassTint.FROST,
@@ -1328,7 +1359,12 @@ fun SettingsDrawer(
                                                             color = textColor
                                                         )
                                                         Text(
-                                                            text = if (isArabic) "حماية الملاحظات عند الفتح" else "Protect notes on launch",
+                                                            text = tr(
+                                                                "حماية الملاحظات عند الفتح",
+                                                                "Protéger les notes au lancement",
+                                                                "Protect notes on launch",
+                                                                "Mmesten tira mi ara yeldi"
+                                                            ),
                                                             fontSize = 11.5.sp,
                                                             color = subTextColor
                                                         )
@@ -1380,7 +1416,12 @@ fun SettingsDrawer(
                                                         )
                                                         Spacer(modifier = Modifier.width(6.dp))
                                                         Text(
-                                                            text = if (isArabic) "قفل التطبيق الآن" else "Lock App Now",
+                                                            text = tr(
+                                                                "قفل التطبيق الآن",
+                                                                "Verrouiller l'application",
+                                                                "Lock App Now",
+                                                                "Sekkeṛ asnas tura"
+                                                            ),
                                                             fontSize = 12.5.sp,
                                                             fontWeight = FontWeight.SemiBold,
                                                             color = primaryAccent
@@ -1390,9 +1431,570 @@ fun SettingsDrawer(
                                             }
                                         }
                                     }
+
+                                    Spacer(modifier = Modifier.height(14.dp))
+
+                                    // 2. Non-Screenshot Protection (FLAG_SECURE)
+                                    LiquidGlassCard(
+                                        isDark = effectiveDark,
+                                        tint = GlassTint.FROST,
+                                        shape = RoundedCornerShape(20.dp),
+                                        borderWidth = 1.dp,
+                                        customFill = cardTileColor,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(38.dp)
+                                                        .clip(CircleShape)
+                                                        .background(tertiaryAccent.copy(alpha = 0.14f)),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Rounded.VisibilityOff,
+                                                        contentDescription = null,
+                                                        tint = tertiaryAccent,
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.width(12.dp))
+                                                Column {
+                                                    Text(
+                                                        text = tr(
+                                                            "منع لقطة الشاشة (Non-Screenshot)",
+                                                            "Anti-Capture d'écran",
+                                                            "Non-Screenshot Protection",
+                                                            "Tagdelt n tuṭṭfa n ugdil"
+                                                        ),
+                                                        fontSize = 13.5.sp,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = textColor
+                                                    )
+                                                    Text(
+                                                        text = tr(
+                                                            "حظر التصوير والتسجيل للشاشة داخل التطبيق",
+                                                            "Bloque les captures et l'enregistrement vidéo",
+                                                            "Block screenshots & screen recording",
+                                                            "Gdel tuṭṭfa akked usekles n ugdil"
+                                                        ),
+                                                        fontSize = 11.sp,
+                                                        color = subTextColor
+                                                    )
+                                                }
+                                            }
+
+                                            Switch(
+                                                checked = isScreenshotProtectionEnabled,
+                                                onCheckedChange = onToggleScreenshotProtection,
+                                                modifier = Modifier.testTag("non_screenshot_switch"),
+                                                colors = SwitchDefaults.colors(
+                                                    checkedThumbColor = if (effectiveDark) activePreset.background else Color.White,
+                                                    checkedTrackColor = tertiaryAccent,
+                                                    uncheckedThumbColor = subTextColor,
+                                                    uncheckedTrackColor = activePreset.surfaceVariant
+                                                )
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(14.dp))
+
+                                    // 3. Vault Lock (Biometric + Passkey)
+                                    LiquidGlassCard(
+                                        isDark = effectiveDark,
+                                        tint = GlassTint.FROST,
+                                        shape = RoundedCornerShape(20.dp),
+                                        borderWidth = 1.dp,
+                                        customFill = cardTileColor,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier.weight(1f)
+                                                ) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(38.dp)
+                                                            .clip(CircleShape)
+                                                            .background(secondaryAccent.copy(alpha = 0.14f)),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Rounded.Shield,
+                                                            contentDescription = null,
+                                                            tint = secondaryAccent,
+                                                            modifier = Modifier.size(20.dp)
+                                                        )
+                                                    }
+                                                    Spacer(modifier = Modifier.width(12.dp))
+                                                    Column {
+                                                        Text(
+                                                            text = tr(
+                                                                "قفل الـ Vault (البصمة و Passkey)",
+                                                                "Verrouillage Vault (Empreinte & Passkey)",
+                                                                "Vault Lock (Biometric & Passkey)",
+                                                                "Asekkeṛ n Vault (Aḍad & Passkey)"
+                                                            ),
+                                                            fontSize = 13.5.sp,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            color = textColor
+                                                        )
+                                                        Text(
+                                                            text = if (hasVaultPasskey) {
+                                                                tr(
+                                                                    "البصمة + Passkey مهيّأ",
+                                                                    "Empreinte + Passkey configuré",
+                                                                    "Biometric + Passkey ready",
+                                                                    "Aḍad + Passkey yemmed"
+                                                                )
+                                                            } else {
+                                                                tr(
+                                                                    "يتطلب بصمة أو Passkey عند فتح الـ Vault",
+                                                                    "Protège l'accès au coffre Vault",
+                                                                    "Require Biometric or Passkey for Vault",
+                                                                    "Yesra aḍad neɣ Passkey i Vault"
+                                                                )
+                                                            },
+                                                            fontSize = 11.sp,
+                                                            color = subTextColor
+                                                        )
+                                                    }
+                                                }
+
+                                                Switch(
+                                                    checked = isVaultLockEnabled,
+                                                    onCheckedChange = { enable ->
+                                                        if (enable && !hasVaultPasskey) {
+                                                            showPasskeySetupDialog = true
+                                                        } else {
+                                                            onToggleVaultLock(enable)
+                                                        }
+                                                    },
+                                                    modifier = Modifier.testTag("vault_lock_switch"),
+                                                    colors = SwitchDefaults.colors(
+                                                        checkedThumbColor = if (effectiveDark) activePreset.background else Color.White,
+                                                        checkedTrackColor = secondaryAccent,
+                                                        uncheckedThumbColor = subTextColor,
+                                                        uncheckedTrackColor = activePreset.surfaceVariant
+                                                    )
+                                                )
+                                            }
+
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .defaultMinSize(minHeight = 44.dp)
+                                                    .testTag("change_vault_passkey_button")
+                                                    .clip(RoundedCornerShape(14.dp))
+                                                    .background(secondaryAccent.copy(alpha = 0.14f))
+                                                    .clickable(
+                                                        interactionSource = remember { MutableInteractionSource() },
+                                                        indication = ripple(bounded = true)
+                                                    ) {
+                                                        showPasskeySetupDialog = true
+                                                    }
+                                                    .padding(vertical = 10.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.Key,
+                                                    contentDescription = null,
+                                                    tint = secondaryAccent,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = if (hasVaultPasskey) {
+                                                        tr(
+                                                            "تغيير Passkey للخزنة",
+                                                            "Modifier le Passkey du Vault",
+                                                            "Change Vault Passkey",
+                                                            "Beddel Passkey n Vault"
+                                                        )
+                                                    } else {
+                                                        tr(
+                                                            "تعيين Passkey للخزنة",
+                                                            "Configurer le Passkey du Vault",
+                                                            "Set Vault Passkey",
+                                                            "Sbadu Passkey n Vault"
+                                                        )
+                                                    },
+                                                    fontSize = 12.5.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = secondaryAccent
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    // 4-Language Selector Dialog (Arabic, French, English, Algerian Amazigh)
+    if (showLanguageDialog) {
+        LanguagePickerDialog(
+            currentLanguage = currentLanguage,
+            effectiveDark = effectiveDark,
+            surfaceColor = activePreset.surface,
+            textColor = textColor,
+            subTextColor = subTextColor,
+            primaryAccent = primaryAccent,
+            dividerColor = dividerColor,
+            onSelect = { selected ->
+                onSelectLanguage(selected)
+                showLanguageDialog = false
+            },
+            onDismiss = { showLanguageDialog = false }
+        )
+    }
+
+    // Vault Passkey Setup / Update Dialog
+    if (showPasskeySetupDialog) {
+        VaultPasskeySetupDialog(
+            hasExistingPasskey = hasVaultPasskey,
+            effectiveDark = effectiveDark,
+            surfaceColor = activePreset.surface,
+            textColor = textColor,
+            subTextColor = subTextColor,
+            primaryAccent = secondaryAccent,
+            onSavePasskey = { newPasskey ->
+                onSetVaultPasskey(newPasskey)
+                showPasskeySetupDialog = false
+            },
+            onDismiss = { showPasskeySetupDialog = false }
+        )
+    }
+}
+
+@Composable
+private fun LanguagePickerDialog(
+    currentLanguage: AppLanguage,
+    effectiveDark: Boolean,
+    surfaceColor: Color,
+    textColor: Color,
+    subTextColor: Color,
+    primaryAccent: Color,
+    dividerColor: Color,
+    onSelect: (AppLanguage) -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        LiquidGlassCard(
+            isDark = effectiveDark,
+            tint = GlassTint.FROST,
+            shape = RoundedCornerShape(26.dp),
+            borderWidth = 1.4.dp,
+            customFill = surfaceColor.copy(alpha = 0.96f),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("language_picker_dialog")
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(primaryAccent.copy(alpha = 0.16f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Language,
+                            contentDescription = null,
+                            tint = primaryAccent,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = tr("اختر اللغة", "Choisir la langue", "Choose Language", "Fren tutlayt"),
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = textColor
+                        )
+                        Text(
+                            text = tr(
+                                "4 لغات متوفرة",
+                                "4 langues disponibles",
+                                "4 languages available",
+                                "4 n tutlayin yellan"
+                            ),
+                            fontSize = 11.5.sp,
+                            color = subTextColor
+                        )
+                    }
+                }
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    AppLanguage.entries.forEach { lang ->
+                        val selected = lang == currentLanguage
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .defaultMinSize(minHeight = 52.dp)
+                                .testTag("language_option_${lang.code}")
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(
+                                    if (selected) primaryAccent.copy(alpha = 0.16f)
+                                    else subTextColor.copy(alpha = 0.08f)
+                                )
+                                .border(
+                                    width = if (selected) 1.5.dp else 0.75.dp,
+                                    color = if (selected) primaryAccent else dividerColor,
+                                    shape = RoundedCornerShape(16.dp)
+                                )
+                                .clickable { onSelect(lang) }
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .clip(CircleShape)
+                                        .background(
+                                            if (selected) primaryAccent else subTextColor.copy(alpha = 0.16f)
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = lang.shortBadge,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (selected) Color.White else textColor
+                                    )
+                                }
+                                Column {
+                                    Text(
+                                        text = lang.nativeName,
+                                        fontSize = 14.sp,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+                                        color = textColor
+                                    )
+                                    Text(
+                                        text = lang.localizedSubtitle(currentLanguage),
+                                        fontSize = 11.5.sp,
+                                        color = subTextColor
+                                    )
+                                }
+                            }
+
+                            if (selected) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Check,
+                                    contentDescription = "Selected",
+                                    tint = primaryAccent,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VaultPasskeySetupDialog(
+    hasExistingPasskey: Boolean,
+    effectiveDark: Boolean,
+    surfaceColor: Color,
+    textColor: Color,
+    subTextColor: Color,
+    primaryAccent: Color,
+    onSavePasskey: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var passkey by remember { mutableStateOf("") }
+    var confirmPasskey by remember { mutableStateOf("") }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        LiquidGlassCard(
+            isDark = effectiveDark,
+            tint = GlassTint.FROST,
+            shape = RoundedCornerShape(26.dp),
+            borderWidth = 1.4.dp,
+            customFill = surfaceColor.copy(alpha = 0.96f),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("vault_passkey_setup_dialog")
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(primaryAccent.copy(alpha = 0.16f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Key,
+                            contentDescription = null,
+                            tint = primaryAccent,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = if (hasExistingPasskey) {
+                                tr("تغيير Passkey للخزنة", "Modifier le Passkey", "Change Vault Passkey", "Beddel Passkey n Vault")
+                            } else {
+                                tr("إعداد Passkey للخزنة", "Configurer le Passkey", "Set Vault Passkey", "Sbadu Passkey n Vault")
+                            },
+                            fontSize = 15.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = textColor
+                        )
+                        Text(
+                            text = tr(
+                                "أدخل 4 رموز أو أرقام على الأقل",
+                                "Au moins 4 caractères",
+                                "Minimum 4 characters or digits",
+                                "Mačči ddaw 4 yisekkilen"
+                            ),
+                            fontSize = 11.5.sp,
+                            color = subTextColor
+                        )
+                    }
+                }
+
+                OutlinedTextField(
+                    value = passkey,
+                    onValueChange = {
+                        passkey = it
+                        errorMsg = null
+                    },
+                    label = {
+                        Text(tr("Passkey الجديد", "Nouveau Passkey", "New Passkey", "Passkey amaynut"))
+                    },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = primaryAccent,
+                        focusedLabelColor = primaryAccent,
+                        focusedTextColor = textColor,
+                        unfocusedTextColor = textColor
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("vault_passkey_input")
+                )
+
+                OutlinedTextField(
+                    value = confirmPasskey,
+                    onValueChange = {
+                        confirmPasskey = it
+                        errorMsg = null
+                    },
+                    label = {
+                        Text(tr("تأكيد Passkey", "Confirmer le Passkey", "Confirm Passkey", "Sentem Passkey"))
+                    },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = primaryAccent,
+                        focusedLabelColor = primaryAccent,
+                        focusedTextColor = textColor,
+                        unfocusedTextColor = textColor
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("vault_passkey_confirm_input")
+                )
+
+                if (!errorMsg.isNullOrBlank()) {
+                    Text(
+                        text = errorMsg!!,
+                        fontSize = 12.sp,
+                        color = Color(0xFFEF4444)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text(
+                            text = tr("إلغاء", "Annuler", "Cancel", "Sefsex"),
+                            color = subTextColor
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val clean = passkey.trim()
+                            when {
+                                clean.length < 4 -> errorMsg = "Min 4 characters required"
+                                clean != confirmPasskey.trim() -> errorMsg = "Passkeys do not match"
+                                else -> onSavePasskey(clean)
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = primaryAccent),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.testTag("vault_passkey_save_button")
+                    ) {
+                        Text(
+                            text = tr("حفظ وتفعيل", "Enregistrer", "Save & Enable", "Sekles"),
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }

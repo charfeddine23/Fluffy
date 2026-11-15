@@ -18,8 +18,10 @@ import com.example.data.storage.AudioStorageManager
 import com.example.data.storage.FluffySettingsSnapshot
 import com.example.data.storage.LocalDeviceStorageManager
 import com.example.drive.DriveAutoBackupWorker
+import com.example.ui.theme.AppLanguage
 import com.example.ui.theme.AppThemePreset
 import com.example.ui.theme.AppThemeRegistry
+import com.example.ui.theme.translateText
 import com.example.update.AppUpdateManager
 import com.example.update.ReleaseUpdateInfo
 import com.example.update.UpdateUiState
@@ -46,7 +48,14 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
 
     // App Preferences (Persisted across restarts, literal phone storage & Cloud Firestore)
     val isDarkMode = MutableStateFlow(prefs.getBoolean("is_dark_mode", true))
-    val isArabic = MutableStateFlow(prefs.getBoolean("is_arabic", true))
+    private val initialIsArabic = prefs.getBoolean("is_arabic", true)
+    val appLanguage = MutableStateFlow(
+        AppLanguage.fromCode(
+            code = prefs.getString("app_language_code", if (initialIsArabic) "ar" else "en"),
+            fallbackArabic = initialIsArabic
+        )
+    )
+    val isArabic = MutableStateFlow(appLanguage.value == AppLanguage.ARABIC)
     val isGridView = MutableStateFlow(prefs.getBoolean("is_grid_view", true))
     val selectedThemeId = MutableStateFlow(
         prefs.getString(
@@ -55,12 +64,21 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         ) ?: AppThemePreset.DEFAULT_DARK_ID
     )
 
-    // Biometric Authentication & App Lock
+    // Biometric Authentication, App Lock, Non-Screenshot & Vault Lock (Biometric + Passkey)
     val isBiometricEnabled = MutableStateFlow(prefs.getBoolean("biometric_enabled", false))
     val isAppLocked = MutableStateFlow(prefs.getBoolean("biometric_enabled", false))
+    val isScreenshotProtectionEnabled = MutableStateFlow(prefs.getBoolean("non_screenshot_enabled", false))
+    val isVaultLockEnabled = MutableStateFlow(prefs.getBoolean("vault_lock_enabled", false))
+    val hasVaultPasskey = MutableStateFlow(!prefs.getString("vault_passkey_hash", "").isNullOrBlank())
+    val isVaultUnlockedForSession = MutableStateFlow(false)
+
+    private var openedTrashFromSettings = false
+    private var openedArchiveFromSettings = false
+    private var openedThemesFromSettings = false
 
     // Settings Drawer, Themes Gallery, Trash, Archive, Audio Player & Account Profile
     val isSettingsDrawerOpen = MutableStateFlow(false)
+    val requestedSettingsPage = MutableStateFlow<String?>(null)
     val isThemesScreenOpen = MutableStateFlow(false)
     val isTrashScreenOpen = MutableStateFlow(false)
     val isArchiveScreenOpen = MutableStateFlow(false)
@@ -483,7 +501,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         persistSettingsSnapshot(syncToCloud = true)
     }
 
-    fun openThemesScreen() {
+    fun openThemesScreen(fromSettings: Boolean = false) {
+        openedThemesFromSettings = fromSettings || isSettingsDrawerOpen.value
         isSettingsDrawerOpen.value = false
         isTrashScreenOpen.value = false
         isArchiveScreenOpen.value = false
@@ -494,9 +513,19 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
 
     fun closeThemesScreen() {
         isThemesScreenOpen.value = false
+        if (openedThemesFromSettings) {
+            openedThemesFromSettings = false
+            requestedSettingsPage.value = "APPEARANCE"
+            isSettingsDrawerOpen.value = true
+        }
     }
 
-    fun openTrashScreen() {
+    fun clearRequestedSettingsPage() {
+        requestedSettingsPage.value = null
+    }
+
+    fun openTrashScreen(fromSettings: Boolean = false) {
+        openedTrashFromSettings = fromSettings || isSettingsDrawerOpen.value
         isSettingsDrawerOpen.value = false
         isThemesScreenOpen.value = false
         isArchiveScreenOpen.value = false
@@ -510,9 +539,14 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
 
     fun closeTrashScreen() {
         isTrashScreenOpen.value = false
+        if (openedTrashFromSettings) {
+            openedTrashFromSettings = false
+            isSettingsDrawerOpen.value = true
+        }
     }
 
-    fun openArchiveScreen() {
+    fun openArchiveScreen(fromSettings: Boolean = false) {
+        openedArchiveFromSettings = fromSettings || isSettingsDrawerOpen.value
         isSettingsDrawerOpen.value = false
         isThemesScreenOpen.value = false
         isTrashScreenOpen.value = false
@@ -523,6 +557,10 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
 
     fun closeArchiveScreen() {
         isArchiveScreenOpen.value = false
+        if (openedArchiveFromSettings) {
+            openedArchiveFromSettings = false
+            isSettingsDrawerOpen.value = true
+        }
     }
 
     fun openAccountScreen() {
@@ -722,11 +760,20 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun toggleLanguage() {
-        val next = !isArabic.value
-        isArabic.value = next
-        prefs.edit().putBoolean("is_arabic", next).apply()
+    fun setAppLanguage(language: AppLanguage) {
+        val arabicFlag = language == AppLanguage.ARABIC
+        appLanguage.value = language
+        isArabic.value = arabicFlag
+        prefs.edit()
+            .putString("app_language_code", language.code)
+            .putBoolean("is_arabic", arabicFlag)
+            .apply()
         persistSettingsSnapshot(syncToCloud = true)
+    }
+
+    fun toggleLanguage() {
+        val next = if (appLanguage.value == AppLanguage.ARABIC) AppLanguage.ENGLISH else AppLanguage.ARABIC
+        setAppLanguage(next)
     }
 
     fun toggleViewMode() {
@@ -753,7 +800,9 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         isBiometricEnabled = isBiometricEnabled.value,
         selectedCategory = selectedCategory.value,
         cloudSyncEnabled = true,
-        selectedThemeId = selectedThemeId.value
+        selectedThemeId = selectedThemeId.value,
+        appLanguageCode = appLanguage.value.code,
+        nonScreenshotEnabled = isScreenshotProtectionEnabled.value
     )
 
     private fun persistSettingsSnapshot(syncToCloud: Boolean = true) {
@@ -775,18 +824,25 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun applyRestoredSettings(s: FluffySettingsSnapshot, fromRemote: Boolean) {
         val resolvedTheme = AppThemeRegistry.resolve(s.selectedThemeId, s.isDarkMode)
+        val resolvedLanguage = AppLanguage.fromCode(s.appLanguageCode, fallbackArabic = s.isArabic)
+        val arabicFlag = resolvedLanguage == AppLanguage.ARABIC
+
         isDarkMode.value = s.isDarkMode
-        isArabic.value = s.isArabic
+        appLanguage.value = resolvedLanguage
+        isArabic.value = arabicFlag
         isGridView.value = s.isGridView
         isBiometricEnabled.value = s.isBiometricEnabled
+        isScreenshotProtectionEnabled.value = s.nonScreenshotEnabled
         selectedCategory.value = s.selectedCategory
         selectedThemeId.value = resolvedTheme.id
 
         prefs.edit()
             .putBoolean("is_dark_mode", s.isDarkMode)
-            .putBoolean("is_arabic", s.isArabic)
+            .putBoolean("is_arabic", arabicFlag)
+            .putString("app_language_code", resolvedLanguage.code)
             .putBoolean("is_grid_view", s.isGridView)
             .putBoolean("biometric_enabled", s.isBiometricEnabled)
+            .putBoolean("non_screenshot_enabled", s.nonScreenshotEnabled)
             .putString("selected_category", s.selectedCategory)
             .putString("selected_theme_id", resolvedTheme.id)
             .apply()
@@ -838,6 +894,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         content: String,
         category: String,
         colorPreset: String,
+        backgroundId: String = "none",
+        customColorArgb: Long = 0L,
         isPinned: Boolean,
         isFavorite: Boolean,
         checklist: List<ChecklistItem>,
@@ -868,6 +926,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                     content = content,
                     category = category.ifBlank { if (isArabic.value) "عام" else "General" },
                     colorPreset = colorPreset,
+                    backgroundId = backgroundId,
+                    customColorArgb = customColorArgb,
                     isPinned = isPinned,
                     isFavorite = isFavorite,
                     checklistJson = ChecklistItem.listToJson(activeChecklist),
@@ -891,6 +951,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         content: String,
         category: String,
         colorPreset: String,
+        backgroundId: String = "none",
+        customColorArgb: Long = 0L,
         isPinned: Boolean,
         isFavorite: Boolean,
         checklist: List<ChecklistItem>,
@@ -921,6 +983,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                     content = content,
                     category = category.ifBlank { if (isArabic.value) "عام" else "General" },
                     colorPreset = colorPreset,
+                    backgroundId = backgroundId,
+                    customColorArgb = customColorArgb,
                     isPinned = isPinned,
                     isFavorite = isFavorite,
                     checklistJson = ChecklistItem.listToJson(activeChecklist),
@@ -1719,6 +1783,80 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         persistSettingsSnapshot(syncToCloud = true)
     }
 
+    fun setScreenshotProtectionEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("non_screenshot_enabled", enabled).apply()
+        isScreenshotProtectionEnabled.value = enabled
+        persistSettingsSnapshot(syncToCloud = true)
+        showSnackbar(
+            translateText(
+                appLanguage.value,
+                ar = if (enabled) "تم تفعيل حماية منع لقطة الشاشة 🔒" else "تم إيقاف منع لقطة الشاشة",
+                fr = if (enabled) "Protection anti-capture activée 🔒" else "Protection anti-capture désactivée",
+                en = if (enabled) "Screenshot protection enabled 🔒" else "Screenshot protection disabled",
+                tzm = if (enabled) "Ammesten mgal tuṭṭfa n ugdil yermed 🔒" else "Ammesten mgal tuṭṭfa n ugdil yensa"
+            )
+        )
+    }
+
+    private fun hashPasskey(raw: String): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        val salted = "fluffy_vault_passkey_v1::$raw"
+        return digest.digest(salted.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    }
+
+    fun setVaultPasskey(passkey: String) {
+        val clean = passkey.trim()
+        if (clean.length < 4) return
+        val hashed = hashPasskey(clean)
+        prefs.edit()
+            .putString("vault_passkey_hash", hashed)
+            .putBoolean("vault_lock_enabled", true)
+            .apply()
+        hasVaultPasskey.value = true
+        isVaultLockEnabled.value = true
+        showSnackbar(
+            translateText(
+                appLanguage.value,
+                ar = "تم تفعيل قفل الـ Vault بالبصمة و Passkey 🔐",
+                fr = "Verrouillage Vault (Empreinte & Passkey) activé 🔐",
+                en = "Vault Biometric & Passkey lock enabled 🔐",
+                tzm = "Asekkeṛ n Vault s uḍad & Passkey yermed 🔐"
+            )
+        )
+    }
+
+    fun setVaultLockEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("vault_lock_enabled", enabled).apply()
+        isVaultLockEnabled.value = enabled
+        if (!enabled) {
+            isVaultUnlockedForSession.value = true
+        }
+        showSnackbar(
+            translateText(
+                appLanguage.value,
+                ar = if (enabled) "تم تفعيل قفل الـ Vault 🔐" else "تم إيقاف قفل الـ Vault",
+                fr = if (enabled) "Verrouillage Vault activé 🔐" else "Verrouillage Vault désactivé",
+                en = if (enabled) "Vault lock enabled 🔐" else "Vault lock disabled",
+                tzm = if (enabled) "Asekkeṛ n Vault yermed 🔐" else "Asekkeṛ n Vault yensa"
+            )
+        )
+    }
+
+    fun verifyVaultPasskey(input: String): Boolean {
+        val stored = prefs.getString("vault_passkey_hash", "") ?: ""
+        if (stored.isBlank()) return false
+        val matches = stored == hashPasskey(input.trim())
+        if (matches) {
+            isVaultUnlockedForSession.value = true
+        }
+        return matches
+    }
+
+    fun markVaultUnlocked() {
+        isVaultUnlockedForSession.value = true
+    }
+
     fun lockApp() {
         if (isBiometricEnabled.value) {
             isAppLocked.value = true
@@ -1739,11 +1877,13 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
 
     fun openVault() {
         isSettingsDrawerOpen.value = false
+        isVaultUnlockedForSession.value = !isVaultLockEnabled.value
         isVaultOpen.value = true
     }
 
     fun closeVault() {
         isVaultOpen.value = false
+        isVaultUnlockedForSession.value = false
     }
 
     fun showSnackbar(message: String) {

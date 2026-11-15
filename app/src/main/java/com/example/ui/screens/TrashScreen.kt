@@ -54,11 +54,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.GlassTint
+import com.example.data.model.NoteBackgroundCanvas
+import com.example.data.model.NoteBackgroundCatalog
 import com.example.data.model.NoteEntity
 import com.example.ui.glass.FrostedBackdrop
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.glass.liquidGlass
 import com.example.ui.theme.LocalAppThemePreset
+import com.example.ui.theme.tr
 import com.example.viewmodel.FluffyViewModel
 import kotlin.math.ceil
 
@@ -119,7 +122,7 @@ fun TrashScreen(
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = if (isArabic) "رجوع" else "Back",
+                            contentDescription = tr("رجوع", "Retour", "Back", "Uɣal"),
                             tint = textColor,
                             modifier = Modifier.size(21.dp)
                         )
@@ -127,14 +130,19 @@ fun TrashScreen(
 
                     Column {
                         Text(
-                            text = if (isArabic) "سلة المهملات" else "Trash",
+                            text = tr("سلة المهملات", "Corbeille", "Trash", "Taqecwalt"),
                             style = MaterialTheme.typography.titleLarge.copy(
                                 fontWeight = FontWeight.ExtraBold,
                                 color = textColor
                             )
                         )
                         Text(
-                            text = if (isArabic) "${trashedNotes.size} عنصر" else "${trashedNotes.size} items",
+                            text = tr(
+                                "${trashedNotes.size} عنصر",
+                                "${trashedNotes.size} éléments",
+                                "${trashedNotes.size} items",
+                                "${trashedNotes.size} n iferdisen"
+                            ),
                             fontSize = 11.5.sp,
                             color = metaColor
                         )
@@ -157,12 +165,12 @@ fun TrashScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.DeleteSweep,
-                            contentDescription = if (isArabic) "تفريغ السلة" else "Empty Trash",
+                            contentDescription = tr("تفريغ السلة", "Vider", "Empty Trash", "Sfeḍ taqecwalt"),
                             tint = Color(0xFFEF4444),
                             modifier = Modifier.size(18.dp)
                         )
                         Text(
-                            text = if (isArabic) "تفريغ السلة" else "Empty Trash",
+                            text = tr("تفريغ السلة", "Vider", "Empty Trash", "Sfeḍ"),
                             fontSize = 12.5.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFFEF4444)
@@ -196,10 +204,12 @@ fun TrashScreen(
                         modifier = Modifier.size(20.dp)
                     )
                     Text(
-                        text = if (isArabic)
-                            "تُحذف الملاحظات المحذوفة تلقائياً ونهائياً بعد مرور 30 يوماً إذا لم يتم تفريغ السلة يدوياً."
-                        else
+                        text = tr(
+                            "تُحذف الملاحظات المحذوفة تلقائياً ونهائياً بعد مرور 30 يوماً إذا لم يتم تفريغ السلة يدوياً.",
+                            "Les éléments de la corbeille sont supprimés définitivement après 30 jours.",
                             "Items in Trash are automatically permanently deleted after 30 days.",
+                            "Iferdisen deg tqecwalt ttwakksen i lebda seld 30 n wussan."
+                        ),
                         fontSize = 11.5.sp,
                         color = metaColor,
                         lineHeight = 16.sp
@@ -228,16 +238,18 @@ fun TrashScreen(
                             modifier = Modifier.size(56.dp)
                         )
                         Text(
-                            text = if (isArabic) "سلة المهملات فارغة" else "Trash is empty",
+                            text = tr("سلة المهملات فارغة", "La corbeille est vide", "Trash is empty", "Taqecwalt d tilemt"),
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
                             color = textColor
                         )
                         Text(
-                            text = if (isArabic)
-                                "أي ملاحظة تقوم بحذفها ستظهر هنا لمدة 30 يوماً قبل المسح النهائي."
-                            else
+                            text = tr(
+                                "أي ملاحظة تقوم بحذفها ستظهر هنا لمدة 30 يوماً قبل المسح النهائي.",
+                                "Les notes supprimées restent ici pendant 30 jours avant suppression définitive.",
                                 "Deleted notes stay here for 30 days before permanent removal.",
+                                "Tira yettwakksen ttaqqiment dagi 30 n wussan send tukksa n lebda."
+                            ),
                             fontSize = 12.5.sp,
                             color = metaColor,
                             textAlign = TextAlign.Center
@@ -266,14 +278,34 @@ fun TrashScreen(
                             .toInt()
                             .coerceIn(0, 30)
 
+                        val cardTint = GlassTint.fromId(note.colorPreset)
+                        val cardBg = NoteBackgroundCatalog.findById(note.backgroundId)
+                        val cardFill = if (note.customColorArgb != 0L) {
+                            Color(note.customColorArgb.toInt()).copy(alpha = if (isDark) 0.90f else 0.95f)
+                        } else null
+                        val cardSurface = NoteBackgroundCatalog.resolveSurfaceColors(
+                            themeIsDark = isDark,
+                            tint = cardTint,
+                            customColorArgb = note.customColorArgb,
+                            backgroundId = note.backgroundId
+                        )
+
                         LiquidGlassCard(
-                            isDark = isDark,
-                            tint = GlassTint.fromId(note.colorPreset),
+                            isDark = cardSurface.effectiveDark,
+                            tint = cardTint,
                             shape = RoundedCornerShape(20.dp),
                             borderWidth = 1.2.dp,
+                            customFill = if (cardBg != null) Color.Transparent else cardFill,
                             testTag = "trash_note_card_${note.id}",
                             modifier = Modifier.fillMaxWidth()
                         ) {
+                            if (cardBg != null) {
+                                NoteBackgroundCanvas(
+                                    preset = cardBg,
+                                    isCompactCard = true,
+                                    modifier = Modifier.matchParentSize()
+                                )
+                            }
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -289,7 +321,7 @@ fun TrashScreen(
                                         text = note.category,
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = activePreset.primary
+                                        color = cardSurface.accentColor
                                     )
                                     Box(
                                         modifier = Modifier
@@ -311,7 +343,7 @@ fun TrashScreen(
                                         text = note.title,
                                         fontSize = 15.5.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = textColor,
+                                        color = cardSurface.titleColor,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )

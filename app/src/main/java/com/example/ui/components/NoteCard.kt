@@ -46,6 +46,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.ChecklistItem
 import com.example.data.model.GlassTint
+import com.example.data.model.NoteBackgroundCanvas
+import com.example.data.model.NoteBackgroundCatalog
 import com.example.data.model.NoteEntity
 import com.example.data.storage.AudioCloudPolicy
 import com.example.ui.glass.LiquidGlassCard
@@ -68,16 +70,34 @@ fun NoteCard(
     modifier: Modifier = Modifier
 ) {
     val glassTint = GlassTint.fromId(note.colorPreset)
+    val bgPreset = remember(note.backgroundId) { NoteBackgroundCatalog.findById(note.backgroundId) }
+    val customFillColor = remember(note.customColorArgb, isDark) {
+        if (note.customColorArgb != 0L) {
+            Color(note.customColorArgb.toInt()).copy(alpha = if (isDark) 0.90f else 0.96f)
+        } else {
+            null
+        }
+    }
+    val surfaceColors = remember(isDark, glassTint, note.customColorArgb, note.backgroundId) {
+        NoteBackgroundCatalog.resolveSurfaceColors(
+            themeIsDark = isDark,
+            tint = glassTint,
+            customColorArgb = note.customColorArgb,
+            backgroundId = note.backgroundId
+        )
+    }
+
     val checklistItems = remember(note.checklistJson) {
         ChecklistItem.jsonToList(note.checklistJson)
     }
 
-    val titleColor = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
-    val bodyColor = if (isDark) Color(0xFFCBD5E1) else Color(0xFF334155)
-    val metaColor = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
+    val titleColor = surfaceColors.titleColor
+    val bodyColor = surfaceColors.bodyColor
+    val metaColor = surfaceColors.metaColor
+    val cardAccent = surfaceColors.accentColor
 
     LiquidGlassCard(
-        isDark = isDark,
+        isDark = surfaceColors.effectiveDark,
         tint = glassTint,
         shape = RoundedCornerShape(22.dp),
         borderWidth = when {
@@ -85,10 +105,27 @@ fun NoteCard(
             note.isPinned -> 2.2.dp
             else -> 1.4.dp
         },
+        customFill = if (bgPreset != null) Color.Transparent else customFillColor,
         onClick = onClick,
         testTag = "note_card_${note.id}",
         modifier = modifier.fillMaxWidth()
     ) {
+        if (bgPreset != null) {
+            NoteBackgroundCanvas(
+                preset = bgPreset,
+                isCompactCard = true,
+                modifier = Modifier.matchParentSize()
+            )
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(
+                        if (bgPreset.isDarkSurface) Color(0xFF020617).copy(alpha = 0.24f)
+                        else Color.White.copy(alpha = 0.22f)
+                    )
+            )
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -105,8 +142,8 @@ fun NoteCard(
                     modifier = Modifier
                         .clip(CircleShape)
                         .background(
-                            if (isDark) glassTint.accentColor.copy(alpha = 0.25f)
-                            else glassTint.accentColor.copy(alpha = 0.15f)
+                            if (surfaceColors.effectiveDark) cardAccent.copy(alpha = 0.26f)
+                            else cardAccent.copy(alpha = 0.16f)
                         )
                         .padding(horizontal = 10.dp, vertical = 4.dp)
                 ) {
@@ -114,7 +151,7 @@ fun NoteCard(
                         text = note.category,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
-                        color = glassTint.accentColor
+                        color = cardAccent
                     )
                 }
 
@@ -238,8 +275,8 @@ fun NoteCard(
                         .fillMaxWidth()
                         .height(4.dp)
                         .clip(CircleShape),
-                    color = glassTint.accentColor,
-                    trackColor = if (isDark) Color(0x22FFFFFF) else Color(0x18000000)
+                    color = cardAccent,
+                    trackColor = if (surfaceColors.effectiveDark) Color(0x22FFFFFF) else Color(0x18000000)
                 )
                 Spacer(modifier = Modifier.height(8.dp))
 
@@ -258,7 +295,7 @@ fun NoteCard(
                         Icon(
                             imageVector = if (item.isDone) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
                             contentDescription = if (item.isDone) "Done" else "Pending",
-                            tint = if (item.isDone) glassTint.accentColor else metaColor,
+                            tint = if (item.isDone) cardAccent else metaColor,
                             modifier = Modifier.size(17.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
@@ -278,7 +315,7 @@ fun NoteCard(
                         text = if (isArabic) "+ ${checklistItems.size - 3} مهام إضافية..." else "+ ${checklistItems.size - 3} more items...",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium,
-                        color = glassTint.accentColor,
+                        color = cardAccent,
                         modifier = Modifier.padding(top = 2.dp)
                     )
                 }

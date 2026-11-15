@@ -247,6 +247,8 @@ object FirebaseSyncRepository {
             "content" to note.content,
             "category" to note.category,
             "colorPreset" to note.colorPreset,
+            "backgroundId" to note.backgroundId,
+            "customColorArgb" to note.customColorArgb,
             "isPinned" to note.isPinned,
             "isFavorite" to note.isFavorite,
             "isArchived" to note.isArchived,
@@ -370,6 +372,8 @@ object FirebaseSyncRepository {
             "selectedCategory" to settings.selectedCategory,
             "cloudSyncEnabled" to settings.cloudSyncEnabled,
             "selectedThemeId" to settings.selectedThemeId,
+            "appLanguageCode" to settings.appLanguageCode,
+            "nonScreenshotEnabled" to settings.nonScreenshotEnabled,
             "updatedAt" to updatedAt,
             "serverUpdatedAt" to FieldValue.serverTimestamp()
         )
@@ -518,6 +522,8 @@ object FirebaseSyncRepository {
             content = getString("content") ?: "",
             category = getString("category") ?: "Ideas",
             colorPreset = getString("colorPreset") ?: "frost",
+            backgroundId = getString("backgroundId") ?: "none",
+            customColorArgb = getLong("customColorArgb") ?: 0L,
             isPinned = getBoolean("isPinned") ?: false,
             isFavorite = getBoolean("isFavorite") ?: false,
             isArchived = getBoolean("isArchived") ?: false,
@@ -537,15 +543,19 @@ object FirebaseSyncRepository {
     private fun DocumentSnapshot.toSettingsPayloadOrNull(): RemoteSettingsPayload? {
         if (!exists()) return null
         val isDark = getBoolean("isDarkMode") ?: true
+        val arabic = getBoolean("isArabic") ?: true
         val snapshot = FluffySettingsSnapshot(
             isDarkMode = isDark,
-            isArabic = getBoolean("isArabic") ?: true,
+            isArabic = arabic,
             isGridView = getBoolean("isGridView") ?: true,
             isBiometricEnabled = getBoolean("isBiometricEnabled") ?: false,
             selectedCategory = getString("selectedCategory") ?: "ALL",
             cloudSyncEnabled = getBoolean("cloudSyncEnabled") ?: true,
             selectedThemeId = getString("selectedThemeId")
-                ?: if (isDark) "obsidian_liquid_glass" else "frosted_arctic_glass"
+                ?: if (isDark) "obsidian_liquid_glass" else "frosted_arctic_glass",
+            appLanguageCode = getString("appLanguageCode")
+                ?: if (arabic) "ar" else "en",
+            nonScreenshotEnabled = getBoolean("nonScreenshotEnabled") ?: false
         )
         return RemoteSettingsPayload(
             snapshot = snapshot,

@@ -44,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -57,6 +58,7 @@ import com.example.data.repository.CloudSyncStatus
 import com.example.data.repository.FirebaseUserInfo
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.glass.liquidGlass
+import com.example.ui.theme.LocalAppThemePreset
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -89,9 +91,15 @@ fun FirebaseAuthDialog(
         }
     }
 
-    val textColor = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
-    val metaColor = if (isDark) Color(0xFF94A3B8) else Color(0xFF475569)
-    val cardFill = if (isDark) Color(0xFF0F172A).copy(alpha = 0.90f) else Color.White.copy(alpha = 0.92f)
+    val activePreset = LocalAppThemePreset.current
+    val effectiveDark = activePreset.isDark || isDark
+    val textColor = activePreset.onSurface
+    val metaColor = activePreset.onSurfaceVariant
+    val primaryAccent = activePreset.primary
+    val secondaryAccent = activePreset.secondary
+    val cardFill = activePreset.surface.copy(alpha = if (activePreset.isGlassStyle) 0.90f else 0.96f)
+    val accentAvgLum = listOf(primaryAccent, secondaryAccent).map { it.luminance() }.average()
+    val ctaForeground = if (accentAvgLum > 0.56) Color(0xFF0F172A) else Color.White
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -100,7 +108,7 @@ fun FirebaseAuthDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.45f))
+                .background((if (effectiveDark) Color.Black else activePreset.onBackground).copy(alpha = if (effectiveDark) 0.52f else 0.28f))
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -110,8 +118,8 @@ fun FirebaseAuthDialog(
             contentAlignment = Alignment.Center
         ) {
             LiquidGlassCard(
-                isDark = isDark,
-                tint = if (currentUser != null) GlassTint.EMERALD else GlassTint.CYAN,
+                isDark = effectiveDark,
+                tint = GlassTint.FROST,
                 shape = RoundedCornerShape(28.dp),
                 borderWidth = 1.6.dp,
                 customFill = cardFill,
@@ -146,17 +154,18 @@ fun FirebaseAuthDialog(
                                 modifier = Modifier
                                     .size(42.dp)
                                     .liquidGlass(
-                                        isDark = isDark,
-                                        tint = GlassTint.CYAN,
+                                        isDark = effectiveDark,
+                                        tint = GlassTint.FROST,
                                         shape = RoundedCornerShape(14.dp),
-                                        borderWidth = 1.2.dp
+                                        borderWidth = 1.2.dp,
+                                        customFill = activePreset.surfaceVariant.copy(alpha = 0.72f)
                                     ),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = if (currentUser != null) Icons.Default.CloudDone else Icons.Default.PersonOutline,
                                     contentDescription = null,
-                                    tint = if (currentUser != null) Color(0xFF10B981) else Color(0xFF38BDF8),
+                                    tint = if (currentUser != null) Color(0xFF10B981) else primaryAccent,
                                     modifier = Modifier.size(22.dp)
                                 )
                             }
@@ -207,11 +216,11 @@ fun FirebaseAuthDialog(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .liquidGlass(
-                                    isDark = isDark,
-                                    tint = GlassTint.EMERALD,
+                                    isDark = effectiveDark,
+                                    tint = GlassTint.FROST,
                                     shape = RoundedCornerShape(18.dp),
                                     borderWidth = 1.dp,
-                                    customFill = if (isDark) Color(0xFF1E293B).copy(alpha = 0.72f) else Color(0xFFF1F5F9).copy(alpha = 0.85f)
+                                    customFill = activePreset.surfaceVariant.copy(alpha = 0.72f)
                                 )
                                 .padding(14.dp)
                         ) {
@@ -282,8 +291,8 @@ fun FirebaseAuthDialog(
                                     .testTag("auth_sync_now_button"),
                                 shape = RoundedCornerShape(14.dp),
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF0EA5E9),
-                                    contentColor = Color.White
+                                    containerColor = primaryAccent,
+                                    contentColor = ctaForeground
                                 )
                             ) {
                                 Icon(
@@ -343,7 +352,7 @@ fun FirebaseAuthDialog(
                                 .clip(RoundedCornerShape(16.dp))
                                 .background(
                                     Brush.horizontalGradient(
-                                        listOf(Color(0xFF38BDF8), Color(0xFF8B5CF6))
+                                        listOf(primaryAccent, secondaryAccent)
                                     )
                                 )
                                 .clickable(
@@ -363,13 +372,13 @@ fun FirebaseAuthDialog(
                                     CircularProgressIndicator(
                                         modifier = Modifier.size(20.dp),
                                         strokeWidth = 2.4.dp,
-                                        color = Color.White
+                                        color = ctaForeground
                                     )
                                     Text(
                                         text = if (isArabic) "جاري الاتصال بـ Google..." else "Connecting...",
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = Color.White
+                                        color = ctaForeground
                                     )
                                 }
                             } else {
@@ -381,21 +390,21 @@ fun FirebaseAuthDialog(
                                         modifier = Modifier
                                             .size(26.dp)
                                             .clip(CircleShape)
-                                            .background(Color.White.copy(alpha = 0.22f)),
+                                            .background(ctaForeground.copy(alpha = 0.18f)),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Text(
                                             text = "G",
                                             fontSize = 15.sp,
                                             fontWeight = FontWeight.ExtraBold,
-                                            color = Color.White
+                                            color = ctaForeground
                                         )
                                     }
                                     Text(
                                         text = if (isArabic) "إنشاء حساب / المتابعة عبر Google" else "Create Account / Sign in with Google",
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = Color.White
+                                        color = ctaForeground
                                     )
                                 }
                             }

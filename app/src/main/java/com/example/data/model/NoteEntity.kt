@@ -12,6 +12,8 @@ data class NoteEntity(
     val content: String = "",
     val category: String = "Ideas",
     val colorPreset: String = "frost",
+    val backgroundId: String = "none",
+    val customColorArgb: Long = 0L,
     val isPinned: Boolean = false,
     val isFavorite: Boolean = false,
     val isArchived: Boolean = false,

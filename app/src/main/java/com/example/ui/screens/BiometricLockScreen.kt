@@ -54,6 +54,7 @@ import com.example.data.model.GlassTint
 import com.example.ui.glass.FrostedBackdrop
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.glass.liquidGlass
+import com.example.ui.theme.tr
 
 @Composable
 fun BiometricLockScreen(
@@ -129,7 +130,12 @@ fun BiometricLockScreen(
                     Spacer(modifier = Modifier.height(24.dp))
 
                     Text(
-                        text = if (isArabic) "ملاحظات Fluffy محمية 🔒" else "Fluffy Notes Locked 🔒",
+                        text = tr(
+                            "ملاحظات Fluffy محمية 🔒",
+                            "Notes Fluffy verrouillées 🔒",
+                            "Fluffy Notes Locked 🔒",
+                            "Tira n Fluffy ttwasekkṛent 🔒"
+                        ),
                         style = MaterialTheme.typography.titleLarge.copy(
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 22.sp,
@@ -141,10 +147,12 @@ fun BiometricLockScreen(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
-                        text = if (isArabic)
-                            "تم تفعيل قفل البصمة لحماية خصوصية ملاحظاتك. قم بتأكيد هويتك لفتح التطبيق."
-                        else
+                        text = tr(
+                            "تم تفعيل قفل البصمة لحماية خصوصية ملاحظاتك. قم بتأكيد هويتك لفتح التطبيق.",
+                            "Le verrouillage biométrique protège vos notes privées. Authentifiez-vous pour continuer.",
                             "Biometric lock is enabled to protect your private notes. Authenticate to view your notes.",
+                            "Asekkeṛ s uḍad yermed i ummesten n tira-k. Sentem timagit-ik i wakken ad teldiḍ asnas."
+                        ),
                         style = MaterialTheme.typography.bodyMedium.copy(
                             fontSize = 13.5.sp,
                             color = metaColor,

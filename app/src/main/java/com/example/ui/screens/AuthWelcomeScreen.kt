@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -82,6 +83,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
@@ -97,20 +99,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.auth.rememberGoogleSignInController
 import com.example.ui.glass.BlurryScreenEdges
+import com.example.ui.theme.LocalAppThemePreset
 import kotlin.math.cos
 import kotlin.math.sin
-
-// Dedicated Dark Liquid Glass Login Palette
-private val DeepVoidBg = Color(0xFF0F111A)
-private val GlassCardSurface = Color(0xFF171B2A)
-private val GlassFieldSurface = Color(0xFF1E2438)
-private val RoyalBlue = Color(0xFF2563EB)
-private val ElectricIndigo = Color(0xFF4F46E5)
-private val NeonViolet = Color(0xFF9333EA)
-private val NeonMagenta = Color(0xFFC026D3)
-private val LuminousCyan = Color(0xFF38BDF8)
-private val TextPrimary = Color(0xFFF8FAFC)
-private val TextSecondary = Color(0xFF94A3B8)
 
 @Composable
 fun AuthWelcomeScreen(
@@ -134,6 +125,22 @@ fun AuthWelcomeScreen(
     )
     val isLoading = googleController.isLoading || isAuthBusy
     val focusManager = LocalFocusManager.current
+
+    val activePreset = LocalAppThemePreset.current
+    val effectiveDark = activePreset.isDark || isDark
+
+    // Dynamic palette derived strictly from the active theme preset
+    val bgBase by animateColorAsState(activePreset.background, tween(320), label = "auth_bg")
+    val cardSurface by animateColorAsState(activePreset.surface, tween(320), label = "auth_card")
+    val fieldSurface by animateColorAsState(activePreset.surfaceVariant, tween(320), label = "auth_field")
+    val primaryAccent by animateColorAsState(activePreset.primary, tween(320), label = "auth_primary")
+    val secondaryAccent by animateColorAsState(activePreset.secondary, tween(320), label = "auth_secondary")
+    val tertiaryAccent by animateColorAsState(activePreset.tertiary, tween(320), label = "auth_tertiary")
+    val textPrimary by animateColorAsState(activePreset.onSurface, tween(280), label = "auth_text")
+    val textSecondary by animateColorAsState(activePreset.onSurfaceVariant, tween(280), label = "auth_subtext")
+
+    val accentAvgLum = listOf(primaryAccent, secondaryAccent).map { it.luminance() }.average()
+    val accentForeground = if (accentAvgLum > 0.56) Color(0xFF0F172A) else Color.White
 
     var isSignUpMode by remember { mutableStateOf(false) }
     var username by remember { mutableStateOf("") }
@@ -161,8 +168,8 @@ fun AuthWelcomeScreen(
         onEmailSignUp(username, email, password, confirmPassword)
     }
 
-    // Ambient floating orbs behind the deep #0F111A glassmorphism canvas
-    val infiniteTransition = rememberInfiniteTransition(label = "dark_glass_aura")
+    // Ambient floating orbs tinted with the active theme's atmospheric orbs
+    val infiniteTransition = rememberInfiniteTransition(label = "theme_glass_aura")
     val phase1 by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 6.28318f,
@@ -185,64 +192,65 @@ fun AuthWelcomeScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(DeepVoidBg)
+            .background(bgBase)
     ) {
-        // Luminous Nebula Orbs refracted behind the glass panels
+        // Luminous Theme Orbs refracted behind the glass panels
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
+            val orbStrength = if (activePreset.isGlassStyle) 1f else 0.65f
 
-            val blueCenter = Offset(
+            val orb1Center = Offset(
                 x = w * 0.18f + cos(phase1) * (w * 0.10f),
                 y = h * 0.16f + sin(phase1) * (h * 0.06f)
             )
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        RoyalBlue.copy(alpha = 0.42f),
-                        ElectricIndigo.copy(alpha = 0.14f),
+                        activePreset.orb1.copy(alpha = 0.40f * orbStrength),
+                        primaryAccent.copy(alpha = 0.14f * orbStrength),
                         Color.Transparent
                     ),
-                    center = blueCenter,
+                    center = orb1Center,
                     radius = w * 0.72f * pulse
                 ),
-                center = blueCenter,
+                center = orb1Center,
                 radius = w * 0.72f * pulse
             )
 
-            val violetCenter = Offset(
+            val orb2Center = Offset(
                 x = w * 0.85f - sin(phase1) * (w * 0.10f),
                 y = h * 0.34f + cos(phase1) * (h * 0.08f)
             )
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        NeonViolet.copy(alpha = 0.36f),
-                        NeonMagenta.copy(alpha = 0.10f),
+                        activePreset.orb2.copy(alpha = 0.34f * orbStrength),
+                        secondaryAccent.copy(alpha = 0.10f * orbStrength),
                         Color.Transparent
                     ),
-                    center = violetCenter,
+                    center = orb2Center,
                     radius = w * 0.65f
                 ),
-                center = violetCenter,
+                center = orb2Center,
                 radius = w * 0.65f
             )
 
-            val cyanCenter = Offset(
+            val orb3Center = Offset(
                 x = w * 0.42f + cos(phase1 * 0.8f) * (w * 0.12f),
                 y = h * 0.88f
             )
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        LuminousCyan.copy(alpha = 0.16f),
-                        RoyalBlue.copy(alpha = 0.08f),
+                        activePreset.orb3.copy(alpha = 0.20f * orbStrength),
+                        tertiaryAccent.copy(alpha = 0.08f * orbStrength),
                         Color.Transparent
                     ),
-                    center = cyanCenter,
+                    center = orb3Center,
                     radius = w * 0.62f * (2f - pulse)
                 ),
-                center = cyanCenter,
+                center = orb3Center,
                 radius = w * 0.62f * (2f - pulse)
             )
         }
@@ -257,7 +265,7 @@ fun AuthWelcomeScreen(
                 .padding(horizontal = 20.dp, vertical = 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Subtle Top Language Pill
+            // Subtle Top Language Pill matching active theme
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -270,13 +278,13 @@ fun AuthWelcomeScreen(
                         .height(38.dp)
                         .testTag("welcome_language_toggle")
                         .clip(CircleShape)
-                        .background(GlassCardSurface.copy(alpha = 0.72f))
+                        .background(cardSurface.copy(alpha = if (effectiveDark) 0.76f else 0.88f))
                         .border(
                             width = 1.dp,
                             brush = Brush.horizontalGradient(
                                 listOf(
-                                    Color.White.copy(alpha = 0.22f),
-                                    NeonViolet.copy(alpha = 0.45f)
+                                    textPrimary.copy(alpha = 0.18f),
+                                    primaryAccent.copy(alpha = 0.45f)
                                 )
                             ),
                             shape = CircleShape
@@ -293,21 +301,21 @@ fun AuthWelcomeScreen(
                     Icon(
                         imageVector = Icons.Rounded.Language,
                         contentDescription = if (isArabic) "تبديل اللغة" else "Switch Language",
-                        tint = LuminousCyan,
+                        tint = primaryAccent,
                         modifier = Modifier.size(16.dp)
                     )
                     Text(
                         text = if (isArabic) "EN" else "عربي",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
-                        color = TextPrimary
+                        color = textPrimary
                     )
                 }
             }
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Main Translucent Liquid Glass Container Card
+            // Main Translucent Theme-Matched Glass Container Card
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -317,8 +325,8 @@ fun AuthWelcomeScreen(
                     .background(
                         Brush.verticalGradient(
                             colors = listOf(
-                                GlassCardSurface.copy(alpha = 0.74f),
-                                GlassCardSurface.copy(alpha = 0.58f)
+                                cardSurface.copy(alpha = if (activePreset.isGlassStyle) 0.78f else 0.94f),
+                                cardSurface.copy(alpha = if (activePreset.isGlassStyle) 0.64f else 0.90f)
                             )
                         )
                     )
@@ -326,10 +334,10 @@ fun AuthWelcomeScreen(
                         width = 1.4.dp,
                         brush = Brush.linearGradient(
                             colors = listOf(
-                                Color.White.copy(alpha = 0.28f),
-                                RoyalBlue.copy(alpha = 0.55f),
-                                NeonViolet.copy(alpha = 0.65f),
-                                Color.White.copy(alpha = 0.14f)
+                                textPrimary.copy(alpha = if (effectiveDark) 0.22f else 0.12f),
+                                primaryAccent.copy(alpha = 0.48f),
+                                secondaryAccent.copy(alpha = 0.52f),
+                                textPrimary.copy(alpha = 0.10f)
                             ),
                             start = Offset.Zero,
                             end = Offset(900f, 1400f)
@@ -341,7 +349,7 @@ fun AuthWelcomeScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    // 1. HEADER: Royal Blue -> Neon Purple Gradient Banner
+                    // 1. HEADER: Active Theme Primary -> Secondary -> Tertiary Gradient Banner
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -356,16 +364,15 @@ fun AuthWelcomeScreen(
                             .background(
                                 Brush.linearGradient(
                                     colors = listOf(
-                                        RoyalBlue,
-                                        ElectricIndigo,
-                                        NeonViolet
+                                        primaryAccent,
+                                        secondaryAccent,
+                                        tertiaryAccent
                                     ),
                                     start = Offset(0f, 0f),
                                     end = Offset(1000f, 520f)
                                 )
                             )
                             .drawBehind {
-                                // Subtle specular glass sheen across the top gradient header
                                 drawCircle(
                                     brush = Brush.radialGradient(
                                         colors = listOf(
@@ -383,7 +390,7 @@ fun AuthWelcomeScreen(
                                 width = 1.dp,
                                 brush = Brush.verticalGradient(
                                     listOf(
-                                        Color.White.copy(alpha = 0.38f),
+                                        Color.White.copy(alpha = 0.36f),
                                         Color.White.copy(alpha = 0.08f)
                                     )
                                 ),
@@ -404,10 +411,10 @@ fun AuthWelcomeScreen(
                                 modifier = Modifier
                                     .size(56.dp)
                                     .clip(RoundedCornerShape(18.dp))
-                                    .background(Color.White.copy(alpha = 0.16f))
+                                    .background(accentForeground.copy(alpha = 0.16f))
                                     .border(
                                         width = 1.2.dp,
-                                        color = Color.White.copy(alpha = 0.40f),
+                                        color = accentForeground.copy(alpha = 0.36f),
                                         shape = RoundedCornerShape(18.dp)
                                     ),
                                 contentAlignment = Alignment.Center
@@ -415,7 +422,7 @@ fun AuthWelcomeScreen(
                                 Icon(
                                     imageVector = Icons.Rounded.CloudSync,
                                     contentDescription = "Cloud Sync",
-                                    tint = Color.White,
+                                    tint = accentForeground,
                                     modifier = Modifier.size(30.dp)
                                 )
                             }
@@ -438,7 +445,7 @@ fun AuthWelcomeScreen(
                                         style = MaterialTheme.typography.headlineSmall.copy(
                                             fontWeight = FontWeight.ExtraBold,
                                             fontSize = 25.sp,
-                                            color = Color.White,
+                                            color = accentForeground,
                                             textAlign = TextAlign.Center
                                         )
                                     )
@@ -458,7 +465,7 @@ fun AuthWelcomeScreen(
                                         },
                                         style = MaterialTheme.typography.bodySmall.copy(
                                             fontSize = 13.sp,
-                                            color = Color.White.copy(alpha = 0.88f),
+                                            color = accentForeground.copy(alpha = 0.88f),
                                             textAlign = TextAlign.Center,
                                             lineHeight = 19.sp
                                         )
@@ -468,7 +475,7 @@ fun AuthWelcomeScreen(
                         }
                     }
 
-                    // Form Body inside the Dark Liquid Glass Card
+                    // Form Body inside the Theme-Matched Glass Card
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -492,6 +499,12 @@ fun AuthWelcomeScreen(
                                     },
                                     placeholder = if (isArabic) "اسم المستخدم *" else "Username *",
                                     leadingIcon = Icons.Rounded.PersonOutline,
+                                    fieldSurface = fieldSurface,
+                                    primaryAccent = primaryAccent,
+                                    secondaryAccent = secondaryAccent,
+                                    textPrimary = textPrimary,
+                                    textSecondary = textSecondary,
+                                    isDark = effectiveDark,
                                     keyboardType = KeyboardType.Text,
                                     imeAction = ImeAction.Next,
                                     testTag = "auth_username_input"
@@ -511,6 +524,12 @@ fun AuthWelcomeScreen(
                             },
                             placeholder = if (isArabic) "البريد الإلكتروني" else "Email Address",
                             leadingIcon = Icons.Rounded.Email,
+                            fieldSurface = fieldSurface,
+                            primaryAccent = primaryAccent,
+                            secondaryAccent = secondaryAccent,
+                            textPrimary = textPrimary,
+                            textSecondary = textSecondary,
+                            isDark = effectiveDark,
                             keyboardType = KeyboardType.Email,
                             imeAction = ImeAction.Next,
                             testTag = "auth_email_input"
@@ -527,6 +546,12 @@ fun AuthWelcomeScreen(
                             },
                             placeholder = if (isArabic) "كلمة المرور" else "Password",
                             leadingIcon = Icons.Rounded.Lock,
+                            fieldSurface = fieldSurface,
+                            primaryAccent = primaryAccent,
+                            secondaryAccent = secondaryAccent,
+                            textPrimary = textPrimary,
+                            textSecondary = textSecondary,
+                            isDark = effectiveDark,
                             isPassword = true,
                             passwordVisible = passwordVisible,
                             onTogglePasswordVisibility = { passwordVisible = !passwordVisible },
@@ -541,7 +566,7 @@ fun AuthWelcomeScreen(
                             testTag = "auth_password_input"
                         )
 
-                        // Optional Confirm Password in Sign-Up Mode
+                        // Confirm Password in Sign-Up Mode
                         AnimatedVisibility(
                             visible = isSignUpMode,
                             enter = expandVertically() + fadeIn(),
@@ -557,6 +582,12 @@ fun AuthWelcomeScreen(
                                     },
                                     placeholder = if (isArabic) "تأكيد كلمة المرور" else "Confirm Password",
                                     leadingIcon = Icons.Rounded.Lock,
+                                    fieldSurface = fieldSurface,
+                                    primaryAccent = primaryAccent,
+                                    secondaryAccent = secondaryAccent,
+                                    textPrimary = textPrimary,
+                                    textSecondary = textSecondary,
+                                    isDark = effectiveDark,
                                     isPassword = true,
                                     passwordVisible = confirmPasswordVisible,
                                     onTogglePasswordVisibility = { confirmPasswordVisible = !confirmPasswordVisible },
@@ -572,7 +603,7 @@ fun AuthWelcomeScreen(
                             }
                         }
 
-                        // 6a. Quick Link: "نسيت كلمة المرور؟"
+                        // Quick Link: "نسيت كلمة المرور؟"
                         AnimatedVisibility(visible = !isSignUpMode) {
                             Row(
                                 modifier = Modifier
@@ -584,7 +615,7 @@ fun AuthWelcomeScreen(
                                     text = if (isArabic) "نسيت كلمة المرور؟" else "Forgot password?",
                                     fontSize = 12.5.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = LuminousCyan,
+                                    color = primaryAccent,
                                     modifier = Modifier
                                         .testTag("auth_forgot_password_link")
                                         .clip(RoundedCornerShape(10.dp))
@@ -600,7 +631,7 @@ fun AuthWelcomeScreen(
                             }
                         }
 
-                        // Inline Error / Info Glass Banner
+                        // Inline Error / Info Banner
                         AnimatedVisibility(
                             visible = !displayedError.isNullOrBlank() || !authInfoMessage.isNullOrBlank()
                         ) {
@@ -623,7 +654,11 @@ fun AuthWelcomeScreen(
                                     text = displayedError ?: authInfoMessage.orEmpty(),
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Medium,
-                                    color = if (isErr) Color(0xFFFDA4AF) else Color(0xFF6EE7B7),
+                                    color = if (isErr) {
+                                        if (effectiveDark) Color(0xFFFDA4AF) else Color(0xFFBE123C)
+                                    } else {
+                                        if (effectiveDark) Color(0xFF6EE7B7) else Color(0xFF047857)
+                                    },
                                     textAlign = TextAlign.Center,
                                     modifier = Modifier.fillMaxWidth()
                                 )
@@ -632,7 +667,7 @@ fun AuthWelcomeScreen(
 
                         Spacer(modifier = Modifier.height(18.dp))
 
-                        // 3. PRIMARY LOGIN BUTTON: Capsule Pill + Gradient + Loading State
+                        // 3. PRIMARY LOGIN BUTTON: Theme Gradient Capsule Pill
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -642,9 +677,9 @@ fun AuthWelcomeScreen(
                                 .background(
                                     Brush.horizontalGradient(
                                         colors = listOf(
-                                            RoyalBlue,
-                                            ElectricIndigo,
-                                            NeonViolet
+                                            primaryAccent,
+                                            secondaryAccent,
+                                            tertiaryAccent
                                         )
                                     )
                                 )
@@ -652,9 +687,9 @@ fun AuthWelcomeScreen(
                                     width = 1.2.dp,
                                     brush = Brush.horizontalGradient(
                                         listOf(
-                                            Color.White.copy(alpha = 0.45f),
-                                            NeonMagenta.copy(alpha = 0.65f),
-                                            Color.White.copy(alpha = 0.30f)
+                                            Color.White.copy(alpha = 0.42f),
+                                            tertiaryAccent.copy(alpha = 0.55f),
+                                            Color.White.copy(alpha = 0.28f)
                                         )
                                     ),
                                     shape = CircleShape
@@ -662,7 +697,7 @@ fun AuthWelcomeScreen(
                                 .clickable(
                                     enabled = !isLoading,
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true, color = Color.White)
+                                    indication = ripple(bounded = true, color = accentForeground)
                                 ) {
                                     focusManager.clearFocus()
                                     if (isSignUpMode) {
@@ -682,13 +717,13 @@ fun AuthWelcomeScreen(
                                     CircularProgressIndicator(
                                         modifier = Modifier.size(20.dp),
                                         strokeWidth = 2.4.dp,
-                                        color = Color.White
+                                        color = accentForeground
                                     )
                                     Text(
                                         text = if (isArabic) "جاري المصادقة..." else "Authenticating...",
                                         fontSize = 14.5.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = Color.White
+                                        color = accentForeground
                                     )
                                 }
                             } else {
@@ -705,12 +740,12 @@ fun AuthWelcomeScreen(
                                         },
                                         fontSize = 15.5.sp,
                                         fontWeight = FontWeight.ExtraBold,
-                                        color = Color.White
+                                        color = accentForeground
                                     )
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
                                         contentDescription = null,
-                                        tint = Color.White,
+                                        tint = accentForeground,
                                         modifier = Modifier.size(18.dp)
                                     )
                                 }
@@ -726,38 +761,38 @@ fun AuthWelcomeScreen(
                         ) {
                             HorizontalDivider(
                                 modifier = Modifier.weight(1f),
-                                color = Color.White.copy(alpha = 0.12f)
+                                color = textPrimary.copy(alpha = 0.12f)
                             )
                             Text(
                                 text = if (isArabic) "  أو المتابعة عبر  " else "  OR CONTINUE WITH  ",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = TextSecondary
+                                color = textSecondary
                             )
                             HorizontalDivider(
                                 modifier = Modifier.weight(1f),
-                                color = Color.White.copy(alpha = 0.12f)
+                                color = textPrimary.copy(alpha = 0.12f)
                             )
                         }
 
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        // 4. GOOGLE BUTTON: Sleek translucent border + authentic multicolored Google icon
+                        // 4. GOOGLE BUTTON: Theme-matched surface & border + authentic Google icon
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(54.dp)
                                 .testTag("welcome_google_sign_in_button")
                                 .clip(CircleShape)
-                                .background(GlassFieldSurface.copy(alpha = 0.65f))
+                                .background(fieldSurface.copy(alpha = if (effectiveDark) 0.72f else 0.90f))
                                 .border(
                                     width = 1.2.dp,
                                     brush = Brush.horizontalGradient(
                                         colors = listOf(
-                                            Color.White.copy(alpha = 0.34f),
-                                            LuminousCyan.copy(alpha = 0.38f),
-                                            NeonViolet.copy(alpha = 0.42f),
-                                            Color.White.copy(alpha = 0.22f)
+                                            textPrimary.copy(alpha = 0.22f),
+                                            primaryAccent.copy(alpha = 0.42f),
+                                            secondaryAccent.copy(alpha = 0.45f),
+                                            textPrimary.copy(alpha = 0.16f)
                                         )
                                     ),
                                     shape = CircleShape
@@ -765,7 +800,7 @@ fun AuthWelcomeScreen(
                                 .clickable(
                                     enabled = !isLoading,
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true, color = LuminousCyan)
+                                    indication = ripple(bounded = true, color = primaryAccent)
                                 ) {
                                     onClearAuthMessages()
                                     googleController.startSignIn(isArabic = isArabic)
@@ -790,7 +825,7 @@ fun AuthWelcomeScreen(
                                     text = if (isArabic) "المتابعة باستخدام Google" else "Continue with Google",
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = TextPrimary
+                                    color = textPrimary
                                 )
                             }
                         }
@@ -800,7 +835,7 @@ fun AuthWelcomeScreen(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // 6b. FOOTER QUICK LINK: "أنشئ حساباً الآن"
+            // FOOTER QUICK LINK: "أنشئ حساباً الآن"
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -817,7 +852,7 @@ fun AuthWelcomeScreen(
                         else -> "Don't have an account?"
                     },
                     fontSize = 13.sp,
-                    color = TextSecondary
+                    color = textSecondary
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
@@ -829,7 +864,7 @@ fun AuthWelcomeScreen(
                     },
                     fontSize = 13.5.sp,
                     fontWeight = FontWeight.ExtraBold,
-                    color = LuminousCyan,
+                    color = primaryAccent,
                     textDecoration = TextDecoration.Underline,
                     modifier = Modifier
                         .testTag("auth_footer_toggle_mode")
@@ -848,14 +883,14 @@ fun AuthWelcomeScreen(
             }
         }
 
-        // Password Reset Glass Dialog triggered from "نسيت كلمة المرور؟"
+        // Password Reset Dialog styled to match the active theme
         if (showForgotPasswordDialog) {
             var resetEmail by remember { mutableStateOf(email) }
             AlertDialog(
                 onDismissRequest = { showForgotPasswordDialog = false },
-                containerColor = GlassCardSurface,
-                titleContentColor = TextPrimary,
-                textContentColor = TextSecondary,
+                containerColor = cardSurface,
+                titleContentColor = textPrimary,
+                textContentColor = textSecondary,
                 shape = RoundedCornerShape(26.dp),
                 title = {
                     Row(
@@ -865,13 +900,13 @@ fun AuthWelcomeScreen(
                         Icon(
                             imageVector = Icons.Rounded.AutoAwesome,
                             contentDescription = null,
-                            tint = LuminousCyan
+                            tint = primaryAccent
                         )
                         Text(
                             text = if (isArabic) "استعادة كلمة المرور" else "Reset Password",
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
-                            color = TextPrimary
+                            color = textPrimary
                         )
                     }
                 },
@@ -883,7 +918,7 @@ fun AuthWelcomeScreen(
                             else
                                 "Enter your email address and we will send you a password reset link.",
                             fontSize = 13.sp,
-                            color = TextSecondary,
+                            color = textSecondary,
                             lineHeight = 19.sp
                         )
                         GlassRoundedTextField(
@@ -891,6 +926,12 @@ fun AuthWelcomeScreen(
                             onValueChange = { resetEmail = it },
                             placeholder = if (isArabic) "البريد الإلكتروني" else "Email Address",
                             leadingIcon = Icons.Rounded.Email,
+                            fieldSurface = fieldSurface,
+                            primaryAccent = primaryAccent,
+                            secondaryAccent = secondaryAccent,
+                            textPrimary = textPrimary,
+                            textSecondary = textSecondary,
+                            isDark = effectiveDark,
                             keyboardType = KeyboardType.Email,
                             imeAction = ImeAction.Done,
                             testTag = "reset_password_email_input"
@@ -904,8 +945,8 @@ fun AuthWelcomeScreen(
                             showForgotPasswordDialog = false
                         },
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = RoyalBlue,
-                            contentColor = Color.White
+                            containerColor = primaryAccent,
+                            contentColor = accentForeground
                         ),
                         shape = CircleShape
                     ) {
@@ -919,7 +960,7 @@ fun AuthWelcomeScreen(
                     TextButton(onClick = { showForgotPasswordDialog = false }) {
                         Text(
                             text = if (isArabic) "إلغاء" else "Cancel",
-                            color = TextSecondary
+                            color = textSecondary
                         )
                     }
                 }
@@ -927,8 +968,8 @@ fun AuthWelcomeScreen(
         }
 
         BlurryScreenEdges(
-            isDark = true,
-            edgeColorOverride = DeepVoidBg
+            isDark = effectiveDark,
+            edgeColorOverride = bgBase
         )
     }
 }
@@ -939,6 +980,12 @@ private fun GlassRoundedTextField(
     onValueChange: (String) -> Unit,
     placeholder: String,
     leadingIcon: ImageVector,
+    fieldSurface: Color,
+    primaryAccent: Color,
+    secondaryAccent: Color,
+    textPrimary: Color,
+    textSecondary: Color,
+    isDark: Boolean,
     modifier: Modifier = Modifier,
     isPassword: Boolean = false,
     passwordVisible: Boolean = false,
@@ -952,14 +999,14 @@ private fun GlassRoundedTextField(
 
     val borderBrush = if (isFocused) {
         Brush.horizontalGradient(
-            listOf(RoyalBlue, NeonViolet, LuminousCyan)
+            listOf(primaryAccent, secondaryAccent, primaryAccent)
         )
     } else {
         Brush.horizontalGradient(
             listOf(
-                Color.White.copy(alpha = 0.22f),
-                NeonViolet.copy(alpha = 0.28f),
-                Color.White.copy(alpha = 0.14f)
+                textPrimary.copy(alpha = if (isDark) 0.16f else 0.10f),
+                secondaryAccent.copy(alpha = 0.28f),
+                textPrimary.copy(alpha = 0.12f)
             )
         )
     }
@@ -971,8 +1018,8 @@ private fun GlassRoundedTextField(
             .then(if (testTag.isNotEmpty()) Modifier.testTag(testTag) else Modifier)
             .clip(RoundedCornerShape(27.dp))
             .background(
-                if (isFocused) GlassFieldSurface.copy(alpha = 0.92f)
-                else GlassFieldSurface.copy(alpha = 0.68f)
+                if (isFocused) fieldSurface.copy(alpha = 0.94f)
+                else fieldSurface.copy(alpha = if (isDark) 0.72f else 0.86f)
             )
             .border(
                 width = if (isFocused) 1.5.dp else 1.dp,
@@ -985,7 +1032,7 @@ private fun GlassRoundedTextField(
         Icon(
             imageVector = leadingIcon,
             contentDescription = placeholder,
-            tint = if (isFocused) LuminousCyan else TextSecondary,
+            tint = if (isFocused) primaryAccent else textSecondary,
             modifier = Modifier.size(20.dp)
         )
 
@@ -999,7 +1046,7 @@ private fun GlassRoundedTextField(
                 Text(
                     text = placeholder,
                     fontSize = 14.sp,
-                    color = TextSecondary.copy(alpha = 0.78f),
+                    color = textSecondary.copy(alpha = 0.78f),
                     maxLines = 1
                 )
             }
@@ -1010,9 +1057,9 @@ private fun GlassRoundedTextField(
                 textStyle = TextStyle(
                     fontSize = 14.5.sp,
                     fontWeight = FontWeight.Medium,
-                    color = TextPrimary
+                    color = textPrimary
                 ),
-                cursorBrush = SolidColor(LuminousCyan),
+                cursorBrush = SolidColor(primaryAccent),
                 visualTransformation = if (isPassword && !passwordVisible) {
                     PasswordVisualTransformation()
                 } else {
@@ -1041,7 +1088,7 @@ private fun GlassRoundedTextField(
                 Icon(
                     imageVector = if (passwordVisible) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff,
                     contentDescription = if (passwordVisible) "Hide password" else "Show password",
-                    tint = if (passwordVisible) LuminousCyan else TextSecondary,
+                    tint = if (passwordVisible) primaryAccent else textSecondary,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -1060,7 +1107,6 @@ private fun MultiColorGoogleGIcon(modifier: Modifier = Modifier) {
         val arcSize = Size(size.width - strokeWidth, size.height - strokeWidth)
         val topLeft = Offset(inset, inset)
 
-        // Google Blue (Right-bottom segment + crossbar)
         drawArc(
             color = Color(0xFF4285F4),
             startAngle = -15f,
@@ -1070,7 +1116,6 @@ private fun MultiColorGoogleGIcon(modifier: Modifier = Modifier) {
             size = arcSize,
             style = Stroke(width = strokeWidth, cap = StrokeCap.Butt)
         )
-        // Google Green (Bottom segment)
         drawArc(
             color = Color(0xFF34A853),
             startAngle = 50f,
@@ -1080,7 +1125,6 @@ private fun MultiColorGoogleGIcon(modifier: Modifier = Modifier) {
             size = arcSize,
             style = Stroke(width = strokeWidth, cap = StrokeCap.Butt)
         )
-        // Google Yellow (Left segment)
         drawArc(
             color = Color(0xFFFBBC05),
             startAngle = 140f,
@@ -1090,7 +1134,6 @@ private fun MultiColorGoogleGIcon(modifier: Modifier = Modifier) {
             size = arcSize,
             style = Stroke(width = strokeWidth, cap = StrokeCap.Butt)
         )
-        // Google Red (Top segment)
         drawArc(
             color = Color(0xFFEA4335),
             startAngle = 210f,
@@ -1100,7 +1143,6 @@ private fun MultiColorGoogleGIcon(modifier: Modifier = Modifier) {
             size = arcSize,
             style = Stroke(width = strokeWidth, cap = StrokeCap.Butt)
         )
-        // Horizontal Blue bar of the "G"
         drawLine(
             color = Color(0xFF4285F4),
             start = Offset(size.width * 0.50f, size.height * 0.50f),

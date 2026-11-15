@@ -41,6 +41,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NoteAdd
 import androidx.compose.material.icons.filled.Shield
@@ -49,11 +51,13 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -68,6 +72,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -77,6 +82,8 @@ import com.example.data.storage.LocalDeviceStorageManager
 import com.example.ui.glass.FrostedBackdrop
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.glass.liquidGlass
+import com.example.ui.theme.LocalAppThemePreset
+import com.example.ui.theme.tr
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -90,16 +97,27 @@ fun VaultScreen(
     onSaveFileUri: (Uri) -> Unit,
     onExportItemToUri: (VaultItemEntity, Uri) -> Unit,
     onBack: () -> Unit,
+    isVaultLockEnabled: Boolean = false,
+    isVaultUnlocked: Boolean = true,
+    hasVaultPasskey: Boolean = false,
+    onTriggerBiometricUnlock: () -> Unit = {},
+    onVerifyPasskey: (String) -> Boolean = { false },
     modifier: Modifier = Modifier
 ) {
     BackHandler {
         onBack()
     }
 
+    val activePreset = LocalAppThemePreset.current
+    val effectiveDark = activePreset.isDark || isDark
+    val primaryAccent = activePreset.primary
+
     var showTextComposer by remember { mutableStateOf(false) }
     var draftTitle by remember { mutableStateOf("") }
     var draftContent by remember { mutableStateOf("") }
     var pendingExportItem by remember { mutableStateOf<VaultItemEntity?>(null) }
+    var passkeyAttempt by remember { mutableStateOf("") }
+    var passkeyError by remember { mutableStateOf(false) }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -117,8 +135,8 @@ fun VaultScreen(
         }
     }
 
-    val textColor = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
-    val metaColor = if (isDark) Color(0xFF94A3B8) else Color(0xFF475569)
+    val textColor = activePreset.onSurface
+    val metaColor = activePreset.onSurfaceVariant
 
     val infiniteTransition = rememberInfiniteTransition(label = "vault_pulse")
     val pulseScale by infiniteTransition.animateFloat(
@@ -140,7 +158,241 @@ fun VaultScreen(
         label = "vault_float"
     )
 
-    FrostedBackdrop(isDark = isDark) {
+    LaunchedEffect(isVaultLockEnabled, isVaultUnlocked) {
+        if (isVaultLockEnabled && !isVaultUnlocked) {
+            passkeyAttempt = ""
+            passkeyError = false
+            onTriggerBiometricUnlock()
+        }
+    }
+
+    if (isVaultLockEnabled && !isVaultUnlocked) {
+        FrostedBackdrop(isDark = effectiveDark) {
+            Column(
+                modifier = modifier
+                    .fillMaxSize()
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+                    .padding(horizontal = 20.dp, vertical = 16.dp)
+                    .testTag("vault_lock_gate"),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("vault_gate_back_button")
+                            .clip(CircleShape)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = ripple(bounded = true),
+                                onClick = onBack
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .liquidGlass(
+                                    isDark = effectiveDark,
+                                    tint = GlassTint.FROST,
+                                    shape = CircleShape,
+                                    borderWidth = 1.2.dp
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = tr("رجوع", "Retour", "Back", "Uɣal"),
+                                tint = textColor,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    LiquidGlassCard(
+                        isDark = effectiveDark,
+                        tint = GlassTint.AMETHYST,
+                        shape = RoundedCornerShape(28.dp),
+                        borderWidth = 1.4.dp,
+                        customFill = activePreset.surface.copy(alpha = 0.92f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .widthIn(max = 420.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(72.dp)
+                                    .clip(CircleShape)
+                                    .background(primaryAccent.copy(alpha = 0.16f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Shield,
+                                    contentDescription = "Vault Lock",
+                                    tint = primaryAccent,
+                                    modifier = Modifier.size(34.dp)
+                                )
+                            }
+
+                            Text(
+                                text = tr(
+                                    "الـ Vault محمي",
+                                    "Coffre Vault verrouillé",
+                                    "Vault Protected",
+                                    "Vault yettwasekkeṛ"
+                                ),
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = textColor,
+                                textAlign = TextAlign.Center
+                            )
+
+                            Text(
+                                text = tr(
+                                    "قم بفتح الـ Vault باستخدام البصمة أو رمز الـ Passkey",
+                                    "Déverrouillez le Vault avec votre empreinte ou votre Passkey",
+                                    "Unlock Vault using your Biometrics or Passkey",
+                                    "Ldi Vault s uḍad neɣ s Passkey"
+                                ),
+                                fontSize = 12.5.sp,
+                                color = metaColor,
+                                textAlign = TextAlign.Center
+                            )
+
+                            OutlinedButton(
+                                onClick = onTriggerBiometricUnlock,
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(50.dp)
+                                    .testTag("vault_biometric_unlock_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Fingerprint,
+                                    contentDescription = null,
+                                    tint = primaryAccent,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = tr(
+                                        "فتح بالبصمة",
+                                        "Déverrouiller par empreinte",
+                                        "Unlock with Biometrics",
+                                        "Ldi s uḍad"
+                                    ),
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = primaryAccent
+                                )
+                            }
+
+                            if (hasVaultPasskey) {
+                                OutlinedTextField(
+                                    value = passkeyAttempt,
+                                    onValueChange = {
+                                        passkeyAttempt = it
+                                        passkeyError = false
+                                    },
+                                    label = {
+                                        Text(
+                                            tr(
+                                                "رمز Passkey للـ Vault",
+                                                "Passkey du Vault",
+                                                "Vault Passkey",
+                                                "Passkey n Vault"
+                                            )
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Default.Key,
+                                            contentDescription = null,
+                                            tint = primaryAccent
+                                        )
+                                    },
+                                    visualTransformation = PasswordVisualTransformation(),
+                                    singleLine = true,
+                                    isError = passkeyError,
+                                    shape = RoundedCornerShape(16.dp),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedTextColor = textColor,
+                                        unfocusedTextColor = textColor,
+                                        focusedBorderColor = primaryAccent,
+                                        unfocusedBorderColor = metaColor.copy(alpha = 0.35f)
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("vault_gate_passkey_input")
+                                )
+
+                                if (passkeyError) {
+                                    Text(
+                                        text = tr(
+                                            "رمز Passkey غير صحيح",
+                                            "Passkey incorrect",
+                                            "Incorrect Passkey",
+                                            "Passkey mačči d ameɣtu"
+                                        ),
+                                        fontSize = 12.sp,
+                                        color = Color(0xFFF43F5E)
+                                    )
+                                }
+
+                                Button(
+                                    onClick = {
+                                        if (!onVerifyPasskey(passkeyAttempt)) {
+                                            passkeyError = true
+                                        }
+                                    },
+                                    enabled = passkeyAttempt.isNotBlank(),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = primaryAccent,
+                                        contentColor = MaterialTheme.colorScheme.onPrimary
+                                    ),
+                                    shape = RoundedCornerShape(16.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(50.dp)
+                                        .testTag("vault_gate_passkey_submit")
+                                ) {
+                                    Text(
+                                        text = tr(
+                                            "فتح بـ Passkey",
+                                            "Déverrouiller avec Passkey",
+                                            "Unlock with Passkey",
+                                            "Ldi s Passkey"
+                                        ),
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return
+    }
+
+    FrostedBackdrop(isDark = effectiveDark) {
         Column(
             modifier = modifier
                 .fillMaxSize()
@@ -264,7 +516,7 @@ fun VaultScreen(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = if (isArabic) "حفظ نص حرفي" else "Save Text",
+                            text = tr("حفظ نص حرفي", "Enregistrer un texte", "Save Text", "Sekles aḍris"),
                             fontSize = 12.5.sp,
                             fontWeight = FontWeight.Bold,
                             color = textColor
@@ -296,7 +548,7 @@ fun VaultScreen(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = if (isArabic) "حفظ ملف من الهاتف" else "Save File",
+                            text = tr("حفظ ملف من الهاتف", "Enregistrer un fichier", "Save File", "Sekles afaylu"),
                             fontSize = 12.5.sp,
                             fontWeight = FontWeight.Bold,
                             color = textColor

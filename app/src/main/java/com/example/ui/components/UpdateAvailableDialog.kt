@@ -3,6 +3,7 @@ package com.example.ui.components
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -34,7 +35,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -56,6 +56,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -66,6 +67,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -75,6 +77,8 @@ import com.example.BuildConfig
 import com.example.data.model.GlassTint
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.glass.liquidGlass
+import com.example.ui.theme.AppThemePreset
+import com.example.ui.theme.LocalAppThemePreset
 import com.example.update.ReleaseUpdateInfo
 import com.example.update.UpdateUiState
 import java.util.Locale
@@ -107,6 +111,22 @@ fun UpdateAvailableDialog(
         }
     }
 
+    val activePreset = LocalAppThemePreset.current
+    val effectiveDark = activePreset.isDark || isDark
+
+    val textColor by animateColorAsState(activePreset.onSurface, tween(280), label = "upd_text")
+    val metaColor by animateColorAsState(activePreset.onSurfaceVariant, tween(280), label = "upd_meta")
+    val primaryAccent by animateColorAsState(activePreset.primary, tween(280), label = "upd_primary")
+    val secondaryAccent by animateColorAsState(activePreset.secondary, tween(280), label = "upd_secondary")
+    val tertiaryAccent by animateColorAsState(activePreset.tertiary, tween(280), label = "upd_tertiary")
+    val cardFill by animateColorAsState(
+        targetValue = activePreset.surface.copy(
+            alpha = if (activePreset.isGlassStyle) 0.88f else 0.96f
+        ),
+        animationSpec = tween(280),
+        label = "upd_surface"
+    )
+
     // Scrim backdrop
     AnimatedVisibility(
         visible = visible && activeInfo != null,
@@ -116,7 +136,10 @@ fun UpdateAvailableDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = if (isDark) 0.56f else 0.34f))
+                .background(
+                    (if (effectiveDark) Color.Black else activePreset.onBackground)
+                        .copy(alpha = if (effectiveDark) 0.56f else 0.30f)
+                )
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -124,7 +147,6 @@ fun UpdateAvailableDialog(
                 ),
             contentAlignment = Alignment.Center
         ) {
-            // Stop backdrop clicks from leaking through the card
             AnimatedVisibility(
                 visible = visible && activeInfo != null,
                 enter = scaleIn(
@@ -137,13 +159,6 @@ fun UpdateAvailableDialog(
                 ) + fadeOut(tween(160))
             ) {
                 val info = activeInfo ?: return@AnimatedVisibility
-                val textColor = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
-                val metaColor = if (isDark) Color(0xFF94A3B8) else Color(0xFF475569)
-                val cardFill = if (isDark) {
-                    Color(0xFF0F172A).copy(alpha = 0.88f)
-                } else {
-                    Color(0xFFFFFFFF).copy(alpha = 0.88f)
-                }
 
                 val downloadProgress = (updateState as? UpdateUiState.Downloading)?.progress ?: 0f
                 val animatedProgress by animateFloatAsState(
@@ -153,10 +168,10 @@ fun UpdateAvailableDialog(
                 )
 
                 LiquidGlassCard(
-                    isDark = isDark,
-                    tint = GlassTint.CYAN,
+                    isDark = effectiveDark,
+                    tint = GlassTint.FROST,
                     shape = RoundedCornerShape(30.dp),
-                    borderWidth = 1.8.dp,
+                    borderWidth = 1.6.dp,
                     customFill = cardFill,
                     modifier = Modifier
                         .fillMaxWidth(0.88f)
@@ -171,6 +186,32 @@ fun UpdateAvailableDialog(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .drawBehind {
+                                drawCircle(
+                                    brush = Brush.radialGradient(
+                                        colors = listOf(
+                                            activePreset.orb1.copy(alpha = if (activePreset.isGlassStyle) 0.22f else 0.14f),
+                                            Color.Transparent
+                                        ),
+                                        center = Offset(size.width * 0.22f, size.height * 0.14f),
+                                        radius = size.width * 0.72f
+                                    ),
+                                    center = Offset(size.width * 0.22f, size.height * 0.14f),
+                                    radius = size.width * 0.72f
+                                )
+                                drawCircle(
+                                    brush = Brush.radialGradient(
+                                        colors = listOf(
+                                            activePreset.orb2.copy(alpha = if (activePreset.isGlassStyle) 0.18f else 0.12f),
+                                            Color.Transparent
+                                        ),
+                                        center = Offset(size.width * 0.82f, size.height * 0.84f),
+                                        radius = size.width * 0.68f
+                                    ),
+                                    center = Offset(size.width * 0.82f, size.height * 0.84f),
+                                    radius = size.width * 0.68f
+                                )
+                            }
                             .padding(horizontal = 22.dp, vertical = 20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
@@ -197,10 +238,11 @@ fun UpdateAvailableDialog(
                                     modifier = Modifier
                                         .size(36.dp)
                                         .liquidGlass(
-                                            isDark = isDark,
+                                            isDark = effectiveDark,
                                             tint = GlassTint.FROST,
                                             shape = CircleShape,
-                                            borderWidth = 1.dp
+                                            borderWidth = 1.dp,
+                                            customFill = activePreset.surfaceVariant.copy(alpha = 0.72f)
                                         ),
                                     contentAlignment = Alignment.Center
                                 ) {
@@ -213,14 +255,15 @@ fun UpdateAvailableDialog(
                                 }
                             }
 
-                            // Subtle live release pill
+                            // Theme-aligned release pill
                             Row(
                                 modifier = Modifier
                                     .liquidGlass(
-                                        isDark = isDark,
-                                        tint = GlassTint.AMETHYST,
+                                        isDark = effectiveDark,
+                                        tint = GlassTint.FROST,
                                         shape = CircleShape,
-                                        borderWidth = 1.dp
+                                        borderWidth = 1.dp,
+                                        customFill = activePreset.surfaceVariant.copy(alpha = 0.72f)
                                     )
                                     .padding(horizontal = 10.dp, vertical = 5.dp),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -229,30 +272,34 @@ fun UpdateAvailableDialog(
                                 Icon(
                                     imageVector = Icons.Default.AutoAwesome,
                                     contentDescription = null,
-                                    tint = Color(0xFFC084FC),
+                                    tint = secondaryAccent,
                                     modifier = Modifier.size(13.dp)
                                 )
                                 Text(
                                     text = "Fluffy OTA",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = if (isDark) Color(0xFFE2E8F0) else Color(0xFF334155)
+                                    color = textColor
                                 )
                             }
                         }
 
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        // Animated Concentric Rocket Emblem
+                        // Animated Concentric Rocket Emblem matching active theme colors
                         LiquidGlassRocketBadge(
-                            isDark = isDark,
+                            isDark = effectiveDark,
+                            preset = activePreset,
+                            primaryAccent = primaryAccent,
+                            secondaryAccent = secondaryAccent,
+                            tertiaryAccent = tertiaryAccent,
                             isDownloading = isDownloading,
                             progress = animatedProgress
                         )
 
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        // Headline matching reference dialog, styled in Fluffy theme
+                        // Headline styled in active theme
                         Text(
                             text = when (updateState) {
                                 is UpdateUiState.Downloading ->
@@ -272,7 +319,7 @@ fun UpdateAvailableDialog(
 
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        // Version Transition Pill (e.g. v1.0.4 -> v1.0.5 • 16.1 MB)
+                        // Version Transition Pill tinted with active theme primary color
                         val sizeText = if (info.apkSizeBytes > 0L) {
                             String.format(Locale.US, " • %.1f MB", info.apkSizeBytes / (1024f * 1024f))
                         } else ""
@@ -280,11 +327,11 @@ fun UpdateAvailableDialog(
                         Box(
                             modifier = Modifier
                                 .liquidGlass(
-                                    isDark = isDark,
-                                    tint = GlassTint.CYAN,
+                                    isDark = effectiveDark,
+                                    tint = GlassTint.FROST,
                                     shape = CircleShape,
                                     borderWidth = 1.2.dp,
-                                    customFill = if (isDark) Color(0x2A06B6D4) else Color(0x1E0284C7)
+                                    customFill = primaryAccent.copy(alpha = if (effectiveDark) 0.16f else 0.12f)
                                 )
                                 .padding(horizontal = 14.dp, vertical = 6.dp)
                         ) {
@@ -292,11 +339,11 @@ fun UpdateAvailableDialog(
                                 text = "v${BuildConfig.VERSION_NAME}  ➔  v${info.versionName}$sizeText",
                                 fontSize = 12.5.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
+                                color = primaryAccent
                             )
                         }
 
-                        // Dynamic State Content (progress bar, permission prompt, or error only — no cluttered release notes)
+                        // Dynamic State Content (progress bar, permission prompt, or error)
                         when (updateState) {
                             is UpdateUiState.Downloading -> {
                                 Spacer(modifier = Modifier.height(14.dp))
@@ -310,18 +357,16 @@ fun UpdateAvailableDialog(
                                         .padding(horizontal = 4.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
-                                    // Smooth Liquid Glass Progress Bar
+                                    // Smooth Theme-Matched Progress Bar
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .height(12.dp)
                                             .clip(CircleShape)
-                                            .background(
-                                                if (isDark) Color(0x28FFFFFF) else Color(0x180F172A)
-                                            )
+                                            .background(activePreset.surfaceVariant.copy(alpha = 0.72f))
                                             .border(
                                                 width = 0.8.dp,
-                                                color = if (isDark) Color(0x35FFFFFF) else Color(0x22000000),
+                                                color = activePreset.onSurface.copy(alpha = 0.14f),
                                                 shape = CircleShape
                                             )
                                     ) {
@@ -333,9 +378,9 @@ fun UpdateAvailableDialog(
                                                 .background(
                                                     Brush.horizontalGradient(
                                                         colors = listOf(
-                                                            Color(0xFF06B6D4),
-                                                            Color(0xFF6366F1),
-                                                            Color(0xFFEC4899)
+                                                            primaryAccent,
+                                                            secondaryAccent,
+                                                            tertiaryAccent
                                                         )
                                                     )
                                                 )
@@ -361,7 +406,7 @@ fun UpdateAvailableDialog(
                                             text = "$percent%",
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
+                                            color = primaryAccent
                                         )
                                     }
                                 }
@@ -370,8 +415,8 @@ fun UpdateAvailableDialog(
                             is UpdateUiState.NeedsInstallPermission -> {
                                 Spacer(modifier = Modifier.height(12.dp))
                                 FrostedInfoBox(
-                                    isDark = isDark,
-                                    tint = GlassTint.AMBER,
+                                    isDark = effectiveDark,
+                                    fill = activePreset.surfaceVariant.copy(alpha = 0.68f),
                                     text = if (isArabic)
                                         "يرجى تفعيل خيار «السماح بتثبيت التطبيقات من هذا المصدر» لمتابعة التحديث مباشرة."
                                     else
@@ -383,8 +428,8 @@ fun UpdateAvailableDialog(
                             is UpdateUiState.Error -> {
                                 Spacer(modifier = Modifier.height(12.dp))
                                 FrostedInfoBox(
-                                    isDark = isDark,
-                                    tint = GlassTint.ROSE,
+                                    isDark = effectiveDark,
+                                    fill = activePreset.surfaceVariant.copy(alpha = 0.68f),
                                     text = if (isArabic) updateState.messageAr else updateState.messageEn,
                                     textColor = Color(0xFFF43F5E)
                                 )
@@ -395,13 +440,15 @@ fun UpdateAvailableDialog(
 
                         Spacer(modifier = Modifier.height(20.dp))
 
-                        // Signature Liquid Glass CTA Pill Button
+                        // Theme-Matched CTA Pill Button
                         val buttonColors = when (updateState) {
-                            is UpdateUiState.ReadyToInstall -> listOf(Color(0xFF10B981), Color(0xFF06B6D4))
-                            is UpdateUiState.NeedsInstallPermission -> listOf(Color(0xFFF59E0B), Color(0xFFEC4899))
-                            is UpdateUiState.Error -> listOf(Color(0xFFF43F5E), Color(0xFF8B5CF6))
-                            else -> listOf(Color(0xFF0EA5E9), Color(0xFF6366F1), Color(0xFFEC4899))
+                            is UpdateUiState.ReadyToInstall -> listOf(primaryAccent, secondaryAccent)
+                            is UpdateUiState.NeedsInstallPermission -> listOf(tertiaryAccent, secondaryAccent)
+                            is UpdateUiState.Error -> listOf(Color(0xFFF43F5E), secondaryAccent)
+                            else -> listOf(primaryAccent, secondaryAccent, tertiaryAccent)
                         }
+                        val avgLuminance = buttonColors.map { it.luminance() }.average()
+                        val ctaForeground = if (avgLuminance > 0.52) Color(0xFF0F172A) else Color.White
 
                         Box(
                             modifier = Modifier
@@ -410,14 +457,14 @@ fun UpdateAvailableDialog(
                                 .shadow(
                                     elevation = if (isDownloading) 0.dp else 10.dp,
                                     shape = RoundedCornerShape(26.dp),
-                                    ambientColor = buttonColors.first().copy(alpha = 0.45f),
-                                    spotColor = buttonColors.last().copy(alpha = 0.45f)
+                                    ambientColor = buttonColors.first().copy(alpha = 0.42f),
+                                    spotColor = buttonColors.last().copy(alpha = 0.42f)
                                 )
                                 .clip(RoundedCornerShape(26.dp))
                                 .background(
                                     brush = Brush.horizontalGradient(
                                         colors = if (isDownloading) {
-                                            buttonColors.map { it.copy(alpha = 0.45f) }
+                                            buttonColors.map { it.copy(alpha = 0.55f) }
                                         } else {
                                             buttonColors
                                         }
@@ -427,7 +474,7 @@ fun UpdateAvailableDialog(
                                     width = 1.2.dp,
                                     brush = Brush.verticalGradient(
                                         colors = listOf(
-                                            Color.White.copy(alpha = 0.60f),
+                                            Color.White.copy(alpha = 0.48f),
                                             Color.White.copy(alpha = 0.12f)
                                         )
                                     ),
@@ -436,7 +483,7 @@ fun UpdateAvailableDialog(
                                 .clickable(
                                     enabled = !isDownloading,
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true, color = Color.White),
+                                    indication = ripple(bounded = true, color = ctaForeground),
                                     onClick = {
                                         when (updateState) {
                                             is UpdateUiState.Available,
@@ -468,7 +515,7 @@ fun UpdateAvailableDialog(
                                     Icon(
                                         imageVector = ctaIcon,
                                         contentDescription = null,
-                                        tint = Color.White,
+                                        tint = ctaForeground,
                                         modifier = Modifier.size(19.dp)
                                     )
                                     Text(
@@ -486,7 +533,7 @@ fun UpdateAvailableDialog(
                                         },
                                         fontSize = 15.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = Color.White
+                                        color = ctaForeground
                                     )
                                 }
                             }
@@ -501,19 +548,13 @@ fun UpdateAvailableDialog(
 @Composable
 private fun FrostedInfoBox(
     isDark: Boolean,
-    tint: GlassTint,
+    fill: Color,
     text: String,
     textColor: Color
 ) {
-    val fill = if (isDark) {
-        Color(0xFF1E293B).copy(alpha = 0.55f)
-    } else {
-        Color(0xFFF1F5F9).copy(alpha = 0.72f)
-    }
-
     LiquidGlassCard(
         isDark = isDark,
-        tint = tint,
+        tint = GlassTint.FROST,
         shape = RoundedCornerShape(18.dp),
         borderWidth = 1.dp,
         customFill = fill,
@@ -538,6 +579,10 @@ private fun FrostedInfoBox(
 @Composable
 private fun LiquidGlassRocketBadge(
     isDark: Boolean,
+    preset: AppThemePreset,
+    primaryAccent: Color,
+    secondaryAccent: Color,
+    tertiaryAccent: Color,
     isDownloading: Boolean,
     progress: Float
 ) {
@@ -598,13 +643,13 @@ private fun LiquidGlassRocketBadge(
             val center = Offset(size.width / 2f, size.height / 2f)
             val outerRadius = size.minDimension / 2f
 
-            // Soft aurora glow behind medallion
+            // Soft aurora glow behind medallion tinted with active theme orbs
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        Color(0x5538BDF8),
-                        Color(0x33A855F7),
-                        Color(0x18EC4899),
+                        preset.orb1.copy(alpha = 0.36f),
+                        preset.orb2.copy(alpha = 0.24f),
+                        preset.orb3.copy(alpha = 0.14f),
                         Color.Transparent
                     ),
                     center = center,
@@ -614,15 +659,15 @@ private fun LiquidGlassRocketBadge(
                 center = center
             )
 
-            // Outer concentric chromatic ring
+            // Outer concentric chromatic ring using active theme accents
             val ringRadius = outerRadius * 0.82f
             drawCircle(
                 brush = Brush.sweepGradient(
                     colors = listOf(
-                        Color(0xFF38BDF8).copy(alpha = 0.70f),
-                        Color(0xFFC084FC).copy(alpha = 0.75f),
-                        Color(0xFFF472B6).copy(alpha = 0.70f),
-                        Color(0xFF38BDF8).copy(alpha = 0.70f)
+                        primaryAccent.copy(alpha = 0.72f),
+                        secondaryAccent.copy(alpha = 0.78f),
+                        tertiaryAccent.copy(alpha = 0.72f),
+                        primaryAccent.copy(alpha = 0.72f)
                     )
                 ),
                 radius = ringRadius,
@@ -630,15 +675,14 @@ private fun LiquidGlassRocketBadge(
                 style = Stroke(width = 2.dp.toPx())
             )
 
-            // Inner frosted disc
+            // Inner frosted disc using active theme surface/background
             val innerRadius = outerRadius * 0.68f
             drawCircle(
                 brush = Brush.linearGradient(
-                    colors = if (isDark) {
-                        listOf(Color(0xCC1E293B), Color(0xCC0F172A))
-                    } else {
-                        listOf(Color(0xEEFFFFFF), Color(0xDDE0F2FE))
-                    },
+                    colors = listOf(
+                        preset.surfaceVariant.copy(alpha = 0.88f),
+                        preset.background.copy(alpha = 0.92f)
+                    ),
                     start = Offset(0f, 0f),
                     end = Offset(size.width, size.height)
                 ),
@@ -646,7 +690,7 @@ private fun LiquidGlassRocketBadge(
                 center = center
             )
             drawCircle(
-                color = Color(0xFF38BDF8).copy(alpha = 0.50f),
+                color = primaryAccent.copy(alpha = 0.48f),
                 radius = innerRadius,
                 center = center,
                 style = Stroke(width = 1.5.dp.toPx())
@@ -657,10 +701,10 @@ private fun LiquidGlassRocketBadge(
                 drawArc(
                     brush = Brush.sweepGradient(
                         colors = listOf(
-                            Color(0xFF06B6D4),
-                            Color(0xFF8B5CF6),
-                            Color(0xFFEC4899),
-                            Color(0xFF06B6D4)
+                            primaryAccent,
+                            secondaryAccent,
+                            tertiaryAccent,
+                            primaryAccent
                         )
                     ),
                     startAngle = -90f,
@@ -674,23 +718,23 @@ private fun LiquidGlassRocketBadge(
 
             // Twinkling micro stars inside the medallion
             drawCircle(
-                color = Color(0xFFFDE047).copy(alpha = starTwinkle),
+                color = tertiaryAccent.copy(alpha = starTwinkle),
                 radius = 2.2.dp.toPx(),
                 center = Offset(center.x - innerRadius * 0.56f, center.y - innerRadius * 0.38f)
             )
             drawCircle(
-                color = Color(0xFF38BDF8).copy(alpha = 1.2f - starTwinkle * 0.6f),
+                color = primaryAccent.copy(alpha = (1.2f - starTwinkle * 0.6f).coerceIn(0f, 1f)),
                 radius = 2.0.dp.toPx(),
                 center = Offset(center.x + innerRadius * 0.58f, center.y - innerRadius * 0.28f)
             )
             drawCircle(
-                color = Color(0xFFF472B6).copy(alpha = starTwinkle),
+                color = secondaryAccent.copy(alpha = starTwinkle),
                 radius = 1.8.dp.toPx(),
                 center = Offset(center.x + innerRadius * 0.45f, center.y + innerRadius * 0.48f)
             )
         }
 
-        // Stylized Floating Liquid-Glass Rocket drawn in Canvas
+        // Stylized Floating Rocket drawn in Canvas using active theme accents
         Canvas(
             modifier = Modifier
                 .size(68.dp)
@@ -715,9 +759,9 @@ private fun LiquidGlassRocketBadge(
                 path = flamePath,
                 brush = Brush.verticalGradient(
                     colors = listOf(
-                        Color(0xFFFDE047),
-                        Color(0xFFF43F5E),
-                        Color(0xFFEC4899).copy(alpha = 0.2f)
+                        tertiaryAccent,
+                        secondaryAccent,
+                        primaryAccent.copy(alpha = 0.22f)
                     )
                 )
             )
@@ -732,7 +776,7 @@ private fun LiquidGlassRocketBadge(
             drawPath(
                 path = leftFin,
                 brush = Brush.linearGradient(
-                    colors = listOf(Color(0xFF06B6D4), Color(0xFF6366F1))
+                    colors = listOf(primaryAccent, secondaryAccent)
                 )
             )
 
@@ -746,7 +790,7 @@ private fun LiquidGlassRocketBadge(
             drawPath(
                 path = rightFin,
                 brush = Brush.linearGradient(
-                    colors = listOf(Color(0xFF8B5CF6), Color(0xFFEC4899))
+                    colors = listOf(secondaryAccent, tertiaryAccent)
                 )
             )
 
@@ -770,9 +814,17 @@ private fun LiquidGlassRocketBadge(
                 path = bodyPath,
                 brush = Brush.linearGradient(
                     colors = if (isDark) {
-                        listOf(Color(0xFFFFFFFF), Color(0xFFE0F2FE), Color(0xFFC7D2FE))
+                        listOf(
+                            Color.White,
+                            preset.onSurface.copy(alpha = 0.92f),
+                            primaryAccent.copy(alpha = 0.35f)
+                        )
                     } else {
-                        listOf(Color(0xFFFFFFFF), Color(0xFFBAE6FD), Color(0xFFDDD6FE))
+                        listOf(
+                            Color.White,
+                            preset.surfaceVariant,
+                            primaryAccent.copy(alpha = 0.25f)
+                        )
                     }
                 )
             )
@@ -796,13 +848,13 @@ private fun LiquidGlassRocketBadge(
             drawPath(
                 path = nosePath,
                 brush = Brush.horizontalGradient(
-                    colors = listOf(Color(0xFF0EA5E9), Color(0xFF8B5CF6), Color(0xFFEC4899))
+                    colors = listOf(primaryAccent, secondaryAccent, tertiaryAccent)
                 )
             )
 
             // Thruster Nozzle Base
             drawRoundRect(
-                color = Color(0xFF334155),
+                color = preset.onSurfaceVariant,
                 topLeft = Offset(cx - w * 0.08f, cy + h * 0.18f),
                 size = Size(w * 0.16f, h * 0.045f),
                 cornerRadius = CornerRadius(4f, 4f)
@@ -810,13 +862,13 @@ private fun LiquidGlassRocketBadge(
 
             // Glowing Porthole Window
             drawCircle(
-                color = Color(0xFF0F172A),
+                color = preset.background,
                 radius = w * 0.095f,
                 center = Offset(cx, cy - h * 0.02f)
             )
             drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(Color(0xFF67E8F9), Color(0xFF0284C7)),
+                    colors = listOf(secondaryAccent, primaryAccent),
                     center = Offset(cx - w * 0.02f, cy - h * 0.04f),
                     radius = w * 0.085f
                 ),

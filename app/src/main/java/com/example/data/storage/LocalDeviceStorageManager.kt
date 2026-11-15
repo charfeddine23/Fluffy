@@ -25,7 +25,9 @@ data class FluffySettingsSnapshot(
     val isBiometricEnabled: Boolean,
     val selectedCategory: String,
     val cloudSyncEnabled: Boolean = true,
-    val selectedThemeId: String = "obsidian_liquid_glass"
+    val selectedThemeId: String = "obsidian_liquid_glass",
+    val appLanguageCode: String = if (isArabic) "ar" else "en",
+    val nonScreenshotEnabled: Boolean = false
 )
 
 data class FluffyBackupBundle(
@@ -434,13 +436,16 @@ object LocalDeviceStorageManager {
         put("selectedCategory", s.selectedCategory)
         put("cloudSyncEnabled", s.cloudSyncEnabled)
         put("selectedThemeId", s.selectedThemeId)
+        put("appLanguageCode", s.appLanguageCode)
+        put("nonScreenshotEnabled", s.nonScreenshotEnabled)
     }
 
     private fun jsonToSettings(obj: JSONObject): FluffySettingsSnapshot {
         val dark = obj.optBoolean("isDarkMode", true)
+        val arabic = obj.optBoolean("isArabic", true)
         return FluffySettingsSnapshot(
             isDarkMode = dark,
-            isArabic = obj.optBoolean("isArabic", true),
+            isArabic = arabic,
             isGridView = obj.optBoolean("isGridView", true),
             isBiometricEnabled = obj.optBoolean("isBiometricEnabled", false),
             selectedCategory = obj.optString("selectedCategory", "ALL"),
@@ -448,7 +453,12 @@ object LocalDeviceStorageManager {
             selectedThemeId = obj.optString(
                 "selectedThemeId",
                 if (dark) "obsidian_liquid_glass" else "frosted_arctic_glass"
-            )
+            ),
+            appLanguageCode = obj.optString(
+                "appLanguageCode",
+                if (arabic) "ar" else "en"
+            ),
+            nonScreenshotEnabled = obj.optBoolean("nonScreenshotEnabled", false)
         )
     }
 
@@ -460,6 +470,8 @@ object LocalDeviceStorageManager {
         put("content", n.content)
         put("category", n.category)
         put("colorPreset", n.colorPreset)
+        put("backgroundId", n.backgroundId)
+        put("customColorArgb", n.customColorArgb)
         put("isPinned", n.isPinned)
         put("isFavorite", n.isFavorite)
         put("isArchived", n.isArchived)
@@ -479,6 +491,8 @@ object LocalDeviceStorageManager {
         content = obj.optString("content", ""),
         category = obj.optString("category", "Ideas"),
         colorPreset = obj.optString("colorPreset", "frost"),
+        backgroundId = obj.optString("backgroundId", "none"),
+        customColorArgb = obj.optLong("customColorArgb", 0L),
         isPinned = obj.optBoolean("isPinned", false),
         isFavorite = obj.optBoolean("isFavorite", false),
         isArchived = obj.optBoolean("isArchived", false),

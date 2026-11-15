@@ -1,6 +1,7 @@
 package com.example
 
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedContent
@@ -17,6 +18,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,6 +51,8 @@ import com.example.ui.screens.TrashScreen
 import com.example.ui.screens.VaultScreen
 import com.example.ui.theme.AppThemeRegistry
 import com.example.ui.theme.FluffyTheme
+import com.example.ui.theme.LocalAppLanguage
+import com.example.ui.theme.translateText
 import com.example.update.AppUpdateManager
 import com.example.viewmodel.FluffyViewModel
 
@@ -76,8 +80,13 @@ class MainActivity : FragmentActivity() {
         setContent {
             val viewModel: FluffyViewModel = viewModel()
             val isDark by viewModel.isDarkMode.collectAsState()
+            val appLanguage by viewModel.appLanguage.collectAsState()
             val isArabic by viewModel.isArabic.collectAsState()
             val selectedThemeId by viewModel.selectedThemeId.collectAsState()
+            val isScreenshotProtectionEnabled by viewModel.isScreenshotProtectionEnabled.collectAsState()
+            val isVaultLockEnabled by viewModel.isVaultLockEnabled.collectAsState()
+            val hasVaultPasskey by viewModel.hasVaultPasskey.collectAsState()
+            val isVaultUnlockedForSession by viewModel.isVaultUnlockedForSession.collectAsState()
             val isThemesScreenOpen by viewModel.isThemesScreenOpen.collectAsState()
             val isTrashScreenOpen by viewModel.isTrashScreenOpen.collectAsState()
             val isArchiveScreenOpen by viewModel.isArchiveScreenOpen.collectAsState()
@@ -113,6 +122,14 @@ class MainActivity : FragmentActivity() {
             val context = LocalContext.current
             val lifecycleOwner = LocalLifecycleOwner.current
 
+            LaunchedEffect(isScreenshotProtectionEnabled) {
+                if (isScreenshotProtectionEnabled) {
+                    window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                } else {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                }
+            }
+
             DisposableEffect(lifecycleOwner) {
                 val observer = LifecycleEventObserver { _, event ->
                     if (event == Lifecycle.Event.ON_RESUME) {
@@ -125,9 +142,12 @@ class MainActivity : FragmentActivity() {
 
             var authErrorMessage by remember { mutableStateOf<String?>(null) }
 
-            val layoutDirection = if (isArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
+            val layoutDirection = if (appLanguage.isRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
 
-            CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {
+            CompositionLocalProvider(
+                LocalLayoutDirection provides layoutDirection,
+                LocalAppLanguage provides appLanguage
+            ) {
                 FluffyTheme(darkTheme = isDark, themePreset = activeThemePreset) {
                     Surface(
                         modifier = Modifier.fillMaxSize(),
@@ -207,12 +227,12 @@ class MainActivity : FragmentActivity() {
                                                 targetState is FluffyScreenState.Archive ||
                                                 targetState is FluffyScreenState.Account ||
                                                 targetState is FluffyScreenState.AudioPlayer -> {
-                                                (slideInHorizontally { width -> if (isArabic) -width else width } + fadeIn())
-                                                    .togetherWith(slideOutHorizontally { width -> if (isArabic) width else -width } + fadeOut())
+                                                (slideInHorizontally { width -> if (appLanguage.isRtl) -width else width } + fadeIn())
+                                                    .togetherWith(slideOutHorizontally { width -> if (appLanguage.isRtl) width else -width } + fadeOut())
                                             }
                                             else -> {
-                                                (slideInHorizontally { width -> if (isArabic) width else -width } + fadeIn())
-                                                    .togetherWith(slideOutHorizontally { width -> if (isArabic) -width else width } + fadeOut())
+                                                (slideInHorizontally { width -> if (appLanguage.isRtl) width else -width } + fadeIn())
+                                                    .togetherWith(slideOutHorizontally { width -> if (appLanguage.isRtl) -width else width } + fadeOut())
                                             }
                                         }
                                     },
@@ -357,7 +377,40 @@ class MainActivity : FragmentActivity() {
                                                 onExportItemToUri = { item, destUri ->
                                                     viewModel.exportVaultItemToUri(item, destUri)
                                                 },
-                                                onBack = { viewModel.closeVault() }
+                                                onBack = { viewModel.closeVault() },
+                                                isVaultLockEnabled = isVaultLockEnabled,
+                                                isVaultUnlocked = isVaultUnlockedForSession,
+                                                hasVaultPasskey = hasVaultPasskey,
+                                                onTriggerBiometricUnlock = {
+                                                    val availability = biometricAuthManager.checkAvailability()
+                                                    if (availability == BiometricAvailability.NO_HARDWARE) {
+                                                        if (!hasVaultPasskey) {
+                                                            viewModel.markVaultUnlocked()
+                                                        }
+                                                    } else {
+                                                        biometricAuthManager.promptBiometricAuth(
+                                                            title = translateText(
+                                                                appLanguage,
+                                                                ar = "حماية خزنة Vault",
+                                                                fr = "Protection du coffre Vault",
+                                                                en = "Vault Protection",
+                                                                tzm = "Ammesten n Vault"
+                                                            ),
+                                                            subtitle = translateText(
+                                                                appLanguage,
+                                                                ar = "قم بتأكيد هويتك لفتح الـ Vault",
+                                                                fr = "Confirmez votre identité pour ouvrir le Vault",
+                                                                en = "Confirm your identity to unlock Vault",
+                                                                tzm = "Sentem timagit-ik i wakken ad teldiḍ Vault"
+                                                            ),
+                                                            onSuccess = { viewModel.markVaultUnlocked() },
+                                                            onError = { }
+                                                        )
+                                                    }
+                                                },
+                                                onVerifyPasskey = { passkey ->
+                                                    viewModel.verifyVaultPasskey(passkey)
+                                                }
                                             )
                                         }
                                         is FluffyScreenState.Editor -> {
@@ -367,12 +420,14 @@ class MainActivity : FragmentActivity() {
                                                 isDark = isDark,
                                                 isArabic = isArabic,
                                                 onBack = { viewModel.closeEditor() },
-                                                onSave = { title, content, category, colorPreset, isPinned, isFav, checklist, audioDuration, audioPath, audioSize ->
+                                                onSave = { title, content, category, colorPreset, backgroundId, customColorArgb, isPinned, isFav, checklist, audioDuration, audioPath, audioSize ->
                                                     viewModel.saveNote(
                                                         title = title,
                                                         content = content,
                                                         category = category,
                                                         colorPreset = colorPreset,
+                                                        backgroundId = backgroundId,
+                                                        customColorArgb = customColorArgb,
                                                         isPinned = isPinned,
                                                         isFavorite = isFav,
                                                         checklist = checklist,
@@ -383,12 +438,14 @@ class MainActivity : FragmentActivity() {
                                                 },
                                                 onDelete = { viewModel.deleteCurrentNote() },
                                                 onToggleArchive = { viewModel.toggleArchive(screen.note) },
-                                                onAutoSave = { title, content, category, colorPreset, isPinned, isFav, checklist, audioDuration, audioPath, audioSize ->
+                                                onAutoSave = { title, content, category, colorPreset, backgroundId, customColorArgb, isPinned, isFav, checklist, audioDuration, audioPath, audioSize ->
                                                     viewModel.autoSaveNote(
                                                         title = title,
                                                         content = content,
                                                         category = category,
                                                         colorPreset = colorPreset,
+                                                        backgroundId = backgroundId,
+                                                        customColorArgb = customColorArgb,
                                                         isPinned = isPinned,
                                                         isFavorite = isFav,
                                                         checklist = checklist,

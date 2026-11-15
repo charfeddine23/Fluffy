@@ -90,6 +90,8 @@ import com.example.ui.glass.FrostedBackdrop
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.glass.blurryEdgeMask
 import com.example.ui.glass.rememberTwoMillimetersDp
+import com.example.ui.theme.LocalAppLanguage
+import com.example.ui.theme.tr
 import com.example.update.UpdateUiState
 import com.example.viewmodel.FluffyViewModel
 import kotlinx.coroutines.delay
@@ -107,7 +109,11 @@ fun FluffyHomeScreen(
     val isGridView by viewModel.isGridView.collectAsState()
     val selectedThemeId by viewModel.selectedThemeId.collectAsState()
     val isBiometricEnabled by viewModel.isBiometricEnabled.collectAsState()
+    val isScreenshotProtectionEnabled by viewModel.isScreenshotProtectionEnabled.collectAsState()
+    val isVaultLockEnabled by viewModel.isVaultLockEnabled.collectAsState()
+    val hasVaultPasskey by viewModel.hasVaultPasskey.collectAsState()
     val isSettingsDrawerOpen by viewModel.isSettingsDrawerOpen.collectAsState()
+    val requestedSettingsPage by viewModel.requestedSettingsPage.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
     val selectedCategory by viewModel.selectedCategory.collectAsState()
     val notes by viewModel.filteredNotes.collectAsState()
@@ -123,7 +129,6 @@ fun FluffyHomeScreen(
     val profileAvatarChoice by viewModel.profileAvatarChoice.collectAsState()
     val archivedNotes by viewModel.archivedNotes.collectAsState()
     val trashedNotes by viewModel.trashedNotes.collectAsState()
-    val audioNotes by viewModel.audioNotes.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
     val haptic = LocalHapticFeedback.current
@@ -416,7 +421,12 @@ fun FluffyHomeScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = if (isArabic) "لا توجد نتائج مطابقة" else "No matching notes found",
+                                text = tr(
+                                    "لا توجد نتائج مطابقة",
+                                    "Aucune note correspondante",
+                                    "No matching notes found",
+                                    "Ulac tira yemṣadan"
+                                ),
                                 style = MaterialTheme.typography.bodyMedium.copy(
                                     color = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B),
                                     textAlign = TextAlign.Center
@@ -767,16 +777,20 @@ fun FluffyHomeScreen(
                 onToggleBiometric = { onToggleBiometricAuth(it) },
                 onLockAppNow = { viewModel.lockApp() },
                 onToggleTheme = { viewModel.toggleDarkMode() },
-                onToggleLanguage = { viewModel.toggleLanguage() },
+                onSelectLanguage = { lang -> viewModel.setAppLanguage(lang) },
                 onToggleViewMode = { viewModel.toggleViewMode() },
                 selectedThemeId = selectedThemeId,
-                onOpenThemes = { viewModel.openThemesScreen() },
+                onOpenThemes = { viewModel.openThemesScreen(fromSettings = true) },
                 trashedCount = trashedNotes.size,
                 archivedCount = archivedNotes.size,
-                audioCount = audioNotes.size,
-                onOpenTrash = { viewModel.openTrashScreen() },
-                onOpenArchive = { viewModel.openArchiveScreen() },
-                onOpenAudioPlayer = { viewModel.openAudioPlayerScreen() },
+                onOpenTrash = { viewModel.openTrashScreen(fromSettings = true) },
+                onOpenArchive = { viewModel.openArchiveScreen(fromSettings = true) },
+                isScreenshotProtectionEnabled = isScreenshotProtectionEnabled,
+                onToggleScreenshotProtection = { viewModel.setScreenshotProtectionEnabled(it) },
+                isVaultLockEnabled = isVaultLockEnabled,
+                hasVaultPasskey = hasVaultPasskey,
+                onToggleVaultLock = { viewModel.setVaultLockEnabled(it) },
+                onSetVaultPasskey = { passkey -> viewModel.setVaultPasskey(passkey) },
                 isCheckingUpdates = updateState is UpdateUiState.Checking,
                 hasPendingUpdate = updateState is UpdateUiState.Available ||
                     updateState is UpdateUiState.ReadyToInstall ||
@@ -794,7 +808,9 @@ fun FluffyHomeScreen(
                 onOpenCloudAuth = { viewModel.openAuthDialog() },
                 onSyncCloudNow = { viewModel.syncCloudNow() },
                 onExportLocalBackup = { uri -> viewModel.exportFullBackupToPhoneUri(uri) },
-                onImportLocalBackup = { uri -> viewModel.restoreFullBackupFromPhoneUri(uri) }
+                onImportLocalBackup = { uri -> viewModel.restoreFullBackupFromPhoneUri(uri) },
+                initialSubPage = requestedSettingsPage,
+                onConsumeInitialSubPage = { viewModel.clearRequestedSettingsPage() }
             )
         }
 
