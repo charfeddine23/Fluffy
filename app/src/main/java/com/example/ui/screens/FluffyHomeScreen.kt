@@ -453,13 +453,13 @@ fun FluffyHomeScreen(
                                     val downPos = firstDown.position
                                     if (findHitNoteAndOrigin(downPos) == null) return@awaitEachGesture
 
-                                    // Wait 1000 ms (1 full second) while stationary before activating drag
+                                    // Wait 500 ms (0.5 seconds) while stationary before activating drag
                                     var latestPos = downPos
                                     var holdActivated = false
                                     val startTime = SystemClock.uptimeMillis()
 
                                     while (true) {
-                                        val remaining = 1000L - (SystemClock.uptimeMillis() - startTime)
+                                        val remaining = 500L - (SystemClock.uptimeMillis() - startTime)
                                         if (remaining <= 0L) {
                                             holdActivated = true
                                             break
