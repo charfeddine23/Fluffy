@@ -116,6 +116,7 @@ fun FluffyHomeScreen(
     val snackbarMsg by viewModel.snackbarMessage.collectAsState()
     val updateState by viewModel.updateState.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()
+    val cloudSyncStatus by viewModel.cloudSyncStatus.collectAsState()
     val isGuestMode by viewModel.isGuestMode.collectAsState()
     val profileFirstName by viewModel.profileFirstName.collectAsState()
     val profileLastName by viewModel.profileLastName.collectAsState()
@@ -780,7 +781,20 @@ fun FluffyHomeScreen(
                 hasPendingUpdate = updateState is UpdateUiState.Available ||
                     updateState is UpdateUiState.ReadyToInstall ||
                     updateState is UpdateUiState.NeedsInstallPermission,
-                onCheckForUpdates = { viewModel.checkForUpdates(isManual = true) }
+                onCheckForUpdates = { viewModel.checkForUpdates(isManual = true) },
+                isCloudSignedIn = currentUser != null,
+                cloudSyncStatus = cloudSyncStatus,
+                profileDisplayName = currentUser?.displayName,
+                profileEmail = currentUser?.email,
+                profilePhotoUrl = currentUser?.photoUrl?.toString(),
+                profileAvatarChoice = profileAvatarChoice,
+                profileFirstName = profileFirstName,
+                profileLastName = profileLastName,
+                onOpenProfile = { viewModel.openAccountScreen() },
+                onOpenCloudAuth = { viewModel.openAuthDialog() },
+                onSyncCloudNow = { viewModel.syncCloudNow() },
+                onExportLocalBackup = { uri -> viewModel.exportFullBackupToPhoneUri(uri) },
+                onImportLocalBackup = { uri -> viewModel.restoreFullBackupFromPhoneUri(uri) }
             )
         }
 
