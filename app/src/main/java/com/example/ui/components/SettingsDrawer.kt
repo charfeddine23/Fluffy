@@ -72,6 +72,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -82,6 +85,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.BuildConfig
+import com.example.data.model.GlassTint
+import com.example.ui.glass.LiquidGlassCard
+import com.example.ui.glass.liquidGlass
 import com.example.ui.theme.AppThemeRegistry
 import com.example.ui.theme.LocalAppThemePreset
 import kotlinx.coroutines.launch
@@ -121,29 +127,61 @@ fun SettingsDrawer(
     }
 
     val activePreset = LocalAppThemePreset.current
+    val effectiveDark = activePreset.isDark || isDark
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
 
-    // Calm, refined surface palette
-    val drawerSurface by animateColorAsState(
-        targetValue = if (isDark) Color(0xFF121622) else Color(0xFFF8FAFC),
+    // Dynamic palette derived strictly from the active AppThemePreset
+    val drawerBackground by animateColorAsState(
+        targetValue = activePreset.background.copy(
+            alpha = if (activePreset.isGlassStyle) 0.92f else 0.98f
+        ),
         animationSpec = tween(320),
         label = "drawer_surface"
     )
     val cardTileColor by animateColorAsState(
-        targetValue = if (isDark) Color(0xFF1A2030) else Color(0xFFFFFFFF),
+        targetValue = activePreset.surface.copy(
+            alpha = when {
+                activePreset.isGlassStyle && effectiveDark -> 0.68f
+                activePreset.isGlassStyle && !effectiveDark -> 0.86f
+                else -> 0.94f
+            }
+        ),
         animationSpec = tween(320),
         label = "drawer_tile"
     )
-    val textColor = if (isDark) Color(0xFFF1F5F9) else Color(0xFF1E293B)
-    val subTextColor = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
-    val dividerColor = if (isDark) Color.White.copy(alpha = 0.07f) else Color.Black.copy(alpha = 0.06f)
-    val edgeBorderColor = if (isDark) Color.White.copy(alpha = 0.10f) else Color.Black.copy(alpha = 0.07f)
+    val textColor by animateColorAsState(
+        targetValue = activePreset.onSurface,
+        animationSpec = tween(280),
+        label = "drawer_text"
+    )
+    val subTextColor by animateColorAsState(
+        targetValue = activePreset.onSurfaceVariant,
+        animationSpec = tween(280),
+        label = "drawer_subtext"
+    )
+    val dividerColor = if (effectiveDark) {
+        activePreset.onSurface.copy(alpha = 0.09f)
+    } else {
+        activePreset.onSurface.copy(alpha = 0.07f)
+    }
 
-    // Muted, serene accent colors
-    val calmAccent = if (isDark) Color(0xFF7DD3FC) else Color(0xFF0284C7)
-    val calmLavender = if (isDark) Color(0xFFC4B5FD) else Color(0xFF6D28D9)
-    val calmRose = if (isDark) Color(0xFFFCA5A5) else Color(0xFFDC2626)
+    // Active theme accent tokens
+    val primaryAccent by animateColorAsState(
+        targetValue = activePreset.primary,
+        animationSpec = tween(320),
+        label = "drawer_primary"
+    )
+    val secondaryAccent by animateColorAsState(
+        targetValue = activePreset.secondary,
+        animationSpec = tween(320),
+        label = "drawer_secondary"
+    )
+    val tertiaryAccent by animateColorAsState(
+        targetValue = activePreset.tertiary,
+        animationSpec = tween(320),
+        label = "drawer_tertiary"
+    )
 
     // Interactive finger-tracking horizontal swipe offset for ultra-smooth closing
     val dragOffset = remember { Animatable(0f) }
@@ -153,7 +191,7 @@ fun SettingsDrawer(
         }
     }
 
-    // Scrim backdrop with silky fade
+    // Scrim backdrop tinted softly with the active theme
     AnimatedVisibility(
         visible = isOpen,
         enter = fadeIn(animationSpec = tween(320, easing = FastOutSlowInEasing)),
@@ -162,7 +200,10 @@ fun SettingsDrawer(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = if (isDark) 0.48f else 0.24f))
+                .background(
+                    (if (effectiveDark) Color.Black else activePreset.onBackground)
+                        .copy(alpha = if (effectiveDark) 0.50f else 0.22f)
+                )
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -205,13 +246,40 @@ fun SettingsDrawer(
                     .graphicsLayer {
                         translationX = dragOffset.value
                     }
-                    .clip(panelShape)
-                    .background(drawerSurface)
-                    .border(
-                        width = 1.dp,
-                        color = edgeBorderColor,
-                        shape = panelShape
+                    .liquidGlass(
+                        isDark = effectiveDark,
+                        tint = GlassTint.FROST,
+                        shape = panelShape,
+                        borderWidth = 1.4.dp,
+                        customFill = drawerBackground
                     )
+                    .drawBehind {
+                        // Soft ambient theme orbs matching the active theme preset
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                colors = listOf(
+                                    activePreset.orb1.copy(alpha = if (activePreset.isGlassStyle) 0.28f else 0.16f),
+                                    Color.Transparent
+                                ),
+                                center = Offset(size.width * 0.18f, size.height * 0.12f),
+                                radius = size.width * 0.78f
+                            ),
+                            center = Offset(size.width * 0.18f, size.height * 0.12f),
+                            radius = size.width * 0.78f
+                        )
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                colors = listOf(
+                                    activePreset.orb2.copy(alpha = if (activePreset.isGlassStyle) 0.24f else 0.14f),
+                                    Color.Transparent
+                                ),
+                                center = Offset(size.width * 0.85f, size.height * 0.76f),
+                                radius = size.width * 0.75f
+                            ),
+                            center = Offset(size.width * 0.85f, size.height * 0.76f),
+                            radius = size.width * 0.75f
+                        )
+                    }
                     .pointerInput(isArabic) {
                         detectHorizontalDragGestures(
                             onDragEnd = {
@@ -288,10 +356,8 @@ fun SettingsDrawer(
                             modifier = Modifier
                                 .size(38.dp)
                                 .clip(CircleShape)
-                                .background(
-                                    if (isDark) Color.White.copy(alpha = 0.06f)
-                                    else Color.Black.copy(alpha = 0.05f)
-                                )
+                                .background(activePreset.surfaceVariant.copy(alpha = 0.72f))
+                                .border(1.dp, dividerColor, CircleShape)
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = ripple(bounded = true),
@@ -317,67 +383,70 @@ fun SettingsDrawer(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(cardTileColor)
-                            .border(1.dp, dividerColor, RoundedCornerShape(20.dp))
+                    LiquidGlassCard(
+                        isDark = effectiveDark,
+                        tint = GlassTint.FROST,
+                        shape = RoundedCornerShape(20.dp),
+                        borderWidth = 1.dp,
+                        customFill = cardTileColor,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        CalmNavigationRow(
-                            icon = Icons.Rounded.DeleteOutline,
-                            iconTint = calmRose,
-                            title = if (isArabic) "سلة المهملات" else "Trash",
-                            subtitle = if (isArabic) "تحذف تلقائياً خلال 30 يوماً" else "Auto-deleted in 30 days",
-                            badgeCount = trashedCount,
-                            textColor = textColor,
-                            subTextColor = subTextColor,
-                            testTag = "settings_trash_button",
-                            onClick = {
-                                onClose()
-                                onOpenTrash()
-                            }
-                        )
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            CalmNavigationRow(
+                                icon = Icons.Rounded.DeleteOutline,
+                                iconTint = tertiaryAccent,
+                                title = if (isArabic) "سلة المهملات" else "Trash",
+                                subtitle = if (isArabic) "تحذف تلقائياً خلال 30 يوماً" else "Auto-deleted in 30 days",
+                                badgeCount = trashedCount,
+                                textColor = textColor,
+                                subTextColor = subTextColor,
+                                testTag = "settings_trash_button",
+                                onClick = {
+                                    onClose()
+                                    onOpenTrash()
+                                }
+                            )
 
-                        HorizontalDivider(
-                            color = dividerColor,
-                            modifier = Modifier.padding(horizontal = 16.dp)
-                        )
+                            HorizontalDivider(
+                                color = dividerColor,
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            )
 
-                        CalmNavigationRow(
-                            icon = Icons.Rounded.Archive,
-                            iconTint = calmAccent,
-                            title = if (isArabic) "الأرشيف" else "Archive",
-                            subtitle = if (isArabic) "الملاحظات المؤرشفة" else "Archived notes",
-                            badgeCount = archivedCount,
-                            textColor = textColor,
-                            subTextColor = subTextColor,
-                            testTag = "settings_archive_button",
-                            onClick = {
-                                onClose()
-                                onOpenArchive()
-                            }
-                        )
+                            CalmNavigationRow(
+                                icon = Icons.Rounded.Archive,
+                                iconTint = primaryAccent,
+                                title = if (isArabic) "الأرشيف" else "Archive",
+                                subtitle = if (isArabic) "الملاحظات المؤرشفة" else "Archived notes",
+                                badgeCount = archivedCount,
+                                textColor = textColor,
+                                subTextColor = subTextColor,
+                                testTag = "settings_archive_button",
+                                onClick = {
+                                    onClose()
+                                    onOpenArchive()
+                                }
+                            )
 
-                        HorizontalDivider(
-                            color = dividerColor,
-                            modifier = Modifier.padding(horizontal = 16.dp)
-                        )
+                            HorizontalDivider(
+                                color = dividerColor,
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            )
 
-                        CalmNavigationRow(
-                            icon = Icons.Rounded.GraphicEq,
-                            iconTint = Color(0xFFEC4899),
-                            title = if (isArabic) "قارئ التسجيلات الصوتية" else "Audio Recordings",
-                            subtitle = if (isArabic) "تشغيل واستيراد الصوتيات" else "Play & import audio",
-                            badgeCount = audioCount,
-                            textColor = textColor,
-                            subTextColor = subTextColor,
-                            testTag = "settings_audio_player_button",
-                            onClick = {
-                                onClose()
-                                onOpenAudioPlayer()
-                            }
-                        )
+                            CalmNavigationRow(
+                                icon = Icons.Rounded.GraphicEq,
+                                iconTint = secondaryAccent,
+                                title = if (isArabic) "قارئ التسجيلات الصوتية" else "Audio Recordings",
+                                subtitle = if (isArabic) "تشغيل واستيراد الصوتيات" else "Play & import audio",
+                                badgeCount = audioCount,
+                                textColor = textColor,
+                                subTextColor = subTextColor,
+                                testTag = "settings_audio_player_button",
+                                onClick = {
+                                    onClose()
+                                    onOpenAudioPlayer()
+                                }
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(22.dp))
@@ -389,102 +458,108 @@ fun SettingsDrawer(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(cardTileColor)
-                            .border(1.dp, dividerColor, RoundedCornerShape(20.dp))
-                            .padding(horizontal = 16.dp, vertical = 14.dp)
+                    LiquidGlassCard(
+                        isDark = effectiveDark,
+                        tint = GlassTint.FROST,
+                        shape = RoundedCornerShape(20.dp),
+                        borderWidth = 1.dp,
+                        customFill = cardTileColor,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 14.dp)
                         ) {
                             Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(38.dp)
-                                        .clip(CircleShape)
-                                        .background(calmAccent.copy(alpha = 0.12f)),
-                                    contentAlignment = Alignment.Center
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Fingerprint,
-                                        contentDescription = null,
-                                        tint = calmAccent,
-                                        modifier = Modifier.size(20.dp)
-                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .size(38.dp)
+                                            .clip(CircleShape)
+                                            .background(primaryAccent.copy(alpha = 0.14f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Fingerprint,
+                                            contentDescription = null,
+                                            tint = primaryAccent,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column {
+                                        Text(
+                                            text = if (isArabic) "قفل التطبيق بالبصمة" else "Biometric Lock",
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = textColor
+                                        )
+                                        Text(
+                                            text = if (isArabic) "حماية الملاحظات عند الفتح" else "Protect notes on launch",
+                                            fontSize = 11.5.sp,
+                                            color = subTextColor
+                                        )
+                                    }
                                 }
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column {
-                                    Text(
-                                        text = if (isArabic) "قفل التطبيق بالبصمة" else "Biometric Lock",
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = textColor
+
+                                Switch(
+                                    checked = isBiometricEnabled,
+                                    onCheckedChange = onToggleBiometric,
+                                    modifier = Modifier.testTag("biometric_switch"),
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = if (effectiveDark) activePreset.background else Color.White,
+                                        checkedTrackColor = primaryAccent,
+                                        uncheckedThumbColor = subTextColor,
+                                        uncheckedTrackColor = activePreset.surfaceVariant
                                     )
-                                    Text(
-                                        text = if (isArabic) "حماية الملاحظات عند الفتح" else "Protect notes on launch",
-                                        fontSize = 11.5.sp,
-                                        color = subTextColor
-                                    )
-                                }
+                                )
                             }
 
-                            Switch(
-                                checked = isBiometricEnabled,
-                                onCheckedChange = onToggleBiometric,
-                                modifier = Modifier.testTag("biometric_switch"),
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = Color.White,
-                                    checkedTrackColor = calmAccent,
-                                    uncheckedThumbColor = subTextColor,
-                                    uncheckedTrackColor = if (isDark) Color(0xFF283044) else Color(0xFFE2E8F0)
-                                )
-                            )
-                        }
-
-                        AnimatedVisibility(
-                            visible = isBiometricEnabled,
-                            enter = expandVertically() + fadeIn(),
-                            exit = shrinkVertically() + fadeOut()
-                        ) {
-                            Column {
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .background(calmAccent.copy(alpha = 0.10f))
-                                        .clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = ripple(bounded = true)
-                                        ) {
-                                            onClose()
-                                            onLockAppNow()
-                                        }
-                                        .padding(vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Lock,
-                                        contentDescription = null,
-                                        tint = calmAccent,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = if (isArabic) "قفل التطبيق الآن" else "Lock App Now",
-                                        fontSize = 12.5.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = calmAccent
-                                    )
+                            AnimatedVisibility(
+                                visible = isBiometricEnabled,
+                                enter = expandVertically() + fadeIn(),
+                                exit = shrinkVertically() + fadeOut()
+                            ) {
+                                Column {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .background(primaryAccent.copy(alpha = 0.12f))
+                                            .clickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = ripple(bounded = true)
+                                            ) {
+                                                onClose()
+                                                onLockAppNow()
+                                            }
+                                            .padding(vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Lock,
+                                            contentDescription = null,
+                                            tint = primaryAccent,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = if (isArabic) "قفل التطبيق الآن" else "Lock App Now",
+                                            fontSize = 12.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = primaryAccent
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -500,141 +575,144 @@ fun SettingsDrawer(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     val currentPreset = AppThemeRegistry.resolve(selectedThemeId, isDark)
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(cardTileColor)
-                            .border(1.dp, dividerColor, RoundedCornerShape(20.dp))
+                    LiquidGlassCard(
+                        isDark = effectiveDark,
+                        tint = GlassTint.FROST,
+                        shape = RoundedCornerShape(20.dp),
+                        borderWidth = 1.dp,
+                        customFill = cardTileColor,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        // Themes Gallery
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("settings_themes_button")
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true)
-                                ) {
-                                    onClose()
-                                    onOpenThemes()
-                                }
-                                .padding(horizontal = 16.dp, vertical = 14.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            // Themes Gallery
                             Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("settings_themes_button")
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = ripple(bounded = true)
+                                    ) {
+                                        onClose()
+                                        onOpenThemes()
+                                    }
+                                    .padding(horizontal = 16.dp, vertical = 14.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.weight(1f)
+                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .clip(CircleShape)
-                                        .background(calmLavender.copy(alpha = 0.12f)),
-                                    contentAlignment = Alignment.Center
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Palette,
-                                        contentDescription = null,
-                                        tint = calmLavender,
-                                        modifier = Modifier.size(19.dp)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column {
-                                    Text(
-                                        text = if (isArabic) "الثيمات" else "Themes",
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = textColor
-                                    )
-                                    Text(
-                                        text = currentPreset.name,
-                                        fontSize = 11.5.sp,
-                                        color = subTextColor
-                                    )
-                                }
-                            }
-
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                listOf(
-                                    currentPreset.primary,
-                                    currentPreset.secondary,
-                                    currentPreset.tertiary
-                                ).forEach { dot ->
                                     Box(
                                         modifier = Modifier
-                                            .size(7.dp)
+                                            .size(36.dp)
                                             .clip(CircleShape)
-                                            .background(dot.copy(alpha = 0.85f))
+                                            .background(secondaryAccent.copy(alpha = 0.14f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Palette,
+                                            contentDescription = null,
+                                            tint = secondaryAccent,
+                                            modifier = Modifier.size(19.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column {
+                                        Text(
+                                            text = if (isArabic) "الثيمات" else "Themes",
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = textColor
+                                        )
+                                        Text(
+                                            text = currentPreset.name,
+                                            fontSize = 11.5.sp,
+                                            color = subTextColor
+                                        )
+                                    }
+                                }
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    listOf(
+                                        currentPreset.primary,
+                                        currentPreset.secondary,
+                                        currentPreset.tertiary
+                                    ).forEach { dot ->
+                                        Box(
+                                            modifier = Modifier
+                                                .size(7.dp)
+                                                .clip(CircleShape)
+                                                .background(dot.copy(alpha = 0.9f))
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                                        contentDescription = null,
+                                        tint = subTextColor,
+                                        modifier = Modifier.size(18.dp)
                                     )
                                 }
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                                    contentDescription = null,
-                                    tint = subTextColor,
-                                    modifier = Modifier.size(18.dp)
-                                )
                             }
+
+                            HorizontalDivider(
+                                color = dividerColor,
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            )
+
+                            CalmSettingRow(
+                                icon = if (isDark) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
+                                iconTint = secondaryAccent,
+                                title = if (isArabic) "المظهر" else "Theme Mode",
+                                subtitle = if (isDark) {
+                                    if (isArabic) "الوضع الليلي" else "Dark Mode"
+                                } else {
+                                    if (isArabic) "الوضع النهاري" else "Light Mode"
+                                },
+                                textColor = textColor,
+                                subTextColor = subTextColor,
+                                onClick = onToggleTheme
+                            )
+
+                            HorizontalDivider(
+                                color = dividerColor,
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            )
+
+                            CalmSettingRow(
+                                icon = Icons.Rounded.Language,
+                                iconTint = primaryAccent,
+                                title = if (isArabic) "اللغة" else "Language",
+                                subtitle = if (isArabic) "العربية" else "English",
+                                textColor = textColor,
+                                subTextColor = subTextColor,
+                                onClick = onToggleLanguage
+                            )
+
+                            HorizontalDivider(
+                                color = dividerColor,
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            )
+
+                            CalmSettingRow(
+                                icon = if (isGridView) Icons.Rounded.ViewAgenda else Icons.Rounded.GridView,
+                                iconTint = tertiaryAccent,
+                                title = if (isArabic) "عرض الملاحظات" else "Notes Layout",
+                                subtitle = if (isGridView) {
+                                    if (isArabic) "شبكة عمودين" else "Grid View"
+                                } else {
+                                    if (isArabic) "قائمة عمودية" else "List View"
+                                },
+                                textColor = textColor,
+                                subTextColor = subTextColor,
+                                onClick = onToggleViewMode
+                            )
                         }
-
-                        HorizontalDivider(
-                            color = dividerColor,
-                            modifier = Modifier.padding(horizontal = 16.dp)
-                        )
-
-                        CalmSettingRow(
-                            icon = if (isDark) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
-                            iconTint = calmLavender,
-                            title = if (isArabic) "المظهر" else "Theme Mode",
-                            subtitle = if (isDark) {
-                                if (isArabic) "الوضع الليلي الهادئ" else "Dark Mode"
-                            } else {
-                                if (isArabic) "الوضع النهاري الناعم" else "Light Mode"
-                            },
-                            textColor = textColor,
-                            subTextColor = subTextColor,
-                            onClick = onToggleTheme
-                        )
-
-                        HorizontalDivider(
-                            color = dividerColor,
-                            modifier = Modifier.padding(horizontal = 16.dp)
-                        )
-
-                        CalmSettingRow(
-                            icon = Icons.Rounded.Language,
-                            iconTint = calmLavender,
-                            title = if (isArabic) "اللغة" else "Language",
-                            subtitle = if (isArabic) "العربية" else "English",
-                            textColor = textColor,
-                            subTextColor = subTextColor,
-                            onClick = onToggleLanguage
-                        )
-
-                        HorizontalDivider(
-                            color = dividerColor,
-                            modifier = Modifier.padding(horizontal = 16.dp)
-                        )
-
-                        CalmSettingRow(
-                            icon = if (isGridView) Icons.Rounded.ViewAgenda else Icons.Rounded.GridView,
-                            iconTint = calmLavender,
-                            title = if (isArabic) "عرض الملاحظات" else "Notes Layout",
-                            subtitle = if (isGridView) {
-                                if (isArabic) "شبكة عمودين" else "Grid View"
-                            } else {
-                                if (isArabic) "قائمة عمودية" else "List View"
-                            },
-                            textColor = textColor,
-                            subTextColor = subTextColor,
-                            onClick = onToggleViewMode
-                        )
                     }
 
                     Spacer(modifier = Modifier.height(22.dp))
@@ -646,74 +724,75 @@ fun SettingsDrawer(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("check_updates_button")
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(cardTileColor)
-                            .border(1.dp, dividerColor, RoundedCornerShape(20.dp))
-                            .clickable(
-                                enabled = !isCheckingUpdates,
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = ripple(bounded = true),
-                                onClick = onCheckForUpdates
-                            )
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    LiquidGlassCard(
+                        isDark = effectiveDark,
+                        tint = GlassTint.FROST,
+                        shape = RoundedCornerShape(20.dp),
+                        borderWidth = 1.dp,
+                        customFill = cardTileColor,
+                        onClick = if (!isCheckingUpdates) onCheckForUpdates else null,
+                        testTag = "check_updates_button",
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Box(
+                        Row(
                             modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(calmAccent.copy(alpha = 0.12f)),
-                            contentAlignment = Alignment.Center
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            if (isCheckingUpdates) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
-                                    strokeWidth = 2.dp,
-                                    color = calmAccent
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Rounded.SystemUpdate,
-                                    contentDescription = if (isArabic) "التحقق من التحديثات" else "Check for Updates",
-                                    tint = calmAccent,
-                                    modifier = Modifier.size(19.dp)
-                                )
-                            }
-                        }
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = if (isArabic) "التحقق من التحديثات" else "Check for Updates",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = textColor
-                            )
-                            Text(
-                                text = when {
-                                    isCheckingUpdates ->
-                                        if (isArabic) "جاري الفحص..." else "Checking..."
-                                    hasPendingUpdate ->
-                                        if (isArabic) "يتوفر إصدار جديد" else "Update available"
-                                    else ->
-                                        if (isArabic) "الإصدار ${BuildConfig.VERSION_NAME}" else "Version ${BuildConfig.VERSION_NAME}"
-                                },
-                                fontSize = 11.5.sp,
-                                color = if (hasPendingUpdate) calmAccent else subTextColor
-                            )
-                        }
-
-                        if (hasPendingUpdate && !isCheckingUpdates) {
                             Box(
                                 modifier = Modifier
-                                    .size(8.dp)
+                                    .size(36.dp)
                                     .clip(CircleShape)
-                                    .background(calmAccent)
-                            )
+                                    .background(primaryAccent.copy(alpha = 0.14f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (isCheckingUpdates) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = primaryAccent
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Rounded.SystemUpdate,
+                                        contentDescription = if (isArabic) "التحقق من التحديثات" else "Check for Updates",
+                                        tint = primaryAccent,
+                                        modifier = Modifier.size(19.dp)
+                                    )
+                                }
+                            }
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = if (isArabic) "التحقق من التحديثات" else "Check for Updates",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = textColor
+                                )
+                                Text(
+                                    text = when {
+                                        isCheckingUpdates ->
+                                            if (isArabic) "جاري الفحص..." else "Checking..."
+                                        hasPendingUpdate ->
+                                            if (isArabic) "يتوفر إصدار جديد" else "Update available"
+                                        else ->
+                                            if (isArabic) "الإصدار ${BuildConfig.VERSION_NAME}" else "Version ${BuildConfig.VERSION_NAME}"
+                                    },
+                                    fontSize = 11.5.sp,
+                                    color = if (hasPendingUpdate) primaryAccent else subTextColor
+                                )
+                            }
+
+                            if (hasPendingUpdate && !isCheckingUpdates) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(primaryAccent)
+                                )
+                            }
                         }
                     }
 

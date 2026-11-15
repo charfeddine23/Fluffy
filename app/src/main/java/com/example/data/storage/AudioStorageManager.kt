@@ -91,9 +91,9 @@ object AudioStorageManager {
     fun audioDir(context: Context): File =
         File(context.applicationContext.filesDir, AUDIO_DIR).apply { if (!exists()) mkdirs() }
 
-    fun createNewRecordingFile(context: Context): File {
+    fun createNewRecordingFile(context: Context, extension: String = "wav"): File {
         val id = UUID.randomUUID().toString().take(8)
-        return File(audioDir(context), "voice_${System.currentTimeMillis()}_$id.m4a")
+        return File(audioDir(context), "voice_${System.currentTimeMillis()}_$id.$extension")
     }
 
     fun getFileByteSize(context: Context, pathOrUri: String): Long {
@@ -114,7 +114,7 @@ object AudioStorageManager {
 
     fun computeDurationSec(context: Context, pathOrUri: String): Int {
         if (pathOrUri.isBlank()) return 0
-        return runCatching {
+        val retrieved = runCatching {
             val retriever = MediaMetadataRetriever()
             try {
                 if (pathOrUri.startsWith("content://")) {
@@ -125,11 +125,34 @@ object AudioStorageManager {
                 val durationMs = retriever
                     .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                     ?.toLongOrNull() ?: 0L
-                ((durationMs + 500L) / 1000L).toInt().coerceAtLeast(1)
+                if (durationMs > 0L) ((durationMs + 500L) / 1000L).toInt().coerceAtLeast(1) else 0
             } finally {
                 retriever.release()
             }
         }.getOrDefault(0)
+        if (retrieved > 0) return retrieved
+
+        // Fallback: parse RIFF/WAV header byte rate if local .wav file
+        if (!pathOrUri.startsWith("content://") && pathOrUri.endsWith(".wav", ignoreCase = true)) {
+            val f = File(pathOrUri)
+            if (f.exists() && f.length() > 44L) {
+                return runCatching {
+                    java.io.RandomAccessFile(f, "r").use { raf ->
+                        raf.seek(28L)
+                        val b0 = raf.read()
+                        val b1 = raf.read()
+                        val b2 = raf.read()
+                        val b3 = raf.read()
+                        val byteRate = b0 or (b1 shl 8) or (b2 shl 16) or (b3 shl 24)
+                        val dataBytes = (f.length() - 44L).coerceAtLeast(0L)
+                        if (byteRate > 0) {
+                            ((dataBytes + byteRate / 2L) / byteRate.toLong()).toInt().coerceAtLeast(1)
+                        } else 1
+                    }
+                }.getOrDefault(1)
+            }
+        }
+        return 0
     }
 
     suspend fun importAudioFromUri(context: Context, uri: Uri): ImportedAudioInfo =

@@ -1,9 +1,10 @@
 package com.example.ui.components
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.MediaRecorder
-import android.os.Build
+import android.net.Uri
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateDpAsState
@@ -37,12 +38,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -63,13 +64,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
+import com.example.audio.VoiceRecorderEngine
 import com.example.audio.rememberAudioPlaybackController
 import com.example.data.model.GlassTint
 import com.example.data.storage.AudioCloudPolicy
 import com.example.data.storage.AudioStorageManager
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.glass.liquidGlass
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Locale
@@ -84,6 +85,9 @@ fun VoiceRecorderDialog(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val playbackController = rememberAudioPlaybackController()
+    val recorderEngine = remember(context) {
+        VoiceRecorderEngine(context.applicationContext, scope)
+    }
 
     var hasMicPermission by remember {
         mutableStateOf(
@@ -93,6 +97,7 @@ fun VoiceRecorderDialog(
     }
     var permissionRequestedOnce by remember { mutableStateOf(false) }
     var isRecording by remember { mutableStateOf(false) }
+    var isFinalizing by remember { mutableStateOf(false) }
     var hasRecordedOrImported by remember { mutableStateOf(false) }
     var isImporting by remember { mutableStateOf(false) }
     var secondsElapsed by remember { mutableIntStateOf(0) }
@@ -100,89 +105,67 @@ fun VoiceRecorderDialog(
     var recordedByteSize by remember { mutableLongStateOf(0L) }
     var recorderError by remember { mutableStateOf<String?>(null) }
 
-    var mediaRecorder by remember { mutableStateOf<MediaRecorder?>(null) }
     val waveLevels = remember { mutableStateListOf(0.25f, 0.4f, 0.65f, 0.5f, 0.7f, 0.35f, 0.45f) }
-    var currentAmplitude by remember { mutableFloatStateOf(0.2f) }
 
-    fun releaseRecorderSafely(discardFile: Boolean) {
-        runCatching {
-            mediaRecorder?.apply {
-                try {
-                    stop()
-                } catch (_: Exception) {
-                }
-                reset()
-                release()
-            }
+    fun pushWaveLevel(level: Float) {
+        for (i in 0 until waveLevels.size - 1) {
+            waveLevels[i] = waveLevels[i + 1]
         }
-        mediaRecorder = null
-        if (discardFile && recordedFilePath.isNotBlank() && !recordedFilePath.startsWith("content://")) {
-            runCatching { File(recordedFilePath).delete() }
-            recordedFilePath = ""
-            recordedByteSize = 0L
-        }
+        waveLevels[waveLevels.lastIndex] = level.coerceIn(0.15f, 1.0f)
     }
 
     fun startRealRecording() {
         recorderError = null
         playbackController.stop()
-        releaseRecorderSafely(discardFile = false)
+        secondsElapsed = 0
+        recordedByteSize = 0L
+        hasRecordedOrImported = false
 
-        val outFile = AudioStorageManager.createNewRecordingFile(context)
-        val started = runCatching {
-            val rec = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                MediaRecorder(context)
-            } else {
-                @Suppress("DEPRECATION")
-                MediaRecorder()
+        val res = recorderEngine.start(
+            onAmplitude = { amp -> pushWaveLevel(amp) },
+            onProgress = { sec, bytes ->
+                secondsElapsed = sec
+                recordedByteSize = bytes
             }
-            rec.apply {
-                setAudioSource(MediaRecorder.AudioSource.MIC)
-                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                setAudioEncodingBitRate(128_000)
-                setAudioSamplingRate(44_100)
-                setOutputFile(outFile.absolutePath)
-                prepare()
-                start()
-            }
-            mediaRecorder = rec
-            recordedFilePath = outFile.absolutePath
-            recordedByteSize = 0L
-            secondsElapsed = 0
-            hasRecordedOrImported = false
+        )
+        res.onSuccess { path ->
+            recordedFilePath = path
             isRecording = true
-        }
-        started.onFailure { err ->
-            runCatching { outFile.delete() }
-            mediaRecorder = null
+        }.onFailure { err ->
             isRecording = false
+            recordedFilePath = ""
             recorderError = if (isArabic) {
-                "تعذر بدء التسجيل الصوتي: ${err.localizedMessage ?: "الميكروفون غير متاح"}"
+                "تعذر تشغيل الميكروفون: ${err.localizedMessage ?: "تأكد من السماح بالصوت"}"
             } else {
-                "Unable to start microphone: ${err.localizedMessage ?: "Mic unavailable"}"
+                "Unable to start microphone: ${err.localizedMessage ?: "Audio input unavailable"}"
             }
         }
     }
 
-    fun stopRealRecording() {
+    suspend fun stopAndFinalizeRecording(saveAfterFinalize: Boolean = false) {
+        if (!isRecording || isFinalizing) return
         isRecording = false
-        runCatching {
-            mediaRecorder?.apply {
-                stop()
-                reset()
-                release()
+        isFinalizing = true
+        val result = recorderEngine.stopAndFinalize()
+        isFinalizing = false
+
+        result.onSuccess { res ->
+            recordedFilePath = res.filePath
+            recordedByteSize = res.byteSize
+            secondsElapsed = res.durationSec
+            hasRecordedOrImported = true
+            recorderError = null
+            if (saveAfterFinalize) {
+                onSaveVoiceNote(res.durationSec, res.filePath, res.byteSize)
             }
-        }
-        mediaRecorder = null
-        if (recordedFilePath.isNotBlank()) {
-            val file = File(recordedFilePath)
-            recordedByteSize = if (file.exists()) file.length() else 0L
-            val computedDur = AudioStorageManager.computeDurationSec(context, recordedFilePath)
-            if (computedDur > 0) {
-                secondsElapsed = maxOf(secondsElapsed, computedDur)
+        }.onFailure { err ->
+            hasRecordedOrImported = false
+            recordedByteSize = 0L
+            recorderError = if (isArabic) {
+                "تعذر حفظ التسجيل الصوتي: ${err.localizedMessage ?: "لم يتم التقاط صوت"}"
+            } else {
+                "Failed to finalize recording: ${err.localizedMessage ?: "No audio captured"}"
             }
-            hasRecordedOrImported = recordedByteSize > 0L
         }
     }
 
@@ -193,6 +176,12 @@ fun VoiceRecorderDialog(
         permissionRequestedOnce = true
         if (granted) {
             startRealRecording()
+        } else {
+            recorderError = if (isArabic) {
+                "صلاحية الميكروفون مطلوبة للتسجيل الصوتي المباشر"
+            } else {
+                "Microphone permission is required for voice recording"
+            }
         }
     }
 
@@ -203,7 +192,10 @@ fun VoiceRecorderDialog(
             scope.launch {
                 isImporting = true
                 recorderError = null
-                if (isRecording) stopRealRecording()
+                if (isRecording) {
+                    isRecording = false
+                    recorderEngine.stopAndFinalize()
+                }
                 playbackController.stop()
                 try {
                     val info = AudioStorageManager.importAudioFromUri(context, uri)
@@ -234,44 +226,10 @@ fun VoiceRecorderDialog(
         }
     }
 
-    // Timer + live amplitude sampling while recording
-    LaunchedEffect(isRecording) {
-        if (isRecording) {
-            var tickMs = 0L
-            while (isRecording) {
-                delay(100L)
-                tickMs += 100L
-                val rawAmp = runCatching { mediaRecorder?.maxAmplitude ?: 0 }.getOrDefault(0)
-                val normalized = (rawAmp / 22000f).coerceIn(0.15f, 1.0f)
-                currentAmplitude = normalized
-                for (i in 0 until waveLevels.size - 1) {
-                    waveLevels[i] = waveLevels[i + 1]
-                }
-                waveLevels[waveLevels.lastIndex] = normalized
-                if (tickMs % 1000L == 0L) {
-                    secondsElapsed++
-                    if (recordedFilePath.isNotBlank()) {
-                        recordedByteSize = AudioStorageManager.getFileByteSize(context, recordedFilePath)
-                    }
-                }
-            }
-        }
-    }
-
     DisposableEffect(Unit) {
         onDispose {
             playbackController.release()
-            runCatching {
-                mediaRecorder?.apply {
-                    try {
-                        stop()
-                    } catch (_: Exception) {
-                    }
-                    reset()
-                    release()
-                }
-            }
-            mediaRecorder = null
+            recorderEngine.cleanupSync()
         }
     }
 
@@ -282,7 +240,7 @@ fun VoiceRecorderDialog(
 
     Dialog(
         onDismissRequest = {
-            if (isRecording) stopRealRecording()
+            recorderEngine.cleanupSync()
             playbackController.stop()
             onDismiss()
         }
@@ -322,7 +280,7 @@ fun VoiceRecorderDialog(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = ripple(bounded = true)
                             ) {
-                                if (isRecording) stopRealRecording()
+                                recorderEngine.cleanupSync()
                                 playbackController.stop()
                                 onDismiss()
                             },
@@ -351,6 +309,7 @@ fun VoiceRecorderDialog(
 
                 Text(
                     text = when {
+                        isFinalizing -> if (isArabic) "جارٍ تجهيز الملف الصوتي..." else "Finalizing audio..."
                         isImporting -> if (isArabic) "جارٍ استيراد الملف الصوتي..." else "Importing audio file..."
                         !hasMicPermission && !hasRecordedOrImported ->
                             if (isArabic) "يرجى السماح بصلاحية الميكروفون أو استيراد ملف صوتي"
@@ -401,7 +360,39 @@ fun VoiceRecorderDialog(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                if (playbackController.activeTrackId == "preview" && playbackController.lastError != null) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = if (isArabic) {
+                            "تعذر تشغيل المعاينة: ${playbackController.lastError}"
+                        } else {
+                            "Preview error: ${playbackController.lastError}"
+                        },
+                        fontSize = 11.sp,
+                        color = Color(0xFFF43F5E),
+                        textAlign = TextAlign.Center
+                    )
+                }
+
+                if (!hasMicPermission) {
+                    TextButton(
+                        onClick = {
+                            val intent = Intent(
+                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.fromParts("package", context.packageName, null)
+                            )
+                            runCatching { context.startActivity(intent) }
+                        }
+                    ) {
+                        Text(
+                            text = if (isArabic) "فتح إعدادات صلاحية الميكروفون" else "Open App Mic Settings",
+                            fontSize = 11.5.sp,
+                            color = Color(0xFF38BDF8)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
 
                 // Reactive Live Waveform Visualizer
                 ReactiveWaveform(
@@ -409,7 +400,7 @@ fun VoiceRecorderDialog(
                     levels = waveLevels
                 )
 
-                Spacer(modifier = Modifier.height(22.dp))
+                Spacer(modifier = Modifier.height(20.dp))
 
                 // Control Buttons
                 Row(
@@ -423,7 +414,9 @@ fun VoiceRecorderDialog(
                                 .testTag("stop_recording_button")
                                 .clip(CircleShape)
                                 .background(Color(0xFFEC4899))
-                                .clickable { stopRealRecording() },
+                                .clickable {
+                                    scope.launch { stopAndFinalizeRecording(saveAfterFinalize = false) }
+                                },
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
@@ -472,8 +465,13 @@ fun VoiceRecorderDialog(
                                 .testTag("start_recording_button")
                                 .clip(CircleShape)
                                 .background(Color(0xFFEC4899).copy(alpha = if (hasRecordedOrImported) 0.16f else 1f))
-                                .clickable {
-                                    if (hasMicPermission) {
+                                .clickable(enabled = !isFinalizing && !isImporting) {
+                                    val grantedNow = ContextCompat.checkSelfPermission(
+                                        context,
+                                        Manifest.permission.RECORD_AUDIO
+                                    ) == PackageManager.PERMISSION_GRANTED
+                                    hasMicPermission = grantedNow
+                                    if (grantedNow) {
                                         startRealRecording()
                                     } else {
                                         micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
@@ -496,7 +494,7 @@ fun VoiceRecorderDialog(
                 // Import audio file from phone (zero-permission SAF)
                 OutlinedButton(
                     onClick = { importAudioLauncher.launch(arrayOf("audio/*")) },
-                    enabled = !isImporting,
+                    enabled = !isImporting && !isFinalizing,
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -527,12 +525,24 @@ fun VoiceRecorderDialog(
                 // Save / Attach Button
                 Button(
                     onClick = {
-                        if (isRecording) stopRealRecording()
                         playbackController.stop()
-                        val duration = secondsElapsed.coerceAtLeast(1)
-                        onSaveVoiceNote(duration, recordedFilePath, recordedByteSize)
+                        if (isRecording) {
+                            scope.launch { stopAndFinalizeRecording(saveAfterFinalize = true) }
+                        } else if (recordedFilePath.isNotBlank()) {
+                            val existsOk = recordedFilePath.startsWith("content://") || File(recordedFilePath).exists()
+                            if (existsOk) {
+                                val duration = secondsElapsed.coerceAtLeast(1)
+                                onSaveVoiceNote(duration, recordedFilePath, recordedByteSize)
+                            } else {
+                                recorderError = if (isArabic) {
+                                    "ملف التسجيل غير متاح، جرّب التسجيل مرة أخرى"
+                                } else {
+                                    "Recording file not found, please record again"
+                                }
+                            }
+                        }
                     },
-                    enabled = !isImporting && (hasRecordedOrImported || isRecording),
+                    enabled = !isImporting && !isFinalizing && (hasRecordedOrImported || isRecording),
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(48.dp)
@@ -542,6 +552,14 @@ fun VoiceRecorderDialog(
                         containerColor = Color(0xFFEC4899)
                     )
                 ) {
+                    if (isFinalizing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
                     Text(
                         text = if (isArabic) "حفظ التسجيل في الملاحظة ✨" else "Save Recording to Note ✨",
                         fontWeight = FontWeight.Bold,
@@ -575,7 +593,7 @@ private fun ReactiveWaveform(
             }
             val animatedHeight by animateDpAsState(
                 targetValue = targetDp,
-                animationSpec = tween(durationMillis = 110),
+                animationSpec = tween(durationMillis = 100),
                 label = "wave_bar_$idx"
             )
             Box(

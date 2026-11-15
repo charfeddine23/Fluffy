@@ -228,6 +228,7 @@ fun NoteEditorScreen(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = ripple(bounded = true)
                         ) {
+                            playbackController.stop()
                             if (isEditMode) {
                                 onSave(
                                     title, content, category, selectedTint.id,
@@ -421,8 +422,11 @@ fun NoteEditorScreen(
 
                     // Interactive Audio Player Card (only shown when a voice memo / audio file is attached)
                     if (audioDurationSec > 0 || audioFilePath.isNotBlank()) {
+                        val stableAudioTrackId = remember(note.syncId) {
+                            "editor_${note.syncId.ifBlank { note.id.toString() }}"
+                        }
                         AudioPlayerCard(
-                            trackId = "editor_${note.id}",
+                            trackId = stableAudioTrackId,
                             title = title.ifBlank {
                                 if (isArabic) "تسجيل صوتي مرفق" else "Attached Voice Memo"
                             },

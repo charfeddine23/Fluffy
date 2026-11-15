@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
@@ -60,6 +61,7 @@ fun AudioPlayerCard(
     onDelete: (() -> Unit)? = null
 ) {
     val isThisTrackActive = playbackController.activeTrackId == trackId
+    val isPreparing = isThisTrackActive && playbackController.isPreparing
     val isPlaying = isThisTrackActive && playbackController.isPlaying
     val isOverCloudLimit = AudioCloudPolicy.isAudioOverCloudLimit(byteSize)
     val accentColor = if (isOverCloudLimit) Color(0xFFF59E0B) else Color(0xFFEC4899)
@@ -115,16 +117,24 @@ fun AudioPlayerCard(
                             },
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = if (isPlaying) {
-                                if (isArabic) "إيقاف مؤقت" else "Pause"
-                            } else {
-                                if (isArabic) "تشغيل" else "Play"
-                            },
-                            tint = Color.White,
-                            modifier = Modifier.size(24.dp)
-                        )
+                        if (isPreparing) {
+                            CircularProgressIndicator(
+                                color = Color.White,
+                                strokeWidth = 2.dp,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        } else {
+                            Icon(
+                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = if (isPlaying) {
+                                    if (isArabic) "إيقاف مؤقت" else "Pause"
+                                } else {
+                                    if (isArabic) "تشغيل" else "Play"
+                                },
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.width(12.dp))
@@ -281,11 +291,19 @@ fun AudioPlayerCard(
 
             if (isThisTrackActive && playbackController.lastError != null) {
                 Spacer(modifier = Modifier.height(4.dp))
+                val errMsg = playbackController.lastError!!
                 Text(
-                    text = if (isArabic) {
-                        "ملف الصوت غير متوفر محلياً على هذا الجهاز"
-                    } else {
-                        "Audio file is not available locally on this device"
+                    text = when {
+                        errMsg == "MISSING_FILE" -> if (isArabic) {
+                            "ملف الصوت غير متوفر محلياً على هذا الجهاز"
+                        } else {
+                            "Audio file is not available locally on this device"
+                        }
+                        else -> if (isArabic) {
+                            "تعذر تشغيل الصوت: $errMsg"
+                        } else {
+                            "Unable to play audio: $errMsg"
+                        }
                     },
                     fontSize = 11.sp,
                     color = Color(0xFFF43F5E)

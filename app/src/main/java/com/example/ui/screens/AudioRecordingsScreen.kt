@@ -46,6 +46,7 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -470,12 +471,20 @@ fun AudioRecordingsScreen(
                                             .background(rowAccent.copy(alpha = if (isActive) 1f else 0.16f)),
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        Icon(
-                                            imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                            contentDescription = null,
-                                            tint = if (isActive) Color.White else rowAccent,
-                                            modifier = Modifier.size(24.dp)
-                                        )
+                                        if (isActive && playbackController.isPreparing) {
+                                            CircularProgressIndicator(
+                                                color = Color.White,
+                                                strokeWidth = 2.dp,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        } else {
+                                            Icon(
+                                                imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                                contentDescription = null,
+                                                tint = if (isActive) Color.White else rowAccent,
+                                                modifier = Modifier.size(24.dp)
+                                            )
+                                        }
                                     }
 
                                     Column(modifier = Modifier.weight(1f)) {
@@ -693,12 +702,20 @@ fun AudioRecordingsScreen(
                                             },
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        Icon(
-                                            imageVector = if (playbackController.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                            contentDescription = "Play/Pause",
-                                            tint = Color.White,
-                                            modifier = Modifier.size(22.dp)
-                                        )
+                                        if (playbackController.isPreparing) {
+                                            CircularProgressIndicator(
+                                                color = Color.White,
+                                                strokeWidth = 2.dp,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        } else {
+                                            Icon(
+                                                imageVector = if (playbackController.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                                contentDescription = "Play/Pause",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(22.dp)
+                                            )
+                                        }
                                     }
 
                                     // Next
@@ -756,11 +773,19 @@ fun AudioRecordingsScreen(
                             )
 
                             if (playbackController.lastError != null) {
+                                val errMsg = playbackController.lastError!!
                                 Text(
-                                    text = if (isArabic) {
-                                        "ملف الصوت غير متوفر محلياً على هذا الجهاز"
-                                    } else {
-                                        "Audio file is not available locally on this device"
+                                    text = when (errMsg) {
+                                        "MISSING_FILE" -> if (isArabic) {
+                                            "ملف الصوت غير متوفر محلياً على هذا الجهاز"
+                                        } else {
+                                            "Audio file is not available locally on this device"
+                                        }
+                                        else -> if (isArabic) {
+                                            "تعذر تشغيل الصوت: $errMsg"
+                                        } else {
+                                            "Unable to play audio: $errMsg"
+                                        }
                                     },
                                     fontSize = 11.sp,
                                     color = Color(0xFFF43F5E)

@@ -48,10 +48,12 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.GlassTint
 import com.example.ui.glass.liquidGlass
+import com.example.ui.theme.LocalAppThemePreset
 
 @Composable
 fun FluffyTopBar(
@@ -77,8 +79,9 @@ fun FluffyTopBar(
     modifier: Modifier = Modifier
 ) {
     val focusManager = LocalFocusManager.current
-    val textColor = if (isDark) Color(0xFFF1F5F9) else Color(0xFF0F172A)
-    val hintColor = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
+    val activePreset = LocalAppThemePreset.current
+    val textColor = activePreset.onBackground
+    val hintColor = activePreset.onSurfaceVariant
 
     Column(
         modifier = modifier
@@ -91,7 +94,12 @@ fun FluffyTopBar(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp)
+            ) {
                 // Menu / Settings Hamburger Button
                 Box(
                     modifier = Modifier
@@ -120,7 +128,7 @@ fun FluffyTopBar(
 
                 Spacer(modifier = Modifier.width(10.dp))
 
-                Column {
+                Column(modifier = Modifier.weight(1f, fill = false)) {
                     Text(
                         text = "Fluffy",
                         style = MaterialTheme.typography.titleLarge.copy(
@@ -128,6 +136,8 @@ fun FluffyTopBar(
                             fontSize = 24.sp,
                             color = textColor
                         ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
@@ -135,11 +145,14 @@ fun FluffyTopBar(
                         )
                     )
                     Text(
-                        text = if (isArabic) "الملاحظات الزجاجية السائلة" else "Liquid Glass Notes",
+                        text = "${activePreset.name} Notes",
                         style = MaterialTheme.typography.labelSmall.copy(
                             color = hintColor,
                             fontWeight = FontWeight.Medium
-                        )
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("topbar_theme_subtitle")
                     )
                 }
             }
@@ -249,7 +262,7 @@ fun FluffyTopBar(
                             color = textColor
                         ),
                         singleLine = true,
-                        cursorBrush = SolidColor(if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)),
+                        cursorBrush = SolidColor(activePreset.primary),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() })
                     )
@@ -328,7 +341,7 @@ private fun GlassIconAction(
     testTag: String,
     onClick: () -> Unit
 ) {
-    val iconColor = if (isDark) Color(0xFFF1F5F9) else Color(0xFF0F172A)
+    val iconColor = LocalAppThemePreset.current.onBackground
     Box(
         modifier = Modifier
             .size(38.dp)
