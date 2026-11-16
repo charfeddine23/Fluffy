@@ -33,6 +33,7 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
@@ -41,6 +42,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
@@ -613,3 +615,132 @@ fun LiquidGlassPill(
         content = content
     )
 }
+
+/**
+ * Authentic Dark Liquid Glass (Glassmorphism الداكن) modifier for floating circular & pill buttons:
+ * - Translucent smoked obsidian glass fill so underlying card colors refract softly through
+ * - Convex top-left lens dome highlight + bottom-right internal caustic bounce
+ * - Crisp curved diagonal white specular rim (top-left bright crescent + bottom-right rim glow)
+ * - Soft floating drop shadow for elevated spatial depth
+ */
+@Composable
+fun Modifier.darkLiquidGlass(
+    shape: Shape = CircleShape,
+    tintColor: Color? = null,
+    elevation: Dp = 14.dp,
+    rimWidth: Dp = 1.35.dp,
+    baseAlpha: Float = 0.50f,
+    isPressed: Boolean = false
+): Modifier {
+    val safeAlpha = baseAlpha.coerceIn(0.22f, 0.85f)
+    return this
+        .shadow(
+            elevation = if (isPressed) (elevation * 0.65f) else elevation,
+            shape = shape,
+            clip = false,
+            ambientColor = Color.Black.copy(alpha = 0.55f),
+            spotColor = Color.Black.copy(alpha = 0.72f)
+        )
+        .clip(shape)
+        .drawBehind {
+            val w = size.width
+            val h = size.height
+            val maxDim = maxOf(w, h).coerceAtLeast(1f)
+
+            // 1. Translucent smoked dark glass base allowing underlying colors to shine through
+            drawRect(
+                brush = Brush.linearGradient(
+                    colors = listOf(
+                        Color(0xFF232936).copy(alpha = (safeAlpha * 0.84f).coerceIn(0.18f, 0.82f)),
+                        Color(0xFF10141D).copy(alpha = safeAlpha),
+                        Color(0xFF05070B).copy(alpha = (safeAlpha * 1.18f).coerceIn(0.26f, 0.88f))
+                    ),
+                    start = Offset(0f, 0f),
+                    end = Offset(w, h)
+                )
+            )
+
+            // Optional delicate colored glass refraction when a button represents an active state
+            if (tintColor != null) {
+                drawRect(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            tintColor.copy(alpha = 0.28f),
+                            tintColor.copy(alpha = 0.10f),
+                            Color.Transparent
+                        ),
+                        center = Offset(w * 0.5f, h * 0.5f),
+                        radius = maxDim * 0.75f
+                    )
+                )
+            }
+
+            // 2. Top-left curved dome reflection (3D liquid glass lens gleam)
+            drawRect(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        Color.White.copy(alpha = if (isPressed) 0.26f else 0.19f),
+                        Color.White.copy(alpha = 0.05f),
+                        Color.Transparent
+                    ),
+                    center = Offset(w * 0.24f, h * 0.18f),
+                    radius = maxDim * 0.68f
+                )
+            )
+
+            // 3. Bottom-right secondary internal caustic bounce
+            drawRect(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        Color.White.copy(alpha = 0.11f),
+                        Color.Transparent
+                    ),
+                    center = Offset(w * 0.78f, h * 0.84f),
+                    radius = maxDim * 0.52f
+                )
+            )
+
+            // 4. Subtle vertical spherical shading for optical depth
+            drawRect(
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        Color.White.copy(alpha = 0.07f),
+                        Color.Transparent,
+                        Color.Black.copy(alpha = 0.16f)
+                    )
+                )
+            )
+        }
+        .drawWithContent {
+            drawContent()
+            val w = size.width
+            val h = size.height
+            val outline = shape.createOutline(size, layoutDirection, this)
+            val strokePx = rimWidth.toPx()
+
+            // Crisp outer occlusion edge
+            drawOutline(
+                outline = outline,
+                color = Color.Black.copy(alpha = 0.42f),
+                style = Stroke(width = (strokePx * 1.35f))
+            )
+
+            // Diagonal specular glass rim matching Apple/BitChord Dark Liquid Glass
+            drawOutline(
+                outline = outline,
+                brush = Brush.linearGradient(
+                    colorStops = arrayOf(
+                        0.00f to Color.White.copy(alpha = if (isPressed) 0.94f else 0.82f),
+                        0.24f to Color.White.copy(alpha = 0.28f),
+                        0.50f to Color.White.copy(alpha = 0.08f),
+                        0.76f to Color.White.copy(alpha = 0.20f),
+                        1.00f to Color.White.copy(alpha = 0.48f)
+                    ),
+                    start = Offset(0f, 0f),
+                    end = Offset(w, h)
+                ),
+                style = Stroke(width = strokePx)
+            )
+        }
+}
+

@@ -15,9 +15,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
@@ -400,22 +398,11 @@ fun SettingsDrawer(
             )
             val dismissThresholdPx = with(density) { 96.dp.toPx() }
 
-            val drawerWidthFraction by animateFloatAsState(
-                targetValue = if (currentPage == SettingsPage.ACCOUNT_CLOUD) 0.91f else 0.85f,
-                animationSpec = tween(durationMillis = 240, easing = SmoothEaseOut),
-                label = "drawer_width_frac"
-            )
-            val drawerMaxWidth by animateDpAsState(
-                targetValue = if (currentPage == SettingsPage.ACCOUNT_CLOUD) 388.dp else 352.dp,
-                animationSpec = tween(durationMillis = 240, easing = SmoothEaseOut),
-                label = "drawer_max_width"
-            )
-
             Box(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .fillMaxWidth(drawerWidthFraction)
-                    .widthIn(max = drawerMaxWidth)
+                    .fillMaxWidth(0.85f)
+                    .widthIn(max = 352.dp)
                     .graphicsLayer {
                         translationX = dragOffset.value
                     }

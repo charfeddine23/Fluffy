@@ -50,6 +50,7 @@ import com.example.data.model.NoteBackgroundCatalog
 import com.example.data.model.NoteEntity
 import com.example.ui.glass.FrostedBackdrop
 import com.example.ui.glass.LiquidGlassCard
+import com.example.ui.glass.darkLiquidGlass
 import com.example.ui.glass.liquidGlass
 import com.example.ui.theme.LocalAppThemePreset
 import com.example.ui.theme.tr
@@ -90,15 +91,15 @@ fun ArchiveScreen(
                     modifier = Modifier
                         .size(44.dp)
                         .testTag("archive_back_button")
-                        .liquidGlass(
-                            isDark = isDark,
-                            tint = GlassTint.FROST,
+                        .darkLiquidGlass(
                             shape = CircleShape,
-                            borderWidth = 1.2.dp
+                            elevation = 10.dp,
+                            rimWidth = 1.25.dp,
+                            baseAlpha = 0.50f
                         )
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
-                            indication = ripple(bounded = true),
+                            indication = ripple(bounded = true, color = Color.White),
                             onClick = onBack
                         ),
                     contentAlignment = Alignment.Center
@@ -106,7 +107,7 @@ fun ArchiveScreen(
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = tr("رجوع", "Retour", "Back", "Uɣal"),
-                        tint = textColor,
+                        tint = Color.White,
                         modifier = Modifier.size(21.dp)
                     )
                 }

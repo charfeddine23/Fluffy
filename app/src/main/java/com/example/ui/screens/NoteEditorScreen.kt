@@ -124,6 +124,7 @@ import com.example.ui.components.DocumentStyleBottomSheet
 import com.example.ui.components.VoiceRecorderDialog
 import com.example.ui.glass.FrostedBackdrop
 import com.example.ui.glass.LiquidGlassCard
+import com.example.ui.glass.darkLiquidGlass
 import com.example.ui.glass.liquidGlass
 import kotlinx.coroutines.launch
 
@@ -461,10 +462,15 @@ fun NoteEditorScreen(
                     modifier = Modifier
                         .size(44.dp)
                         .testTag("editor_back_button")
-                        .clip(CircleShape)
+                        .darkLiquidGlass(
+                            shape = CircleShape,
+                            elevation = 8.dp,
+                            rimWidth = 1.25.dp,
+                            baseAlpha = 0.50f
+                        )
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
-                            indication = ripple(bounded = true)
+                            indication = ripple(bounded = true, color = Color.White)
                         ) {
                             playbackController.stop()
                             if (isEditMode) {
@@ -494,8 +500,8 @@ fun NoteEditorScreen(
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = if (isArabic) "رجوع" else "Back",
-                        tint = textColor,
-                        modifier = Modifier.size(22.dp)
+                        tint = Color.White,
+                        modifier = Modifier.size(21.dp)
                     )
                 }
 
@@ -512,16 +518,16 @@ fun NoteEditorScreen(
                                 .size(44.dp)
                                 .minimumInteractiveComponentSize()
                                 .testTag("editor_copy_page_button")
-                                .liquidGlass(
-                                    isDark = effectiveDark,
-                                    tint = if (justCopiedPage) GlassTint.EMERALD else GlassTint.FROST,
+                                .darkLiquidGlass(
                                     shape = RoundedCornerShape(14.dp),
-                                    borderWidth = 1.dp,
-                                    customFill = if (justCopiedPage) copyAccent.copy(alpha = 0.26f) else pillFill
+                                    tintColor = if (justCopiedPage) copyAccent else null,
+                                    elevation = 8.dp,
+                                    rimWidth = 1.2.dp,
+                                    baseAlpha = 0.50f
                                 )
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true)
+                                    indication = ripple(bounded = true, color = Color.White)
                                 ) {
                                     val rawPageText = pages.getOrNull(currentReadPageIdx).orEmpty()
                                     val fallbackChecklistText = if (currentReadPageIdx == 0 && checklistItems.isNotEmpty()) {
@@ -556,28 +562,28 @@ fun NoteEditorScreen(
                             Icon(
                                 imageVector = if (justCopiedPage) Icons.Default.Check else Icons.Default.ContentCopy,
                                 contentDescription = if (isArabic) "نسخ محتوى الصفحة" else "Copy page content",
-                                tint = if (justCopiedPage) copyAccent else textColor,
+                                tint = if (justCopiedPage) Color(0xFF34D399) else Color.White,
                                 modifier = Modifier.size(19.dp)
                             )
                         }
                     }
 
-                    // Style & Backgrounds button (original clean glass frame + sleek custom landscape-art icon)
+                    // Style & Backgrounds button (Dark Liquid Glass frame + custom landscape-art icon)
                     val hasCustomVisual = activeBgPreset != null || customColorArgb != 0L || selectedTint != GlassTint.FROST
                     Box(
                         modifier = Modifier
                             .size(44.dp)
                             .testTag("editor_style_top_button")
-                            .liquidGlass(
-                                isDark = effectiveDark,
-                                tint = selectedTint,
+                            .darkLiquidGlass(
                                 shape = RoundedCornerShape(14.dp),
-                                borderWidth = 1.dp,
-                                customFill = if (hasCustomVisual) accentColor.copy(alpha = 0.22f) else pillFill
+                                tintColor = if (hasCustomVisual) accentColor else null,
+                                elevation = 8.dp,
+                                rimWidth = 1.2.dp,
+                                baseAlpha = 0.50f
                             )
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
-                                indication = ripple(bounded = true)
+                                indication = ripple(bounded = true, color = Color.White)
                             ) {
                                 styleSheetInitialTab = if (activeBgPreset != null) 1 else 0
                                 showStyleSheet = true
@@ -585,7 +591,7 @@ fun NoteEditorScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         BackgroundArtworkIcon(
-                            tint = if (hasCustomVisual) accentColor else textColor,
+                            tint = Color.White,
                             secondaryTint = Color(0xFFFBBF24),
                             modifier = Modifier.size(22.dp)
                         )
@@ -596,16 +602,16 @@ fun NoteEditorScreen(
                         modifier = Modifier
                             .size(44.dp)
                             .testTag("editor_pin_toggle")
-                            .liquidGlass(
-                                isDark = effectiveDark,
-                                tint = if (isPinned) GlassTint.AMBER else GlassTint.FROST,
+                            .darkLiquidGlass(
                                 shape = RoundedCornerShape(14.dp),
-                                borderWidth = 1.dp,
-                                customFill = if (isPinned) Color(0xFFFBBF24).copy(alpha = 0.25f) else pillFill
+                                tintColor = if (isPinned) Color(0xFFFBBF24) else null,
+                                elevation = 8.dp,
+                                rimWidth = 1.2.dp,
+                                baseAlpha = 0.50f
                             )
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
-                                indication = ripple(bounded = true)
+                                indication = ripple(bounded = true, color = Color.White)
                             ) {
                                 isPinned = !isPinned
                                 triggerImmediateSaveIfViewMode()
@@ -615,7 +621,7 @@ fun NoteEditorScreen(
                         Icon(
                             imageVector = Icons.Default.PushPin,
                             contentDescription = if (isArabic) "تثبيت" else "Pin",
-                            tint = if (isPinned) Color(0xFFFBBF24) else textColor,
+                            tint = if (isPinned) Color(0xFFFBBF24) else Color.White,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -626,16 +632,16 @@ fun NoteEditorScreen(
                             modifier = Modifier
                                 .size(44.dp)
                                 .testTag("editor_save_button")
-                                .liquidGlass(
-                                    isDark = effectiveDark,
-                                    tint = selectedTint,
+                                .darkLiquidGlass(
                                     shape = RoundedCornerShape(14.dp),
-                                    borderWidth = 1.2.dp,
-                                    customFill = accentColor.copy(alpha = if (effectiveDark) 0.28f else 0.18f)
+                                    tintColor = accentColor,
+                                    elevation = 8.dp,
+                                    rimWidth = 1.25.dp,
+                                    baseAlpha = 0.52f
                                 )
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true)
+                                    indication = ripple(bounded = true, color = Color.White)
                                 ) {
                                     onSave(
                                         title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
@@ -648,7 +654,7 @@ fun NoteEditorScreen(
                             Icon(
                                 imageVector = Icons.Default.Check,
                                 contentDescription = if (isArabic) "حفظ" else "Save",
-                                tint = textColor,
+                                tint = Color.White,
                                 modifier = Modifier.size(21.dp)
                             )
                         }
@@ -657,16 +663,16 @@ fun NoteEditorScreen(
                             modifier = Modifier
                                 .size(44.dp)
                                 .testTag("editor_edit_button")
-                                .liquidGlass(
-                                    isDark = effectiveDark,
-                                    tint = selectedTint,
+                                .darkLiquidGlass(
                                     shape = RoundedCornerShape(14.dp),
-                                    borderWidth = 1.2.dp,
-                                    customFill = accentColor.copy(alpha = if (effectiveDark) 0.26f else 0.18f)
+                                    tintColor = accentColor,
+                                    elevation = 8.dp,
+                                    rimWidth = 1.25.dp,
+                                    baseAlpha = 0.52f
                                 )
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true)
+                                    indication = ripple(bounded = true, color = Color.White)
                                 ) {
                                     isEditMode = true
                                 },
@@ -675,7 +681,7 @@ fun NoteEditorScreen(
                             Icon(
                                 imageVector = Icons.Default.Edit,
                                 contentDescription = if (isArabic) "تعديل" else "Edit",
-                                tint = textColor,
+                                tint = Color.White,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -1246,48 +1252,48 @@ fun NoteEditorScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        // Add Voice Memo button (now anchored at bottom)
+                        // Add Voice Memo button (Dark Liquid Glass Circle)
                         val hasAttachedAudio = audioDurationSec > 0 || audioFilePath.isNotBlank()
                         Box(
                             modifier = Modifier
                                 .size(44.dp)
                                 .testTag("editor_add_voice_button")
-                                .liquidGlass(
-                                    isDark = effectiveDark,
-                                    tint = if (hasAttachedAudio) GlassTint.ROSE else GlassTint.FROST,
+                                .darkLiquidGlass(
                                     shape = CircleShape,
-                                    borderWidth = 1.dp,
-                                    customFill = if (hasAttachedAudio) Color(0xFFEC4899).copy(alpha = 0.25f) else pillFill
+                                    tintColor = if (hasAttachedAudio) Color(0xFFEC4899) else null,
+                                    elevation = 9.dp,
+                                    rimWidth = 1.25.dp,
+                                    baseAlpha = 0.50f
                                 )
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true)
+                                    indication = ripple(bounded = true, color = Color.White)
                                 ) { showVoiceRecorderDialog = true },
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Mic,
                                 contentDescription = if (isArabic) "إضافة تسجيل صوتي" else "Add Voice Memo",
-                                tint = if (hasAttachedAudio) Color(0xFFEC4899) else textColor,
+                                tint = if (hasAttachedAudio) Color(0xFFF472B6) else Color.White,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
 
-                        // Add Checklist button (now anchored at bottom)
+                        // Add Checklist button (Dark Liquid Glass Circle)
                         Box(
                             modifier = Modifier
                                 .size(44.dp)
                                 .testTag("editor_add_checklist_button")
-                                .liquidGlass(
-                                    isDark = effectiveDark,
-                                    tint = if (checklistItems.isNotEmpty()) selectedTint else GlassTint.FROST,
+                                .darkLiquidGlass(
                                     shape = CircleShape,
-                                    borderWidth = 1.dp,
-                                    customFill = if (checklistItems.isNotEmpty()) accentColor.copy(alpha = 0.24f) else pillFill
+                                    tintColor = if (checklistItems.isNotEmpty()) accentColor else null,
+                                    elevation = 9.dp,
+                                    rimWidth = 1.25.dp,
+                                    baseAlpha = 0.50f
                                 )
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true)
+                                    indication = ripple(bounded = true, color = Color.White)
                                 ) {
                                     if (totalNoteBytes + 32L <= NotePagesCodec.MAX_NOTE_BYTES) {
                                         checklistItems.add(ChecklistItem(text = "", isDone = false))
@@ -1303,26 +1309,26 @@ fun NoteEditorScreen(
                             Icon(
                                 imageVector = Icons.Default.CheckBox,
                                 contentDescription = if (isArabic) "إضافة قائمة مهام" else "Add Checklist",
-                                tint = if (checklistItems.isNotEmpty()) accentColor else textColor,
+                                tint = Color.White,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
 
-                        // Document Colors & Category button
+                        // Document Colors & Category button (Dark Liquid Glass Circle)
                         Box(
                             modifier = Modifier
                                 .size(44.dp)
                                 .testTag("editor_palette_button")
-                                .liquidGlass(
-                                    isDark = effectiveDark,
-                                    tint = if (customColorArgb != 0L || selectedTint != GlassTint.FROST) selectedTint else GlassTint.FROST,
+                                .darkLiquidGlass(
                                     shape = CircleShape,
-                                    borderWidth = 1.dp,
-                                    customFill = if (customColorArgb != 0L) accentColor.copy(alpha = 0.26f) else pillFill
+                                    tintColor = if (customColorArgb != 0L || selectedTint != GlassTint.FROST) accentColor else null,
+                                    elevation = 9.dp,
+                                    rimWidth = 1.25.dp,
+                                    baseAlpha = 0.50f
                                 )
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true)
+                                    indication = ripple(bounded = true, color = Color.White)
                                 ) {
                                     styleSheetInitialTab = 0
                                     showStyleSheet = true
@@ -1332,26 +1338,26 @@ fun NoteEditorScreen(
                             Icon(
                                 imageVector = Icons.Default.Palette,
                                 contentDescription = if (isArabic) "تلوين المستند" else "Document Color",
-                                tint = if (customColorArgb != 0L) accentColor else textColor,
+                                tint = Color.White,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
 
-                        // Document Backgrounds button (original clean liquidGlass circle + sleek custom artwork icon)
+                        // Document Backgrounds button (Dark Liquid Glass circle + custom artwork icon)
                         Box(
                             modifier = Modifier
                                 .size(44.dp)
                                 .testTag("editor_backgrounds_button")
-                                .liquidGlass(
-                                    isDark = effectiveDark,
-                                    tint = if (activeBgPreset != null) selectedTint else GlassTint.FROST,
+                                .darkLiquidGlass(
                                     shape = CircleShape,
-                                    borderWidth = 1.dp,
-                                    customFill = if (activeBgPreset != null) accentColor.copy(alpha = 0.26f) else pillFill
+                                    tintColor = if (activeBgPreset != null) accentColor else null,
+                                    elevation = 9.dp,
+                                    rimWidth = 1.25.dp,
+                                    baseAlpha = 0.50f
                                 )
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true)
+                                    indication = ripple(bounded = true, color = Color.White)
                                 ) {
                                     styleSheetInitialTab = 1
                                     showStyleSheet = true
@@ -1359,7 +1365,7 @@ fun NoteEditorScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             BackgroundArtworkIcon(
-                                tint = if (activeBgPreset != null) accentColor else textColor,
+                                tint = Color.White,
                                 secondaryTint = Color(0xFFFBBF24),
                                 modifier = Modifier.size(22.dp)
                             )
@@ -1384,23 +1390,22 @@ fun NoteEditorScreen(
                                 modifier = Modifier
                                     .size(44.dp)
                                     .testTag("editor_more_button")
-                                    .liquidGlass(
-                                        isDark = effectiveDark,
-                                        tint = GlassTint.FROST,
+                                    .darkLiquidGlass(
                                         shape = CircleShape,
-                                        borderWidth = 1.dp,
-                                        customFill = pillFill
+                                        elevation = 9.dp,
+                                        rimWidth = 1.25.dp,
+                                        baseAlpha = 0.50f
                                     )
                                     .clickable(
                                         interactionSource = remember { MutableInteractionSource() },
-                                        indication = ripple(bounded = true)
+                                        indication = ripple(bounded = true, color = Color.White)
                                     ) { showMoreMenu = true },
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.MoreVert,
                                     contentDescription = if (isArabic) "خيارات إضافية" else "More options",
-                                    tint = textColor,
+                                    tint = Color.White,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }

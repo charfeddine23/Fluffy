@@ -1,11 +1,15 @@
 package com.example.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,6 +54,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
@@ -61,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.GlassTint
 import com.example.data.model.NotesViewMode
+import com.example.ui.glass.darkLiquidGlass
 import com.example.ui.glass.liquidGlass
 import com.example.ui.theme.LocalAppThemePreset
 import com.example.ui.theme.tr
@@ -113,20 +119,32 @@ fun FluffyTopBar(
                     .weight(1f)
                     .padding(end = 8.dp)
             ) {
-                // Menu / Settings Hamburger Button
+                // Menu / Settings Hamburger Button (Dark Liquid Glass Circle)
+                val menuInteraction = remember { MutableInteractionSource() }
+                val isMenuPressed by menuInteraction.collectIsPressedAsState()
+                val menuScale by animateFloatAsState(
+                    targetValue = if (isMenuPressed) 0.91f else 1f,
+                    animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+                    label = "menu_btn_scale"
+                )
                 Box(
                     modifier = Modifier
                         .size(40.dp)
+                        .graphicsLayer {
+                            scaleX = menuScale
+                            scaleY = menuScale
+                        }
                         .testTag("menu_drawer_button")
-                        .liquidGlass(
-                            isDark = isDark,
-                            tint = GlassTint.FROST,
-                            shape = RoundedCornerShape(13.dp),
-                            borderWidth = 1.2.dp
+                        .darkLiquidGlass(
+                            shape = CircleShape,
+                            elevation = 10.dp,
+                            rimWidth = 1.25.dp,
+                            baseAlpha = 0.50f,
+                            isPressed = isMenuPressed
                         )
                         .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = ripple(bounded = true),
+                            interactionSource = menuInteraction,
+                            indication = ripple(bounded = true, color = Color.White),
                             onClick = onOpenSettings
                         ),
                     contentAlignment = Alignment.Center
@@ -134,7 +152,7 @@ fun FluffyTopBar(
                     Icon(
                         imageVector = Icons.Default.Menu,
                         contentDescription = tr("الإعدادات", "Paramètres", "Settings", "Iɣewwaṛen"),
-                        tint = textColor,
+                        tint = Color.White,
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -421,20 +439,31 @@ private fun GlassIconAction(
     testTag: String,
     onClick: () -> Unit
 ) {
-    val iconColor = LocalAppThemePreset.current.onBackground
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.91f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "topbar_icon_scale"
+    )
     Box(
         modifier = Modifier
             .size(38.dp)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .testTag(testTag)
-            .liquidGlass(
-                isDark = isDark,
-                tint = GlassTint.FROST,
+            .darkLiquidGlass(
                 shape = CircleShape,
-                borderWidth = 1.2.dp
+                elevation = 10.dp,
+                rimWidth = 1.25.dp,
+                baseAlpha = 0.50f,
+                isPressed = isPressed
             )
             .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = ripple(bounded = true),
+                interactionSource = interactionSource,
+                indication = ripple(bounded = true, color = Color.White),
                 onClick = onClick
             ),
         contentAlignment = Alignment.Center
@@ -442,7 +471,7 @@ private fun GlassIconAction(
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            tint = iconColor,
+            tint = Color.White,
             modifier = Modifier.size(19.dp)
         )
     }

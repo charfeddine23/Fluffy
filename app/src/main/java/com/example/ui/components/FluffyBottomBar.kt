@@ -2,6 +2,7 @@ package com.example.ui.components
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -11,6 +12,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -43,14 +45,13 @@ import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import com.example.data.model.GlassTint
-import com.example.ui.glass.LiquidGlassCard
-import com.example.ui.glass.liquidGlass
+import com.example.ui.glass.darkLiquidGlass
 
 @Composable
 fun FluffyBottomBar(
@@ -77,12 +78,23 @@ fun FluffyBottomBar(
         label = "container_horizontal_bias"
     )
 
-    // Dynamic width: 62.dp circle -> 280.dp centered pill dock
-    val targetWidth = if (isExpanded) 280.dp else 62.dp
+    // Dynamic width: 64.dp circle -> 286.dp centered Dark Liquid Glass dock
+    val targetWidth = if (isExpanded) 286.dp else 64.dp
     val animatedWidth by animateDpAsState(
         targetValue = targetWidth,
         animationSpec = spring(dampingRatio = 0.76f, stiffness = 380f),
         label = "container_width"
+    )
+
+    val plusInteractionSource = remember { MutableInteractionSource() }
+    val isPlusPressed by plusInteractionSource.collectIsPressedAsState()
+    val plusScale by animateFloatAsState(
+        targetValue = if (!isExpanded && isPlusPressed) 0.91f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "floating_plus_scale"
     )
 
     Box(
@@ -97,7 +109,7 @@ fun FluffyBottomBar(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = if (isDark) 0.35f else 0.18f))
+                    .background(Color.Black.copy(alpha = if (isDark) 0.36f else 0.20f))
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
@@ -115,35 +127,33 @@ fun FluffyBottomBar(
                     .padding(horizontal = 20.dp, vertical = 20.dp),
                 contentAlignment = BiasAlignment(animatedBias, 1.0f)
             ) {
-                val containerFill = if (isDark) {
-                    Color(0xFF0F172A).copy(alpha = 0.85f)
-                } else {
-                    Color(0xFFFFFFFF).copy(alpha = 0.85f)
-                }
-
-                // The SAME container that expands from corner to center
-                LiquidGlassCard(
-                    isDark = isDark,
-                    tint = if (isExpanded) GlassTint.FROST else GlassTint.CYAN,
-                    shape = RoundedCornerShape(31.dp),
-                    borderWidth = 1.8.dp,
-                    customFill = if (isExpanded) containerFill else {
-                        if (isDark) Color(0xFF0284C7).copy(alpha = 0.55f) else Color(0xFF0EA5E9).copy(alpha = 0.40f)
-                    },
+                // Dark Liquid Glass Floating Plus Button -> Morphs smoothly into Dark Liquid Glass Action Capsule
+                Box(
                     modifier = Modifier
                         .width(animatedWidth)
-                        .height(62.dp)
+                        .height(64.dp)
+                        .graphicsLayer {
+                            scaleX = plusScale
+                            scaleY = plusScale
+                        }
                         .testTag("morphing_action_dock")
+                        .darkLiquidGlass(
+                            shape = RoundedCornerShape(32.dp),
+                            elevation = 16.dp,
+                            rimWidth = 1.4.dp,
+                            baseAlpha = if (isExpanded) 0.62f else 0.48f,
+                            isPressed = !isExpanded && isPlusPressed
+                        )
                 ) {
                     if (!isExpanded) {
-                        // Collapsed state: ONLY the "+" icon in the center of the circle
+                        // Collapsed state: Dark Liquid Glass Floating Plus Button
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .testTag("floating_new_note_button")
                                 .clip(CircleShape)
                                 .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
+                                    interactionSource = plusInteractionSource,
                                     indication = ripple(bounded = true, color = Color.White),
                                     onClick = { isExpanded = true }
                                 ),
@@ -153,11 +163,11 @@ fun FluffyBottomBar(
                                 imageVector = Icons.Default.Add,
                                 contentDescription = if (isArabic) "إضافة ملاحظة" else "Add Note",
                                 tint = Color.White,
-                                modifier = Modifier.size(32.dp)
+                                modifier = Modifier.size(30.dp)
                             )
                         }
                     } else {
-                        // Expanded state: 3 icons horizontally in the center + close button
+                        // Expanded state: 3 Dark Liquid Glass circular action lenses + Close orb
                         Row(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -180,7 +190,7 @@ fun FluffyBottomBar(
                             // Icon 2: New Text Note (Center, Prominent)
                             HorizontalActionButton(
                                 icon = Icons.Default.EditNote,
-                                tintColor = Color(0xFF06B6D4),
+                                tintColor = Color(0xFF38BDF8),
                                 contentDescription = if (isArabic) "ملاحظة جديدة" else "New Note",
                                 testTag = "action_new_note_btn",
                                 onClick = {
@@ -192,7 +202,7 @@ fun FluffyBottomBar(
                             // Icon 3: Checklist
                             HorizontalActionButton(
                                 icon = Icons.Default.Checklist,
-                                tintColor = Color(0xFF10B981),
+                                tintColor = Color(0xFF34D399),
                                 contentDescription = if (isArabic) "قائمة مهام" else "New Checklist",
                                 testTag = "action_checklist_btn",
                                 onClick = {
@@ -201,16 +211,32 @@ fun FluffyBottomBar(
                                 }
                             )
 
-                            // Icon 4: Close / Collapse button
+                            // Icon 4: Close / Collapse orb
+                            val closeInteraction = remember { MutableInteractionSource() }
+                            val isClosePressed by closeInteraction.collectIsPressedAsState()
+                            val closeScale by animateFloatAsState(
+                                targetValue = if (isClosePressed) 0.90f else 1f,
+                                animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+                                label = "dock_close_scale"
+                            )
                             Box(
                                 modifier = Modifier
-                                    .size(44.dp)
+                                    .size(46.dp)
+                                    .graphicsLayer {
+                                        scaleX = closeScale
+                                        scaleY = closeScale
+                                    }
                                     .testTag("action_collapse_dock_btn")
-                                    .clip(CircleShape)
-                                    .background(if (isDark) Color(0x22FFFFFF) else Color(0x15000000))
+                                    .darkLiquidGlass(
+                                        shape = CircleShape,
+                                        elevation = 6.dp,
+                                        rimWidth = 1.1.dp,
+                                        baseAlpha = 0.44f,
+                                        isPressed = isClosePressed
+                                    )
                                     .clickable(
-                                        interactionSource = remember { MutableInteractionSource() },
-                                        indication = ripple(bounded = true),
+                                        interactionSource = closeInteraction,
+                                        indication = ripple(bounded = true, color = Color.White),
                                         onClick = { isExpanded = false }
                                     ),
                                 contentAlignment = Alignment.Center
@@ -218,7 +244,7 @@ fun FluffyBottomBar(
                                 Icon(
                                     imageVector = Icons.Default.Close,
                                     contentDescription = if (isArabic) "إغلاق" else "Close",
-                                    tint = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B),
+                                    tint = Color.White.copy(alpha = 0.90f),
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -238,15 +264,32 @@ private fun HorizontalActionButton(
     testTag: String,
     onClick: () -> Unit
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.90f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "dock_item_scale"
+    )
     Box(
         modifier = Modifier
             .size(46.dp)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .testTag(testTag)
-            .clip(CircleShape)
-            .background(tintColor.copy(alpha = 0.15f))
+            .darkLiquidGlass(
+                shape = CircleShape,
+                tintColor = tintColor,
+                elevation = 8.dp,
+                rimWidth = 1.15.dp,
+                baseAlpha = 0.46f,
+                isPressed = isPressed
+            )
             .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = ripple(bounded = true, color = tintColor),
+                interactionSource = interactionSource,
+                indication = ripple(bounded = true, color = Color.White),
                 onClick = onClick
             ),
         contentAlignment = Alignment.Center
@@ -254,8 +297,8 @@ private fun HorizontalActionButton(
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            tint = tintColor,
-            modifier = Modifier.size(26.dp)
+            tint = Color.White,
+            modifier = Modifier.size(24.dp)
         )
     }
 }
