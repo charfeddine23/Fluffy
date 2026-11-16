@@ -13,6 +13,8 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
@@ -365,11 +367,22 @@ fun SettingsDrawer(
             )
             val dismissThresholdPx = with(density) { 96.dp.toPx() }
 
+            val drawerWidthFraction by animateFloatAsState(
+                targetValue = if (currentPage == SettingsPage.ACCOUNT_CLOUD) 0.91f else 0.85f,
+                animationSpec = tween(durationMillis = 240, easing = SmoothEaseOut),
+                label = "drawer_width_frac"
+            )
+            val drawerMaxWidth by animateDpAsState(
+                targetValue = if (currentPage == SettingsPage.ACCOUNT_CLOUD) 388.dp else 352.dp,
+                animationSpec = tween(durationMillis = 240, easing = SmoothEaseOut),
+                label = "drawer_max_width"
+            )
+
             Box(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .fillMaxWidth(0.84f)
-                    .widthIn(max = 340.dp)
+                    .fillMaxWidth(drawerWidthFraction)
+                    .widthIn(max = drawerMaxWidth)
                     .graphicsLayer {
                         translationX = dragOffset.value
                     }
@@ -896,7 +909,133 @@ fun SettingsDrawer(
                                 }
 
                                 SettingsPage.ACCOUNT_CLOUD -> {
-                                    // 1. Cloud Sync Active
+                                    // 1. Top Hero Profile Card (Enlarged + Prominent Profile Picture)
+                                    val fullProfileName = listOf(profileFirstName, profileLastName)
+                                        .filter { it.isNotBlank() }
+                                        .joinToString(" ")
+                                        .ifBlank { profileDisplayName?.takeIf { it.isNotBlank() } ?: profileEmail ?: "" }
+                                        .ifBlank {
+                                            tr("مستخدم Fluffy", "Utilisateur Fluffy", "Fluffy User", "Aseqdac n Fluffy")
+                                        }
+
+                                    LiquidGlassCard(
+                                        isDark = effectiveDark,
+                                        tint = GlassTint.FROST,
+                                        shape = RoundedCornerShape(24.dp),
+                                        borderWidth = 1.2.dp,
+                                        customFill = cardTileColor,
+                                        onClick = {
+                                            onClose()
+                                            onOpenProfile()
+                                        },
+                                        testTag = "settings_profile_button",
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .defaultMinSize(minHeight = 112.dp)
+                                    ) {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 18.dp, vertical = 18.dp),
+                                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(14.dp)
+                                            ) {
+                                                ProfileAvatar(
+                                                    photoUrl = profilePhotoUrl,
+                                                    firstName = profileFirstName,
+                                                    lastName = profileLastName,
+                                                    displayName = profileDisplayName,
+                                                    email = profileEmail,
+                                                    isDark = effectiveDark,
+                                                    avatarChoice = profileAvatarChoice,
+                                                    size = 66.dp,
+                                                    borderWidth = 2.2.dp,
+                                                    fontSize = 22.sp
+                                                )
+
+                                                Column(
+                                                    modifier = Modifier.weight(1f),
+                                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                                ) {
+                                                    Text(
+                                                        text = fullProfileName,
+                                                        fontSize = 17.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = textColor,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    if (!profileEmail.isNullOrBlank()) {
+                                                        Text(
+                                                            text = profileEmail,
+                                                            fontSize = 12.sp,
+                                                            color = subTextColor,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                    } else {
+                                                        Text(
+                                                            text = tr(
+                                                                "تعديل الاسم وصورة الحساب",
+                                                                "Gérer le nom et la photo",
+                                                                "Manage name & profile photo",
+                                                                "Sefrek isem d tugna n umiḍan"
+                                                            ),
+                                                            fontSize = 12.sp,
+                                                            color = subTextColor,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                    }
+                                                }
+
+                                                Icon(
+                                                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                                                    contentDescription = null,
+                                                    tint = subTextColor,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .defaultMinSize(minHeight = 40.dp)
+                                                    .clip(RoundedCornerShape(14.dp))
+                                                    .background(secondaryAccent.copy(alpha = 0.14f))
+                                                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.Person,
+                                                    contentDescription = null,
+                                                    tint = secondaryAccent,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = tr(
+                                                        "عرض وتعديل الملف الشخصي",
+                                                        "Voir et modifier le profil",
+                                                        "View & Edit Profile",
+                                                        "Sken d ubeddel n umaɣnu"
+                                                    ),
+                                                    fontSize = 12.5.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = secondaryAccent
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(14.dp))
+
+                                    // 2. Cloud Sync Active
                                     val isSyncBusy = cloudSyncStatus is CloudSyncStatus.Syncing
                                     val syncColor = if (isCloudSignedIn) Color(0xFF10B981) else primaryAccent
 
@@ -940,7 +1079,12 @@ fun SettingsDrawer(
                                                         text = if (isCloudSignedIn) {
                                                             "Cloud Sync Active"
                                                         } else {
-                                                            if (isArabic) "المزامنة السحابية غير مفعلة" else "Cloud Sync Inactive"
+                                                            tr(
+                                                                "المزامنة السحابية غير مفعلة",
+                                                                "Sync cloud désactivée",
+                                                                "Cloud Sync Inactive",
+                                                                "Amtawi n usigna yensa"
+                                                            )
                                                         },
                                                         fontSize = 14.sp,
                                                         fontWeight = FontWeight.SemiBold,
@@ -949,20 +1093,29 @@ fun SettingsDrawer(
                                                     val syncSubtitle = if (isCloudSignedIn) {
                                                         when (cloudSyncStatus) {
                                                             CloudSyncStatus.Syncing ->
-                                                                if (isArabic) "جاري المزامنة..." else "Syncing..."
+                                                                tr("جاري المزامنة...", "Synchronisation...", "Syncing...", "Amtawi yetteddu...")
                                                             is CloudSyncStatus.Synced -> {
                                                                 val t = SimpleDateFormat("HH:mm", Locale.getDefault())
                                                                     .format(Date(cloudSyncStatus.lastSyncAt))
-                                                                if (isArabic) "${cloudSyncStatus.syncedCount} ملاحظة • $t"
-                                                                else "${cloudSyncStatus.syncedCount} notes • $t"
+                                                                tr(
+                                                                    "${cloudSyncStatus.syncedCount} ملاحظة • $t",
+                                                                    "${cloudSyncStatus.syncedCount} notes • $t",
+                                                                    "${cloudSyncStatus.syncedCount} notes • $t",
+                                                                    "${cloudSyncStatus.syncedCount} tira • $t"
+                                                                )
                                                             }
                                                             is CloudSyncStatus.Error ->
                                                                 if (isArabic) cloudSyncStatus.messageAr else cloudSyncStatus.messageEn
                                                             CloudSyncStatus.Disconnected ->
-                                                                if (isArabic) "مرتبط بالسحابة" else "Connected"
+                                                                tr("مرتبط بالسحابة", "Connecté", "Connected", "Yeqqen")
                                                         }
                                                     } else {
-                                                        if (isArabic) "سجّل الدخول لتفعيل المزامنة السحابية" else "Sign in to sync across devices"
+                                                        tr(
+                                                            "سجّل الدخول لتفعيل المزامنة السحابية",
+                                                            "Connectez-vous pour synchroniser",
+                                                            "Sign in to sync across devices",
+                                                            "Kcem i wakken ad temtawiḍ"
+                                                        )
                                                     }
                                                     Text(
                                                         text = syncSubtitle,
@@ -1012,9 +1165,9 @@ fun SettingsDrawer(
                                                 Spacer(modifier = Modifier.width(6.dp))
                                                 Text(
                                                     text = if (isCloudSignedIn) {
-                                                        if (isArabic) "مزامنة الآن" else "Sync Now"
+                                                        tr("مزامنة الآن", "Synchroniser", "Sync Now", "Mtawi tura")
                                                     } else {
-                                                        if (isArabic) "تسجيل الدخول للمزامنة" else "Sign In to Activate"
+                                                        tr("تسجيل الدخول للمزامنة", "Se connecter", "Sign In to Activate", "Kcem tura")
                                                     },
                                                     fontSize = 12.5.sp,
                                                     fontWeight = FontWeight.SemiBold,
@@ -1022,40 +1175,6 @@ fun SettingsDrawer(
                                                 )
                                             }
                                         }
-                                    }
-
-                                    Spacer(modifier = Modifier.height(14.dp))
-
-                                    // 2. Profile (الملف الشخصي)
-                                    LiquidGlassCard(
-                                        isDark = effectiveDark,
-                                        tint = GlassTint.FROST,
-                                        shape = RoundedCornerShape(20.dp),
-                                        borderWidth = 1.dp,
-                                        customFill = cardTileColor,
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        val fullProfileName = listOf(profileFirstName, profileLastName)
-                                            .filter { it.isNotBlank() }
-                                            .joinToString(" ")
-                                            .ifBlank { profileDisplayName?.takeIf { it.isNotBlank() } ?: profileEmail ?: "" }
-
-                                        CalmNavigationRow(
-                                            icon = Icons.Rounded.Person,
-                                            iconTint = secondaryAccent,
-                                            title = if (isArabic) "الملف الشخصي" else "Profile",
-                                            subtitle = fullProfileName.ifBlank {
-                                                if (isArabic) "تعديل الاسم وصورة الحساب" else "Manage name & avatar"
-                                            },
-                                            badgeCount = 0,
-                                            textColor = textColor,
-                                            subTextColor = subTextColor,
-                                            testTag = "settings_profile_button",
-                                            onClick = {
-                                                onClose()
-                                                onOpenProfile()
-                                            }
-                                        )
                                     }
 
                                     Spacer(modifier = Modifier.height(14.dp))
@@ -1103,11 +1222,12 @@ fun SettingsDrawer(
                                                         color = textColor
                                                     )
                                                     Text(
-                                                        text = if (isArabic) {
-                                                            "حفظ واستعادة نسخة على الهاتف"
-                                                        } else {
-                                                            "Save & restore backup on device"
-                                                        },
+                                                        text = tr(
+                                                            "حفظ واستعادة نسخة على الهاتف",
+                                                            "Sauvegarder et restaurer sur l'appareil",
+                                                            "Save & restore backup on device",
+                                                            "Sekles d tririt n tɣellist deg tmacint"
+                                                        ),
                                                         fontSize = 11.5.sp,
                                                         color = subTextColor
                                                     )
@@ -1142,7 +1262,7 @@ fun SettingsDrawer(
                                                     )
                                                     Spacer(modifier = Modifier.width(6.dp))
                                                     Text(
-                                                        text = if (isArabic) "حفظ نسخة" else "Save",
+                                                        text = tr("حفظ نسخة", "Sauvegarder", "Save", "Sekles"),
                                                         fontSize = 12.sp,
                                                         fontWeight = FontWeight.SemiBold,
                                                         color = Color(0xFF10B981)
@@ -1171,7 +1291,7 @@ fun SettingsDrawer(
                                                     )
                                                     Spacer(modifier = Modifier.width(6.dp))
                                                     Text(
-                                                        text = if (isArabic) "استعادة" else "Restore",
+                                                        text = tr("استعادة", "Restaurer", "Restore", "Err-d"),
                                                         fontSize = 12.sp,
                                                         fontWeight = FontWeight.SemiBold,
                                                         color = primaryAccent
