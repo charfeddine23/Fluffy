@@ -8,6 +8,8 @@ import com.example.data.local.FluffyDatabase
 import com.example.data.model.ChecklistItem
 import com.example.data.model.GlassTint
 import com.example.data.model.NoteEntity
+import com.example.data.model.NotePagesCodec
+import com.example.data.model.NotesViewMode
 import com.example.data.model.VaultItemEntity
 import com.example.data.repository.CloudSyncStatus
 import com.example.data.repository.FirebaseSyncRepository
@@ -56,7 +58,12 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         )
     )
     val isArabic = MutableStateFlow(appLanguage.value == AppLanguage.ARABIC)
-    val isGridView = MutableStateFlow(prefs.getBoolean("is_grid_view", true))
+    private val initialViewMode = NotesViewMode.fromId(
+        id = prefs.getString("notes_view_mode", null),
+        fallbackGrid = prefs.getBoolean("is_grid_view", true)
+    )
+    val viewMode = MutableStateFlow(initialViewMode)
+    val isGridView = MutableStateFlow(initialViewMode.isGridLike)
     val selectedThemeId = MutableStateFlow(
         prefs.getString(
             "selected_theme_id",
@@ -445,7 +452,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             val q = query.trim().lowercase()
             list = list.filter {
                 it.title.lowercase().contains(q) ||
-                    it.content.lowercase().contains(q) ||
+                    NotePagesCodec.searchableBody(it).lowercase().contains(q) ||
                     it.category.lowercase().contains(q)
             }
         }
@@ -783,11 +790,18 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         setAppLanguage(next)
     }
 
-    fun toggleViewMode() {
-        val next = !isGridView.value
-        isGridView.value = next
-        prefs.edit().putBoolean("is_grid_view", next).apply()
+    fun setViewMode(mode: NotesViewMode) {
+        viewMode.value = mode
+        isGridView.value = mode.isGridLike
+        prefs.edit()
+            .putString("notes_view_mode", mode.id)
+            .putBoolean("is_grid_view", mode.isGridLike)
+            .apply()
         persistSettingsSnapshot(syncToCloud = true)
+    }
+
+    fun toggleViewMode() {
+        setViewMode(viewMode.value.next())
     }
 
     fun setSearch(query: String) {
@@ -810,7 +824,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         selectedThemeId = selectedThemeId.value,
         appLanguageCode = appLanguage.value.code,
         nonScreenshotEnabled = isScreenshotProtectionEnabled.value,
-        coloredContainerBorders = isColoredBordersEnabled.value
+        coloredContainerBorders = isColoredBordersEnabled.value,
+        notesViewMode = viewMode.value.id
     )
 
     private fun persistSettingsSnapshot(syncToCloud: Boolean = true) {
@@ -833,12 +848,14 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     private fun applyRestoredSettings(s: FluffySettingsSnapshot, fromRemote: Boolean) {
         val resolvedTheme = AppThemeRegistry.resolve(s.selectedThemeId, s.isDarkMode)
         val resolvedLanguage = AppLanguage.fromCode(s.appLanguageCode, fallbackArabic = s.isArabic)
+        val resolvedViewMode = NotesViewMode.fromId(s.notesViewMode, fallbackGrid = s.isGridView)
         val arabicFlag = resolvedLanguage == AppLanguage.ARABIC
 
         isDarkMode.value = s.isDarkMode
         appLanguage.value = resolvedLanguage
         isArabic.value = arabicFlag
-        isGridView.value = s.isGridView
+        viewMode.value = resolvedViewMode
+        isGridView.value = resolvedViewMode.isGridLike
         isBiometricEnabled.value = s.isBiometricEnabled
         isScreenshotProtectionEnabled.value = s.nonScreenshotEnabled
         isColoredBordersEnabled.value = s.coloredContainerBorders
@@ -849,7 +866,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             .putBoolean("is_dark_mode", s.isDarkMode)
             .putBoolean("is_arabic", arabicFlag)
             .putString("app_language_code", resolvedLanguage.code)
-            .putBoolean("is_grid_view", s.isGridView)
+            .putString("notes_view_mode", resolvedViewMode.id)
+            .putBoolean("is_grid_view", resolvedViewMode.isGridLike)
             .putBoolean("biometric_enabled", s.isBiometricEnabled)
             .putBoolean("non_screenshot_enabled", s.nonScreenshotEnabled)
             .putBoolean("colored_container_borders", s.coloredContainerBorders)
@@ -902,6 +920,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     fun autoSaveNote(
         title: String,
         content: String,
+        pagesJson: String = "",
         category: String,
         colorPreset: String,
         backgroundId: String = "none",
@@ -917,7 +936,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         val activeChecklist = checklist.filter { it.text.isNotEmpty() }
 
         // Only skip when completely empty (never touch non-empty literal whitespace)
-        if (title.isEmpty() && content.isEmpty() && activeChecklist.isEmpty() && audioDurationSec == 0 && audioFilePath.isBlank()) {
+        if (title.isEmpty() && !NotePagesCodec.hasAnyContent(content, pagesJson) && activeChecklist.isEmpty() && audioDurationSec == 0 && audioFilePath.isBlank()) {
             return
         }
 
@@ -934,6 +953,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                 val updatedNote = current.copy(
                     title = title,
                     content = content,
+                    pagesJson = pagesJson,
                     category = category.ifBlank { if (isArabic.value) "عام" else "General" },
                     colorPreset = colorPreset,
                     backgroundId = backgroundId,
@@ -959,6 +979,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     fun saveNote(
         title: String,
         content: String,
+        pagesJson: String = "",
         category: String,
         colorPreset: String,
         backgroundId: String = "none",
@@ -973,7 +994,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         if (editingNote.value == null) return
         val activeChecklist = checklist.filter { it.text.isNotEmpty() }
 
-        if (title.isEmpty() && content.isEmpty() && activeChecklist.isEmpty() && audioDurationSec == 0 && audioFilePath.isBlank()) {
+        if (title.isEmpty() && !NotePagesCodec.hasAnyContent(content, pagesJson) && activeChecklist.isEmpty() && audioDurationSec == 0 && audioFilePath.isBlank()) {
             closeEditor()
             return
         }
@@ -991,6 +1012,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                 val updatedNote = current.copy(
                     title = title,
                     content = content,
+                    pagesJson = pagesJson,
                     category = category.ifBlank { if (isArabic.value) "عام" else "General" },
                     colorPreset = colorPreset,
                     backgroundId = backgroundId,

@@ -24,7 +24,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
@@ -78,9 +83,12 @@ import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.zIndex
 import com.example.data.model.GlassTint
 import com.example.data.model.NoteEntity
+import com.example.data.model.NotesViewMode
 import com.example.ui.components.CategoryChips
 import com.example.ui.components.FluffyBottomBar
 import com.example.ui.components.FluffyTopBar
+import com.example.ui.components.GalleryNoteCard
+import com.example.ui.components.MagazineNoteCard
 import com.example.ui.components.NoteCard
 import com.example.ui.components.SettingsDrawer
 import com.example.ui.components.StatsBottomSheet
@@ -106,6 +114,7 @@ fun FluffyHomeScreen(
     val context = LocalContext.current
     val isDark by viewModel.isDarkMode.collectAsState()
     val isArabic by viewModel.isArabic.collectAsState()
+    val viewMode by viewModel.viewMode.collectAsState()
     val isGridView by viewModel.isGridView.collectAsState()
     val selectedThemeId by viewModel.selectedThemeId.collectAsState()
     val isColoredBordersEnabled by viewModel.isColoredBordersEnabled.collectAsState()
@@ -135,6 +144,7 @@ fun FluffyHomeScreen(
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
     val gridState = rememberLazyStaggeredGridState()
+    val galleryState = rememberLazyGridState()
     val listState = rememberLazyListState()
 
     var displayedNotes by remember { mutableStateOf(notes) }
@@ -149,10 +159,11 @@ fun FluffyHomeScreen(
 
     var containerCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val gridPhysicalRects = remember { mutableMapOf<Long, Rect>() }
+    val galleryPhysicalRects = remember { mutableMapOf<Long, Rect>() }
     val listPhysicalRects = remember { mutableMapOf<Long, Rect>() }
 
     val currentDisplayedNotes by rememberUpdatedState(displayedNotes)
-    val currentIsGridView by rememberUpdatedState(isGridView)
+    val currentViewMode by rememberUpdatedState(viewMode)
     val currentNotes by rememberUpdatedState(notes)
 
     val swapHysteresisPx = with(density) { 28.dp.toPx() }
@@ -177,23 +188,32 @@ fun FluffyHomeScreen(
         }
     }
 
-    fun visibleKeysForMode(inGrid: Boolean): Set<Long> {
-        return if (inGrid) {
-            gridState.layoutInfo.visibleItemsInfo.mapNotNullTo(HashSet()) { it.key as? Long }
-        } else {
-            listState.layoutInfo.visibleItemsInfo.mapNotNullTo(HashSet()) { it.key as? Long }
+    fun visibleKeysForMode(mode: NotesViewMode): Set<Long> {
+        return when (mode) {
+            NotesViewMode.GRID -> gridState.layoutInfo.visibleItemsInfo.mapNotNullTo(HashSet()) { it.key as? Long }
+            NotesViewMode.GALLERY -> galleryState.layoutInfo.visibleItemsInfo.mapNotNullTo(HashSet()) { it.key as? Long }
+            NotesViewMode.LIST, NotesViewMode.MAGAZINE -> listState.layoutInfo.visibleItemsInfo.mapNotNullTo(HashSet()) { it.key as? Long }
         }
     }
 
-    fun trySwapDraggedNote(pointerPos: Offset, activeDragId: Long, inGrid: Boolean) {
+    fun rectsForMode(mode: NotesViewMode): MutableMap<Long, Rect> {
+        return when (mode) {
+            NotesViewMode.GRID -> gridPhysicalRects
+            NotesViewMode.GALLERY -> galleryPhysicalRects
+            NotesViewMode.LIST, NotesViewMode.MAGAZINE -> listPhysicalRects
+        }
+    }
+
+    fun trySwapDraggedNote(pointerPos: Offset, activeDragId: Long, mode: NotesViewMode) {
         val currentList = currentDisplayedNotes
         val draggedNote = currentList.firstOrNull { it.id == activeDragId } ?: return
-        val visibleKeys = visibleKeysForMode(inGrid)
-        val rects = if (inGrid) gridPhysicalRects else listPhysicalRects
+        val visibleKeys = visibleKeysForMode(mode)
+        val rects = rectsForMode(mode)
+        val isTwoCol = mode.isGridLike
 
         val candidateKey: Long? = rects.entries.firstOrNull { (id, rect) ->
             if (id == activeDragId || id !in visibleKeys) return@firstOrNull false
-            if (inGrid) {
+            if (isTwoCol) {
                 rect.contains(pointerPos)
             } else {
                 pointerPos.y in rect.top..rect.bottom
@@ -226,16 +246,17 @@ fun FluffyHomeScreen(
     }
 
     // Smooth edge auto-scrolling while holding & dragging a note near the top/bottom edges
-    LaunchedEffect(draggedNoteId, isGridView) {
+    LaunchedEffect(draggedNoteId, viewMode) {
         val activeDragId = draggedNoteId ?: return@LaunchedEffect
         val edgeZonePx = with(density) { 64.dp.toPx() }
         val maxScrollStep = with(density) { 14.dp.toPx() }
 
         while (draggedNoteId == activeDragId) {
-            val viewportHeight = if (currentIsGridView) {
-                gridState.layoutInfo.viewportSize.height.toFloat()
-            } else {
-                listState.layoutInfo.viewportSize.height.toFloat()
+            val activeMode = currentViewMode
+            val viewportHeight = when (activeMode) {
+                NotesViewMode.GRID -> gridState.layoutInfo.viewportSize.height.toFloat()
+                NotesViewMode.GALLERY -> galleryState.layoutInfo.viewportSize.height.toFloat()
+                NotesViewMode.LIST, NotesViewMode.MAGAZINE -> listState.layoutInfo.viewportSize.height.toFloat()
             }
 
             val y = currentPointerPos.y
@@ -247,12 +268,12 @@ fun FluffyHomeScreen(
             }
 
             if (scrollDelta != 0f) {
-                if (currentIsGridView) {
-                    gridState.scrollBy(scrollDelta)
-                } else {
-                    listState.scrollBy(scrollDelta)
+                when (activeMode) {
+                    NotesViewMode.GRID -> gridState.scrollBy(scrollDelta)
+                    NotesViewMode.GALLERY -> galleryState.scrollBy(scrollDelta)
+                    NotesViewMode.LIST, NotesViewMode.MAGAZINE -> listState.scrollBy(scrollDelta)
                 }
-                trySwapDraggedNote(currentPointerPos, activeDragId, currentIsGridView)
+                trySwapDraggedNote(currentPointerPos, activeDragId, activeMode)
             }
             withFrameNanos { }
         }
@@ -386,11 +407,13 @@ fun FluffyHomeScreen(
                     isDark = isDark,
                     isArabic = isArabic,
                     isGridView = isGridView,
+                    viewMode = viewMode,
                     searchQuery = searchQuery,
                     onSearchChange = { viewModel.setSearch(it) },
                     onOpenProfile = { viewModel.openAccountScreen() },
                     onToggleLanguage = { viewModel.toggleLanguage() },
                     onToggleViewMode = { viewModel.toggleViewMode() },
+                    onSelectViewMode = { mode -> viewModel.setViewMode(mode) },
                     onOpenStats = { viewModel.showStatsSheet.value = true },
                     onOpenSettings = { viewModel.openSettingsDrawer() },
                     profilePhotoUrl = currentUser?.photoUrl,
@@ -451,9 +474,9 @@ fun FluffyHomeScreen(
                                 val touchSlop = viewConfiguration.touchSlop
 
                                 fun findHitNoteAndOrigin(pos: Offset): Pair<Long, Offset>? {
-                                    val inGrid = currentIsGridView
-                                    val visibleKeys = visibleKeysForMode(inGrid)
-                                    val rects = if (inGrid) gridPhysicalRects else listPhysicalRects
+                                    val mode = currentViewMode
+                                    val visibleKeys = visibleKeysForMode(mode)
+                                    val rects = rectsForMode(mode)
                                     for ((id, rect) in rects) {
                                         if (id in visibleKeys && rect.contains(pos)) {
                                             return id to rect.topLeft
@@ -529,7 +552,7 @@ fun FluffyHomeScreen(
                                         dragEvent.changes.forEach { it.consume() }
                                         latestPos = change.position
                                         currentPointerPos = latestPos
-                                        trySwapDraggedNote(latestPos, hitNoteId, currentIsGridView)
+                                        trySwapDraggedNote(latestPos, hitNoteId, currentViewMode)
                                     }
 
                                     val committed = currentDisplayedNotes.toList()
@@ -541,7 +564,8 @@ fun FluffyHomeScreen(
                                 }
                             }
                     ) {
-                        if (isGridView) {
+                        when (viewMode) {
+                            NotesViewMode.GRID -> {
                             LazyVerticalStaggeredGrid(
                                 state = gridState,
                                 columns = StaggeredGridCells.Fixed(2),
@@ -632,92 +656,274 @@ fun FluffyHomeScreen(
                                     }
                                 }
                             }
-                        } else {
-                            LazyColumn(
-                                state = listState,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .testTag("notes_list"),
-                                contentPadding = PaddingValues(
-                                    start = 16.dp,
-                                    end = 16.dp,
-                                    top = 8.dp,
-                                    bottom = 100.dp
-                                ),
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                items(displayedNotes, key = { it.id }) { note ->
-                                    val isDragging = draggedNoteId == note.id
-                                    val dragScale by animateFloatAsState(
-                                        targetValue = if (isDragging) 1.03f else 1f,
-                                        label = "list_drag_scale"
-                                    )
-                                    val slotRectState = remember { mutableStateOf<Rect?>(null) }
-                                    DisposableEffect(note.id) {
-                                        onDispose {
-                                            listPhysicalRects.remove(note.id)
-                                        }
-                                    }
-
-                                    val outerSlotModifier = (if (isDragging) {
-                                        Modifier.zIndex(10f)
-                                    } else {
-                                        Modifier.animateItem()
-                                    }).onGloballyPositioned { coords ->
-                                        val container = containerCoords
-                                        if (container != null && container.isAttached && coords.isAttached) {
-                                            val topLeft = container.localPositionOf(coords, Offset.Zero)
-                                            val rect = Rect(topLeft, coords.size.toSize())
-                                            listPhysicalRects[note.id] = rect
-                                            if (isDragging && slotRectState.value != rect) {
-                                                slotRectState.value = rect
-                                            }
-                                        }
-                                    }
-
-                                    val cardDragModifier = if (isDragging) {
-                                        Modifier.graphicsLayer {
-                                            val origin = slotRectState.value?.topLeft
-                                                ?: listPhysicalRects[note.id]?.topLeft
-                                            val tx: Float
-                                            val ty: Float
-                                            if (origin != null) {
-                                                val computed = currentPointerPos - origin - grabOffsetInsideCard
-                                                lastKnownTranslationXY[0] = computed.x
-                                                lastKnownTranslationXY[1] = computed.y
-                                                tx = computed.x
-                                                ty = computed.y
-                                            } else {
-                                                tx = lastKnownTranslationXY[0]
-                                                ty = lastKnownTranslationXY[1]
-                                            }
-                                            translationX = tx
-                                            translationY = ty
-                                            scaleX = dragScale
-                                            scaleY = dragScale
-                                            shape = RoundedCornerShape(22.dp)
-                                            shadowElevation = 24.dp.toPx()
-                                        }
-                                    } else {
-                                        Modifier
-                                    }
-
-                                    Box(modifier = outerSlotModifier) {
-                                        NoteCard(
-                                            note = note,
-                                            isDark = isDark,
-                                            isArabic = isArabic,
-                                            isDragging = isDragging,
-                                            onClick = { viewModel.openExistingNote(note) },
-                                            onTogglePin = { viewModel.togglePin(note) },
-                                            onToggleFavorite = { viewModel.toggleFavorite(note) },
-                                            onToggleChecklistItem = { idx ->
-                                                viewModel.toggleChecklistItem(note, idx)
-                                            },
-                                            onArchive = { viewModel.toggleArchive(note) },
-                                            onDelete = { viewModel.deleteNoteDirectly(note) },
-                                            modifier = cardDragModifier
+                            }
+                            NotesViewMode.LIST -> {
+                                LazyColumn(
+                                    state = listState,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .testTag("notes_list"),
+                                    contentPadding = PaddingValues(
+                                        start = 16.dp,
+                                        end = 16.dp,
+                                        top = 8.dp,
+                                        bottom = 100.dp
+                                    ),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    items(displayedNotes, key = { it.id }) { note ->
+                                        val isDragging = draggedNoteId == note.id
+                                        val dragScale by animateFloatAsState(
+                                            targetValue = if (isDragging) 1.03f else 1f,
+                                            label = "list_drag_scale"
                                         )
+                                        val slotRectState = remember { mutableStateOf<Rect?>(null) }
+                                        DisposableEffect(note.id) {
+                                            onDispose {
+                                                listPhysicalRects.remove(note.id)
+                                            }
+                                        }
+
+                                        val outerSlotModifier = (if (isDragging) {
+                                            Modifier.zIndex(10f)
+                                        } else {
+                                            Modifier.animateItem()
+                                        }).onGloballyPositioned { coords ->
+                                            val container = containerCoords
+                                            if (container != null && container.isAttached && coords.isAttached) {
+                                                val topLeft = container.localPositionOf(coords, Offset.Zero)
+                                                val rect = Rect(topLeft, coords.size.toSize())
+                                                listPhysicalRects[note.id] = rect
+                                                if (isDragging && slotRectState.value != rect) {
+                                                    slotRectState.value = rect
+                                                }
+                                            }
+                                        }
+
+                                        val cardDragModifier = if (isDragging) {
+                                            Modifier.graphicsLayer {
+                                                val origin = slotRectState.value?.topLeft
+                                                    ?: listPhysicalRects[note.id]?.topLeft
+                                                val tx: Float
+                                                val ty: Float
+                                                if (origin != null) {
+                                                    val computed = currentPointerPos - origin - grabOffsetInsideCard
+                                                    lastKnownTranslationXY[0] = computed.x
+                                                    lastKnownTranslationXY[1] = computed.y
+                                                    tx = computed.x
+                                                    ty = computed.y
+                                                } else {
+                                                    tx = lastKnownTranslationXY[0]
+                                                    ty = lastKnownTranslationXY[1]
+                                                }
+                                                translationX = tx
+                                                translationY = ty
+                                                scaleX = dragScale
+                                                scaleY = dragScale
+                                                shape = RoundedCornerShape(22.dp)
+                                                shadowElevation = 24.dp.toPx()
+                                            }
+                                        } else {
+                                            Modifier
+                                        }
+
+                                        Box(modifier = outerSlotModifier) {
+                                            NoteCard(
+                                                note = note,
+                                                isDark = isDark,
+                                                isArabic = isArabic,
+                                                isDragging = isDragging,
+                                                onClick = { viewModel.openExistingNote(note) },
+                                                onTogglePin = { viewModel.togglePin(note) },
+                                                onToggleFavorite = { viewModel.toggleFavorite(note) },
+                                                onToggleChecklistItem = { idx ->
+                                                    viewModel.toggleChecklistItem(note, idx)
+                                                },
+                                                onArchive = { viewModel.toggleArchive(note) },
+                                                onDelete = { viewModel.deleteNoteDirectly(note) },
+                                                modifier = cardDragModifier
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            NotesViewMode.GALLERY -> {
+                                LazyVerticalGrid(
+                                    state = galleryState,
+                                    columns = GridCells.Adaptive(minSize = 158.dp),
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .testTag("notes_gallery"),
+                                    contentPadding = PaddingValues(
+                                        start = 16.dp,
+                                        end = 16.dp,
+                                        top = 8.dp,
+                                        bottom = 100.dp
+                                    ),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    gridItems(displayedNotes, key = { it.id }) { note ->
+                                        val isDragging = draggedNoteId == note.id
+                                        val dragScale by animateFloatAsState(
+                                            targetValue = if (isDragging) 1.04f else 1f,
+                                            label = "gallery_drag_scale"
+                                        )
+                                        val slotRectState = remember { mutableStateOf<Rect?>(null) }
+                                        DisposableEffect(note.id) {
+                                            onDispose {
+                                                galleryPhysicalRects.remove(note.id)
+                                            }
+                                        }
+
+                                        val outerSlotModifier = (if (isDragging) {
+                                            Modifier.zIndex(10f)
+                                        } else {
+                                            Modifier.animateItem()
+                                        }).onGloballyPositioned { coords ->
+                                            val container = containerCoords
+                                            if (container != null && container.isAttached && coords.isAttached) {
+                                                val topLeft = container.localPositionOf(coords, Offset.Zero)
+                                                val rect = Rect(topLeft, coords.size.toSize())
+                                                galleryPhysicalRects[note.id] = rect
+                                                if (isDragging && slotRectState.value != rect) {
+                                                    slotRectState.value = rect
+                                                }
+                                            }
+                                        }
+
+                                        val cardDragModifier = if (isDragging) {
+                                            Modifier.graphicsLayer {
+                                                val origin = slotRectState.value?.topLeft
+                                                    ?: galleryPhysicalRects[note.id]?.topLeft
+                                                val tx: Float
+                                                val ty: Float
+                                                if (origin != null) {
+                                                    val computed = currentPointerPos - origin - grabOffsetInsideCard
+                                                    lastKnownTranslationXY[0] = computed.x
+                                                    lastKnownTranslationXY[1] = computed.y
+                                                    tx = computed.x
+                                                    ty = computed.y
+                                                } else {
+                                                    tx = lastKnownTranslationXY[0]
+                                                    ty = lastKnownTranslationXY[1]
+                                                }
+                                                translationX = tx
+                                                translationY = ty
+                                                scaleX = dragScale
+                                                scaleY = dragScale
+                                                shape = RoundedCornerShape(24.dp)
+                                                shadowElevation = 24.dp.toPx()
+                                            }
+                                        } else {
+                                            Modifier
+                                        }
+
+                                        Box(modifier = outerSlotModifier) {
+                                            GalleryNoteCard(
+                                                note = note,
+                                                isDark = isDark,
+                                                isArabic = isArabic,
+                                                isDragging = isDragging,
+                                                onClick = { viewModel.openExistingNote(note) },
+                                                onTogglePin = { viewModel.togglePin(note) },
+                                                onToggleFavorite = { viewModel.toggleFavorite(note) },
+                                                onArchive = { viewModel.toggleArchive(note) },
+                                                onDelete = { viewModel.deleteNoteDirectly(note) },
+                                                modifier = cardDragModifier
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            NotesViewMode.MAGAZINE -> {
+                                LazyColumn(
+                                    state = listState,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .testTag("notes_magazine"),
+                                    contentPadding = PaddingValues(
+                                        start = 16.dp,
+                                        end = 16.dp,
+                                        top = 8.dp,
+                                        bottom = 100.dp
+                                    ),
+                                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                                ) {
+                                    itemsIndexed(displayedNotes, key = { _, n -> n.id }) { index, note ->
+                                        val isDragging = draggedNoteId == note.id
+                                        val dragScale by animateFloatAsState(
+                                            targetValue = if (isDragging) 1.03f else 1f,
+                                            label = "magazine_drag_scale"
+                                        )
+                                        val slotRectState = remember { mutableStateOf<Rect?>(null) }
+                                        DisposableEffect(note.id) {
+                                            onDispose {
+                                                listPhysicalRects.remove(note.id)
+                                            }
+                                        }
+
+                                        val outerSlotModifier = (if (isDragging) {
+                                            Modifier.zIndex(10f)
+                                        } else {
+                                            Modifier.animateItem()
+                                        }).onGloballyPositioned { coords ->
+                                            val container = containerCoords
+                                            if (container != null && container.isAttached && coords.isAttached) {
+                                                val topLeft = container.localPositionOf(coords, Offset.Zero)
+                                                val rect = Rect(topLeft, coords.size.toSize())
+                                                listPhysicalRects[note.id] = rect
+                                                if (isDragging && slotRectState.value != rect) {
+                                                    slotRectState.value = rect
+                                                }
+                                            }
+                                        }
+
+                                        val cardDragModifier = if (isDragging) {
+                                            Modifier.graphicsLayer {
+                                                val origin = slotRectState.value?.topLeft
+                                                    ?: listPhysicalRects[note.id]?.topLeft
+                                                val tx: Float
+                                                val ty: Float
+                                                if (origin != null) {
+                                                    val computed = currentPointerPos - origin - grabOffsetInsideCard
+                                                    lastKnownTranslationXY[0] = computed.x
+                                                    lastKnownTranslationXY[1] = computed.y
+                                                    tx = computed.x
+                                                    ty = computed.y
+                                                } else {
+                                                    tx = lastKnownTranslationXY[0]
+                                                    ty = lastKnownTranslationXY[1]
+                                                }
+                                                translationX = tx
+                                                translationY = ty
+                                                scaleX = dragScale
+                                                scaleY = dragScale
+                                                shape = RoundedCornerShape(24.dp)
+                                                shadowElevation = 24.dp.toPx()
+                                            }
+                                        } else {
+                                            Modifier
+                                        }
+
+                                        Box(modifier = outerSlotModifier) {
+                                            MagazineNoteCard(
+                                                note = note,
+                                                issueIndex = index,
+                                                isLeadFeature = index == 0,
+                                                isDark = isDark,
+                                                isArabic = isArabic,
+                                                isDragging = isDragging,
+                                                onClick = { viewModel.openExistingNote(note) },
+                                                onTogglePin = { viewModel.togglePin(note) },
+                                                onToggleFavorite = { viewModel.toggleFavorite(note) },
+                                                onArchive = { viewModel.toggleArchive(note) },
+                                                onDelete = { viewModel.deleteNoteDirectly(note) },
+                                                modifier = cardDragModifier
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -774,12 +980,14 @@ fun FluffyHomeScreen(
                 isDark = isDark,
                 isArabic = isArabic,
                 isGridView = isGridView,
+                viewMode = viewMode,
                 isBiometricEnabled = isBiometricEnabled,
                 onToggleBiometric = { onToggleBiometricAuth(it) },
                 onLockAppNow = { viewModel.lockApp() },
                 onToggleTheme = { viewModel.toggleDarkMode() },
                 onSelectLanguage = { lang -> viewModel.setAppLanguage(lang) },
                 onToggleViewMode = { viewModel.toggleViewMode() },
+                onSelectViewMode = { mode -> viewModel.setViewMode(mode) },
                 selectedThemeId = selectedThemeId,
                 isColoredBordersEnabled = isColoredBordersEnabled,
                 onToggleColoredBorders = { viewModel.setColoredBordersEnabled(it) },

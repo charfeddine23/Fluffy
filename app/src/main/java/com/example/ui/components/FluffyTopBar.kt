@@ -22,21 +22,29 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesomeMosaic
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.PersonOutline
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ViewAgenda
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,6 +60,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.GlassTint
+import com.example.data.model.NotesViewMode
 import com.example.ui.glass.liquidGlass
 import com.example.ui.theme.LocalAppThemePreset
 import com.example.ui.theme.tr
@@ -61,11 +70,13 @@ fun FluffyTopBar(
     isDark: Boolean,
     isArabic: Boolean,
     isGridView: Boolean,
+    viewMode: NotesViewMode = if (isGridView) NotesViewMode.GRID else NotesViewMode.LIST,
     searchQuery: String,
     onSearchChange: (String) -> Unit,
     onOpenProfile: () -> Unit,
     onToggleLanguage: (() -> Unit)? = null,
     onToggleViewMode: () -> Unit,
+    onSelectViewMode: (NotesViewMode) -> Unit = { _ -> onToggleViewMode() },
     onOpenStats: () -> Unit,
     onOpenSettings: () -> Unit,
     profilePhotoUrl: String? = null,
@@ -83,6 +94,7 @@ fun FluffyTopBar(
     val activePreset = LocalAppThemePreset.current
     val textColor = activePreset.onBackground
     val hintColor = activePreset.onSurfaceVariant
+    var showViewModeMenu by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -172,14 +184,76 @@ fun FluffyTopBar(
                     onClick = onOpenStats
                 )
 
-                // View Mode toggle
-                GlassIconAction(
-                    icon = if (isGridView) Icons.Default.ViewAgenda else Icons.Default.GridView,
-                    contentDescription = tr("تبديل طريقة العرض", "Changer l'affichage", "Toggle View", "Beddel timeẓri"),
-                    isDark = isDark,
-                    testTag = "view_mode_toggle",
-                    onClick = onToggleViewMode
-                )
+                // View Mode Picker (Grid, List, Gallery View, Magazine View)
+                Box {
+                    val activeModeIcon = when (viewMode) {
+                        NotesViewMode.GRID -> Icons.Default.GridView
+                        NotesViewMode.LIST -> Icons.Default.ViewAgenda
+                        NotesViewMode.GALLERY -> Icons.Default.AutoAwesomeMosaic
+                        NotesViewMode.MAGAZINE -> Icons.Default.MenuBook
+                    }
+                    GlassIconAction(
+                        icon = activeModeIcon,
+                        contentDescription = tr("تبديل طريقة العرض", "Changer l'affichage", "View Mode", "Beddel timeẓri"),
+                        isDark = isDark,
+                        testTag = "view_mode_toggle",
+                        onClick = { showViewModeMenu = true }
+                    )
+
+                    DropdownMenu(
+                        expanded = showViewModeMenu,
+                        onDismissRequest = { showViewModeMenu = false },
+                        containerColor = activePreset.surface.copy(alpha = 0.98f)
+                    ) {
+                        NotesViewMode.entries.forEach { mode ->
+                            val selected = mode == viewMode
+                            val optionIcon = when (mode) {
+                                NotesViewMode.GRID -> Icons.Default.GridView
+                                NotesViewMode.LIST -> Icons.Default.ViewAgenda
+                                NotesViewMode.GALLERY -> Icons.Default.AutoAwesomeMosaic
+                                NotesViewMode.MAGAZINE -> Icons.Default.MenuBook
+                            }
+                            val optionLabel = when (mode) {
+                                NotesViewMode.GRID -> tr("شبكة • Grid View", "Vue grille", "Grid View", "Timeẓri n tferkit")
+                                NotesViewMode.LIST -> tr("قائمة • List View", "Vue liste", "List View", "Timeẓri n tebdart")
+                                NotesViewMode.GALLERY -> tr("معرض • Gallery View", "Gallery View", "Gallery View", "Gallery View")
+                                NotesViewMode.MAGAZINE -> tr("مجلة • Magazine View", "Magazine View", "Magazine View", "Magazine View")
+                            }
+                            DropdownMenuItem(
+                                modifier = Modifier.testTag("view_mode_option_${mode.id}"),
+                                text = {
+                                    Text(
+                                        text = optionLabel,
+                                        color = if (selected) activePreset.primary else textColor,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                        fontSize = 14.sp
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = optionIcon,
+                                        contentDescription = null,
+                                        tint = if (selected) activePreset.primary else hintColor
+                                    )
+                                },
+                                trailingIcon = if (selected) {
+                                    {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            tint = activePreset.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                } else null,
+                                onClick = {
+                                    showViewModeMenu = false
+                                    onSelectViewMode(mode)
+                                }
+                            )
+                        }
+                    }
+                }
 
 
                 // Circular Profile Photo (Navigates directly to Account & Sync Profile)

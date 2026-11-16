@@ -56,6 +56,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.AutoAwesomeMosaic
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudDone
@@ -68,6 +69,7 @@ import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LightMode
+import androidx.compose.material.icons.rounded.MenuBook
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Login
 import androidx.compose.material.icons.rounded.ManageAccounts
@@ -122,6 +124,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.BuildConfig
 import com.example.data.model.GlassTint
+import com.example.data.model.NotesViewMode
 import com.example.data.repository.CloudSyncStatus
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.glass.liquidGlass
@@ -151,12 +154,14 @@ fun SettingsDrawer(
     isDark: Boolean,
     isArabic: Boolean,
     isGridView: Boolean,
+    viewMode: NotesViewMode = if (isGridView) NotesViewMode.GRID else NotesViewMode.LIST,
     isBiometricEnabled: Boolean,
     onToggleBiometric: (Boolean) -> Unit,
     onLockAppNow: () -> Unit,
     onToggleTheme: () -> Unit,
     onSelectLanguage: (AppLanguage) -> Unit = {},
     onToggleViewMode: () -> Unit,
+    onSelectViewMode: (NotesViewMode) -> Unit = { _ -> onToggleViewMode() },
     selectedThemeId: String = "obsidian_liquid_glass",
     isColoredBordersEnabled: Boolean = true,
     onToggleColoredBorders: (Boolean) -> Unit = {},
@@ -1417,20 +1422,99 @@ fun SettingsDrawer(
                                                 modifier = Modifier.padding(horizontal = 16.dp)
                                             )
 
-                                            // 3. Notes Layout
+                                            // 3. Notes Layout (Grid, List, Gallery View, Magazine View)
+                                            val currentLayoutIcon = when (viewMode) {
+                                                NotesViewMode.GRID -> Icons.Rounded.GridView
+                                                NotesViewMode.LIST -> Icons.Rounded.ViewAgenda
+                                                NotesViewMode.GALLERY -> Icons.Rounded.AutoAwesomeMosaic
+                                                NotesViewMode.MAGAZINE -> Icons.Rounded.MenuBook
+                                            }
+                                            val currentLayoutLabel = when (viewMode) {
+                                                NotesViewMode.GRID -> tr("شبكة عمودين • Grid View", "Vue grille", "Grid View", "Timeẓri n tferkit")
+                                                NotesViewMode.LIST -> tr("قائمة عمودية • List View", "Vue liste", "List View", "Timeẓri n tebdart")
+                                                NotesViewMode.GALLERY -> tr("معرض • Gallery View", "Gallery View", "Gallery View", "Gallery View")
+                                                NotesViewMode.MAGAZINE -> tr("مجلة • Magazine View", "Magazine View", "Magazine View", "Magazine View")
+                                            }
                                             CalmSettingRow(
-                                                icon = if (isGridView) Icons.Rounded.ViewAgenda else Icons.Rounded.GridView,
+                                                icon = currentLayoutIcon,
                                                 iconTint = tertiaryAccent,
                                                 title = "Notes Layout",
-                                                subtitle = if (isGridView) {
-                                                    tr("شبكة عمودين", "Vue grille", "Grid View", "Timeẓri n tferkit")
-                                                } else {
-                                                    tr("قائمة عمودية", "Vue liste", "List View", "Timeẓri n tebdart")
-                                                },
+                                                subtitle = currentLayoutLabel,
                                                 textColor = textColor,
                                                 subTextColor = subTextColor,
-                                                onClick = onToggleViewMode
+                                                onClick = { onSelectViewMode(viewMode.next()) }
                                             )
+
+                                            // 2x2 Quick View Mode Picker Chips inside Appearance
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+                                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                val rows = NotesViewMode.entries.chunked(2)
+                                                rows.forEach { pair ->
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                    ) {
+                                                        pair.forEach { mode ->
+                                                            val isSelected = mode == viewMode
+                                                            val chipIcon = when (mode) {
+                                                                NotesViewMode.GRID -> Icons.Rounded.GridView
+                                                                NotesViewMode.LIST -> Icons.Rounded.ViewAgenda
+                                                                NotesViewMode.GALLERY -> Icons.Rounded.AutoAwesomeMosaic
+                                                                NotesViewMode.MAGAZINE -> Icons.Rounded.MenuBook
+                                                            }
+                                                            val chipLabel = when (mode) {
+                                                                NotesViewMode.GRID -> tr("شبكة", "Grille", "Grid View", "Taferkit")
+                                                                NotesViewMode.LIST -> tr("قائمة", "Liste", "List View", "Tabdart")
+                                                                NotesViewMode.GALLERY -> "Gallery View"
+                                                                NotesViewMode.MAGAZINE -> "Magazine View"
+                                                            }
+                                                            Row(
+                                                                modifier = Modifier
+                                                                    .weight(1f)
+                                                                    .defaultMinSize(minHeight = 42.dp)
+                                                                    .clip(RoundedCornerShape(14.dp))
+                                                                    .background(
+                                                                        if (isSelected) tertiaryAccent.copy(alpha = if (isDark) 0.24f else 0.14f)
+                                                                        else currentPreset.surfaceVariant.copy(alpha = 0.55f)
+                                                                    )
+                                                                    .border(
+                                                                        width = if (isSelected) 1.3.dp else 0.8.dp,
+                                                                        color = if (isSelected) tertiaryAccent.copy(alpha = 0.72f)
+                                                                        else dividerColor,
+                                                                        shape = RoundedCornerShape(14.dp)
+                                                                    )
+                                                                    .clickable(
+                                                                        interactionSource = remember { MutableInteractionSource() },
+                                                                        indication = ripple(bounded = true)
+                                                                    ) { onSelectViewMode(mode) }
+                                                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                horizontalArrangement = Arrangement.Center
+                                                            ) {
+                                                                Icon(
+                                                                    imageVector = chipIcon,
+                                                                    contentDescription = chipLabel,
+                                                                    tint = if (isSelected) tertiaryAccent else subTextColor,
+                                                                    modifier = Modifier.size(16.dp)
+                                                                )
+                                                                Spacer(modifier = Modifier.width(6.dp))
+                                                                Text(
+                                                                    text = chipLabel,
+                                                                    fontSize = 12.sp,
+                                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                                    color = if (isSelected) textColor else subTextColor,
+                                                                    maxLines = 1,
+                                                                    overflow = TextOverflow.Ellipsis
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
 
                                             HorizontalDivider(
                                                 color = dividerColor,

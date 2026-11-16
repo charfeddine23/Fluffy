@@ -267,6 +267,9 @@ class MainActivity : FragmentActivity() {
                                                 },
                                                 onClearAuthMessages = {
                                                     viewModel.clearAuthMessages()
+                                                },
+                                                onEnterGuestMode = {
+                                                    viewModel.enterGuestMode()
                                                 }
                                             )
                                         }
@@ -425,10 +428,11 @@ class MainActivity : FragmentActivity() {
                                                 isDark = isDark,
                                                 isArabic = isArabic,
                                                 onBack = { viewModel.closeEditor() },
-                                                onSave = { title, content, category, colorPreset, backgroundId, customColorArgb, isPinned, isFav, checklist, audioDuration, audioPath, audioSize ->
+                                                onSave = { title, content, pagesJson, category, colorPreset, backgroundId, customColorArgb, isPinned, isFav, checklist, audioDuration, audioPath, audioSize ->
                                                     viewModel.saveNote(
                                                         title = title,
                                                         content = content,
+                                                        pagesJson = pagesJson,
                                                         category = category,
                                                         colorPreset = colorPreset,
                                                         backgroundId = backgroundId,
@@ -443,10 +447,11 @@ class MainActivity : FragmentActivity() {
                                                 },
                                                 onDelete = { viewModel.deleteCurrentNote() },
                                                 onToggleArchive = { viewModel.toggleArchive(screen.note) },
-                                                onAutoSave = { title, content, category, colorPreset, backgroundId, customColorArgb, isPinned, isFav, checklist, audioDuration, audioPath, audioSize ->
+                                                onAutoSave = { title, content, pagesJson, category, colorPreset, backgroundId, customColorArgb, isPinned, isFav, checklist, audioDuration, audioPath, audioSize ->
                                                     viewModel.autoSaveNote(
                                                         title = title,
                                                         content = content,
+                                                        pagesJson = pagesJson,
                                                         category = category,
                                                         colorPreset = colorPreset,
                                                         backgroundId = backgroundId,

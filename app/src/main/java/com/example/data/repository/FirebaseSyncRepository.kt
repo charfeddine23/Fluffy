@@ -229,6 +229,7 @@ object FirebaseSyncRepository {
         val syncKey = note.syncId.ifBlank { return }
         val allowAudioInCloud = AudioCloudPolicy.canStoreNoteAudioInCloud(note)
         val isPureAudioNote = note.content.isBlank() &&
+            note.pagesJson.isBlank() &&
             note.checklistJson.isBlank() &&
             (note.title.isBlank() || note.category == "صوتي" || note.category == "Audio")
 
@@ -245,6 +246,7 @@ object FirebaseSyncRepository {
             "userId" to userId,
             "title" to note.title,
             "content" to note.content,
+            "pagesJson" to note.pagesJson,
             "category" to note.category,
             "colorPreset" to note.colorPreset,
             "backgroundId" to note.backgroundId,
@@ -368,6 +370,7 @@ object FirebaseSyncRepository {
             "isDarkMode" to settings.isDarkMode,
             "isArabic" to settings.isArabic,
             "isGridView" to settings.isGridView,
+            "notesViewMode" to settings.notesViewMode,
             "isBiometricEnabled" to settings.isBiometricEnabled,
             "selectedCategory" to settings.selectedCategory,
             "cloudSyncEnabled" to settings.cloudSyncEnabled,
@@ -521,6 +524,7 @@ object FirebaseSyncRepository {
             id = 0L,
             title = getString("title") ?: "",
             content = getString("content") ?: "",
+            pagesJson = getString("pagesJson") ?: "",
             category = getString("category") ?: "Ideas",
             colorPreset = getString("colorPreset") ?: "frost",
             backgroundId = getString("backgroundId") ?: "none",
@@ -545,10 +549,11 @@ object FirebaseSyncRepository {
         if (!exists()) return null
         val isDark = getBoolean("isDarkMode") ?: true
         val arabic = getBoolean("isArabic") ?: true
+        val isGrid = getBoolean("isGridView") ?: true
         val snapshot = FluffySettingsSnapshot(
             isDarkMode = isDark,
             isArabic = arabic,
-            isGridView = getBoolean("isGridView") ?: true,
+            isGridView = isGrid,
             isBiometricEnabled = getBoolean("isBiometricEnabled") ?: false,
             selectedCategory = getString("selectedCategory") ?: "ALL",
             cloudSyncEnabled = getBoolean("cloudSyncEnabled") ?: true,
@@ -557,7 +562,8 @@ object FirebaseSyncRepository {
             appLanguageCode = getString("appLanguageCode")
                 ?: if (arabic) "ar" else "en",
             nonScreenshotEnabled = getBoolean("nonScreenshotEnabled") ?: false,
-            coloredContainerBorders = getBoolean("coloredContainerBorders") ?: true
+            coloredContainerBorders = getBoolean("coloredContainerBorders") ?: true,
+            notesViewMode = getString("notesViewMode") ?: if (isGrid) "grid" else "list"
         )
         return RemoteSettingsPayload(
             snapshot = snapshot,

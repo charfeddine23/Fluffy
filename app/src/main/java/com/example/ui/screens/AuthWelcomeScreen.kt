@@ -87,6 +87,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalFocusManager
@@ -107,7 +108,6 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.auth.rememberGoogleSignInController
-import com.example.ui.glass.BlurryScreenEdges
 import com.example.ui.glass.LocalColoredContainerBorders
 import com.example.ui.theme.LocalAppLanguage
 import com.example.ui.theme.LocalAppThemePreset
@@ -134,6 +134,7 @@ fun AuthWelcomeScreen(
     onEmailSignUp: (username: String, email: String, password: String, confirmPassword: String) -> Unit = { _, _, _, _ -> },
     onResetPassword: (email: String) -> Unit = {},
     onClearAuthMessages: () -> Unit = {},
+    onEnterGuestMode: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val googleController = rememberGoogleSignInController(
@@ -248,10 +249,25 @@ fun AuthWelcomeScreen(
         label = "backdrop_circle_scale"
     )
 
+    val themedBgTop = lerp(
+        bgBase,
+        primaryAccent,
+        if (effectiveDark) 0.10f else 0.16f
+    )
+    val themedBgBottom = lerp(
+        bgBase,
+        secondaryAccent,
+        if (effectiveDark) 0.14f else 0.24f
+    )
+
     BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
-            .background(bgBase)
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(themedBgTop, themedBgBottom)
+                )
+            )
     ) {
         val outerGlowTint = if (effectiveDark) primaryAccent.copy(alpha = 0.30f) else primaryAccent.copy(alpha = 0.22f)
 
@@ -469,7 +485,8 @@ fun AuthWelcomeScreen(
                                 onGoogleSignIn = {
                                     onClearAuthMessages()
                                     googleController.startSignIn(isArabic = isArabic)
-                                }
+                                },
+                                onEnterGuestMode = onEnterGuestMode
                             )
                         }
 
@@ -514,7 +531,8 @@ fun AuthWelcomeScreen(
                                 onGoogleSignIn = {
                                     onClearAuthMessages()
                                     googleController.startSignIn(isArabic = isArabic)
-                                }
+                                },
+                                onEnterGuestMode = onEnterGuestMode
                             )
                         }
 
@@ -670,11 +688,6 @@ fun AuthWelcomeScreen(
                 }
             )
         }
-
-        BlurryScreenEdges(
-            isDark = effectiveDark,
-            edgeColorOverride = bgBase
-        )
     }
 }
 
@@ -690,7 +703,8 @@ private fun WelcomeLandingStage(
     displayedError: String?,
     onRegisterNow: () -> Unit,
     onHaveAccount: () -> Unit,
-    onGoogleSignIn: () -> Unit
+    onGoogleSignIn: () -> Unit,
+    onEnterGuestMode: () -> Unit
 ) {
     Box(
         modifier = Modifier
@@ -805,7 +819,7 @@ private fun WelcomeLandingStage(
                 )
             }
 
-            Spacer(modifier = Modifier.height(34.dp))
+            Spacer(modifier = Modifier.height(30.dp))
 
             // Subtle Google option at bottom of landing card
             GooglePillButton(
@@ -821,6 +835,17 @@ private fun WelcomeLandingStage(
                 isDark = isDark,
                 isLoading = isLoading,
                 onClick = onGoogleSignIn
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            GuestModePillButton(
+                label = tr("وضع الضيف", "Mode invité", "Guest Mode", "Askar n yinebgi"),
+                primaryAccent = primaryAccent,
+                textSecondary = textSecondary,
+                isDark = isDark,
+                enabled = !isLoading,
+                onClick = onEnterGuestMode
             )
         }
     }
@@ -847,7 +872,8 @@ private fun LoginCardStage(
     onForgotPassword: () -> Unit,
     onSignIn: () -> Unit,
     onSwitchToRegister: () -> Unit,
-    onGoogleSignIn: () -> Unit
+    onGoogleSignIn: () -> Unit,
+    onEnterGuestMode: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -1033,6 +1059,17 @@ private fun LoginCardStage(
             isDark = isDark,
             isLoading = isLoading,
             onClick = onGoogleSignIn
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        GuestModePillButton(
+            label = tr("وضع الضيف", "Mode invité", "Guest Mode", "Askar n yinebgi"),
+            primaryAccent = primaryAccent,
+            textSecondary = textSecondary,
+            isDark = isDark,
+            enabled = !isLoading,
+            onClick = onEnterGuestMode
         )
     }
 }
@@ -1341,6 +1378,55 @@ private fun GooglePillButton(
             fontSize = 13.5.sp,
             fontWeight = FontWeight.SemiBold,
             color = textPrimary
+        )
+    }
+}
+
+@Composable
+private fun GuestModePillButton(
+    label: String,
+    primaryAccent: Color,
+    textSecondary: Color,
+    isDark: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = 46.dp)
+            .testTag("welcome_guest_mode_button")
+            .clip(CircleShape)
+            .background(
+                primaryAccent.copy(alpha = if (isDark) 0.12f else 0.08f)
+            )
+            .border(
+                width = 1.dp,
+                color = primaryAccent.copy(alpha = if (isDark) 0.30f else 0.22f),
+                shape = CircleShape
+            )
+            .clickable(
+                enabled = enabled,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = ripple(bounded = true, color = primaryAccent),
+                onClick = onClick
+            )
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.PersonOutline,
+            contentDescription = label,
+            tint = primaryAccent,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = label,
+            fontSize = 13.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = if (isDark) primaryAccent else textSecondary
         )
     }
 }

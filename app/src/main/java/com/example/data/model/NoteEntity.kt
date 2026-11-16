@@ -10,6 +10,7 @@ data class NoteEntity(
     val id: Long = 0,
     val title: String = "",
     val content: String = "",
+    val pagesJson: String = "",
     val category: String = "Ideas",
     val colorPreset: String = "frost",
     val backgroundId: String = "none",

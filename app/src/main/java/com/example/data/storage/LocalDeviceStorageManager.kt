@@ -28,7 +28,8 @@ data class FluffySettingsSnapshot(
     val selectedThemeId: String = "obsidian_liquid_glass",
     val appLanguageCode: String = if (isArabic) "ar" else "en",
     val nonScreenshotEnabled: Boolean = false,
-    val coloredContainerBorders: Boolean = true
+    val coloredContainerBorders: Boolean = true,
+    val notesViewMode: String = if (isGridView) "grid" else "list"
 )
 
 data class FluffyBackupBundle(
@@ -440,15 +441,17 @@ object LocalDeviceStorageManager {
         put("appLanguageCode", s.appLanguageCode)
         put("nonScreenshotEnabled", s.nonScreenshotEnabled)
         put("coloredContainerBorders", s.coloredContainerBorders)
+        put("notesViewMode", s.notesViewMode)
     }
 
     private fun jsonToSettings(obj: JSONObject): FluffySettingsSnapshot {
         val dark = obj.optBoolean("isDarkMode", true)
         val arabic = obj.optBoolean("isArabic", true)
+        val gridFlag = obj.optBoolean("isGridView", true)
         return FluffySettingsSnapshot(
             isDarkMode = dark,
             isArabic = arabic,
-            isGridView = obj.optBoolean("isGridView", true),
+            isGridView = gridFlag,
             isBiometricEnabled = obj.optBoolean("isBiometricEnabled", false),
             selectedCategory = obj.optString("selectedCategory", "ALL"),
             cloudSyncEnabled = obj.optBoolean("cloudSyncEnabled", true),
@@ -461,7 +464,11 @@ object LocalDeviceStorageManager {
                 if (arabic) "ar" else "en"
             ),
             nonScreenshotEnabled = obj.optBoolean("nonScreenshotEnabled", false),
-            coloredContainerBorders = obj.optBoolean("coloredContainerBorders", true)
+            coloredContainerBorders = obj.optBoolean("coloredContainerBorders", true),
+            notesViewMode = obj.optString(
+                "notesViewMode",
+                if (gridFlag) "grid" else "list"
+            )
         )
     }
 
@@ -471,6 +478,7 @@ object LocalDeviceStorageManager {
         put("sortOrder", n.sortOrder)
         put("title", n.title)
         put("content", n.content)
+        put("pagesJson", n.pagesJson)
         put("category", n.category)
         put("colorPreset", n.colorPreset)
         put("backgroundId", n.backgroundId)
@@ -492,6 +500,7 @@ object LocalDeviceStorageManager {
         id = obj.optLong("id", 0L),
         title = obj.optString("title", ""),
         content = obj.optString("content", ""),
+        pagesJson = obj.optString("pagesJson", ""),
         category = obj.optString("category", "Ideas"),
         colorPreset = obj.optString("colorPreset", "frost"),
         backgroundId = obj.optString("backgroundId", "none"),

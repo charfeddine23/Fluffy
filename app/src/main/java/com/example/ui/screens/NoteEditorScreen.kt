@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -32,6 +33,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -42,11 +51,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
@@ -71,6 +82,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -82,21 +94,27 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.example.audio.rememberAudioPlaybackController
 import com.example.data.model.ChecklistItem
 import com.example.data.model.GlassTint
 import com.example.data.model.NoteBackgroundCanvas
 import com.example.data.model.NoteBackgroundCatalog
 import com.example.data.model.NoteEntity
+import com.example.data.model.NotePagesCodec
 import com.example.data.storage.AudioCloudPolicy
 import com.example.ui.components.AudioPlayerCard
 import com.example.ui.components.DocumentStyleBottomSheet
 import com.example.ui.components.VoiceRecorderDialog
 import com.example.ui.glass.FrostedBackdrop
+import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.glass.liquidGlass
+import kotlinx.coroutines.launch
 
 @Composable
 fun NoteEditorScreen(
@@ -108,6 +126,7 @@ fun NoteEditorScreen(
     onSave: (
         title: String,
         content: String,
+        pagesJson: String,
         category: String,
         colorPreset: String,
         backgroundId: String,
@@ -124,6 +143,7 @@ fun NoteEditorScreen(
     onAutoSave: ((
         title: String,
         content: String,
+        pagesJson: String,
         category: String,
         colorPreset: String,
         backgroundId: String,
@@ -138,13 +158,18 @@ fun NoteEditorScreen(
 ) {
     val context = LocalContext.current
     val playbackController = rememberAudioPlaybackController()
+    val coroutineScope = rememberCoroutineScope()
 
     // New drafts open in Edit/Writing mode; saved notes reopen in View-Only mode
     var isEditMode by remember { mutableStateOf(isCreatingNew || note.id == 0L) }
 
-    // Local mutable state for literal editing
+    // Local mutable state for literal multi-page editing (up to 100 pages or 900 KB)
     var title by remember { mutableStateOf(note.title) }
-    var content by remember { mutableStateOf(note.content) }
+    val pages = remember(note.id, note.syncId) {
+        mutableStateListOf<String>().apply {
+            addAll(NotePagesCodec.decodePages(note.content, note.pagesJson))
+        }
+    }
     var category by remember { mutableStateOf(note.category) }
     var selectedTint by remember { mutableStateOf(GlassTint.fromId(note.colorPreset)) }
     var backgroundId by remember { mutableStateOf(note.backgroundId) }
@@ -161,6 +186,8 @@ fun NoteEditorScreen(
     var showStyleSheet by remember { mutableStateOf(false) }
     var styleSheetInitialTab by remember { mutableIntStateOf(0) }
     var showMoreMenu by remember { mutableStateOf(false) }
+    var showPagePickerDialog by remember { mutableStateOf(false) }
+    var limitWarningMessage by remember { mutableStateOf<String?>(null) }
 
     val checklistItems = remember {
         mutableStateListOf<ChecklistItem>().apply {
@@ -168,10 +195,111 @@ fun NoteEditorScreen(
         }
     }
 
+    val pagesSnapshot = pages.toList()
+    val page1Content = pagesSnapshot.firstOrNull().orEmpty()
+    val encodedExtraPages = remember(pagesSnapshot) { NotePagesCodec.encodeExtraPages(pagesSnapshot) }
+    val totalNoteBytes = remember(title, pagesSnapshot, checklistItems.toList()) {
+        NotePagesCodec.estimateNoteBytes(title, pagesSnapshot, checklistItems.toList())
+    }
+    val canAppendAnotherPage = pages.size < NotePagesCodec.MAX_NOTE_PAGES &&
+        totalNoteBytes + 8L <= NotePagesCodec.MAX_NOTE_BYTES
+
+    val pagerPageCount = if (isEditMode && canAppendAnotherPage) {
+        pages.size + 1
+    } else {
+        pages.size.coerceAtLeast(1)
+    }
+    val pagerState = rememberPagerState(initialPage = 0, pageCount = { pagerPageCount })
+    val pageChipListState = rememberLazyListState()
+
+    // Auto-create page when user swipes into the trailing virtual slot (e.g., swipe right in Arabic RTL -> Page 2)
+    LaunchedEffect(pagerState.settledPage, isEditMode, pages.size, canAppendAnotherPage) {
+        if (isEditMode && pagerState.settledPage == pages.size) {
+            if (canAppendAnotherPage) {
+                pages.add("")
+            } else {
+                limitWarningMessage = if (pages.size >= NotePagesCodec.MAX_NOTE_PAGES) {
+                    if (isArabic) "تم الوصول إلى الحد الأقصى: 100 صفحة في المسودة" else "Maximum limit reached: 100 pages per note"
+                } else {
+                    if (isArabic) "تم الوصول إلى الحد الأقصى للحجم: 900 كيلوبايت للمسودة" else "Note size limit reached: 900 KB max"
+                }
+                pagerState.animateScrollToPage((pages.size - 1).coerceAtLeast(0))
+            }
+        }
+    }
+
+    // Keep horizontal page pill strip scrolled to active page
+    LaunchedEffect(pagerState.currentPage, pages.size) {
+        val target = pagerState.currentPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
+        if (pages.isNotEmpty()) {
+            pageChipListState.animateScrollToItem(target)
+        }
+    }
+
+    // Auto-clear limit warning toast banner
+    LaunchedEffect(limitWarningMessage) {
+        if (limitWarningMessage != null) {
+            kotlinx.coroutines.delay(3000)
+            limitWarningMessage = null
+        }
+    }
+
+    fun triggerLimitWarning(isCountLimit: Boolean = false) {
+        limitWarningMessage = if (isCountLimit) {
+            if (isArabic) "الحد الأقصى 100 صفحة لكل مسودة" else "Maximum 100 pages per note"
+        } else {
+            if (isArabic) "تم الوصول للحد الأقصى لحجم المسودة (900 كيلوبايت)" else "Note size limit reached (900 KB)"
+        }
+    }
+
+    fun addPageAndNavigate() {
+        if (pages.size >= NotePagesCodec.MAX_NOTE_PAGES) {
+            triggerLimitWarning(isCountLimit = true)
+            return
+        }
+        if (totalNoteBytes + 8L > NotePagesCodec.MAX_NOTE_BYTES) {
+            triggerLimitWarning(isCountLimit = false)
+            return
+        }
+        pages.add("")
+        val newIndex = pages.lastIndex
+        coroutineScope.launch {
+            pagerState.animateScrollToPage(newIndex)
+        }
+    }
+
+    fun removePageAt(index: Int) {
+        if (pages.size <= 1 || index !in pages.indices) return
+        pages.removeAt(index)
+        val clampedTarget = index.coerceAtMost(pages.lastIndex)
+        coroutineScope.launch {
+            pagerState.animateScrollToPage(clampedTarget)
+        }
+    }
+
+    fun updateTitleBounded(newTitle: String) {
+        val currentBytesWithoutTitle = totalNoteBytes - title.toByteArray(Charsets.UTF_8).size.toLong()
+        val budget = (NotePagesCodec.MAX_NOTE_BYTES - currentBytesWithoutTitle).coerceAtLeast(0L)
+        val (fitted, truncated) = NotePagesCodec.fitWithinByteBudget(newTitle, budget)
+        title = fitted
+        if (truncated) triggerLimitWarning(isCountLimit = false)
+    }
+
+    fun updatePageTextBounded(pageIndex: Int, newText: String) {
+        if (pageIndex !in pages.indices) return
+        val currentPageBytes = pages[pageIndex].toByteArray(Charsets.UTF_8).size.toLong()
+        val otherBytes = totalNoteBytes - currentPageBytes
+        val safetyMargin = if (pageIndex > 0) 6L else 0L
+        val budget = (NotePagesCodec.MAX_NOTE_BYTES - otherBytes - safetyMargin).coerceAtLeast(0L)
+        val (fitted, truncated) = NotePagesCodec.fitWithinByteBudget(newText, budget)
+        pages[pageIndex] = fitted
+        if (truncated) triggerLimitWarning(isCountLimit = false)
+    }
+
     fun triggerImmediateSaveIfViewMode() {
         if (!isEditMode) {
             onAutoSave?.invoke(
-                title, content, category, selectedTint.id, backgroundId, customColorArgb,
+                title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
                 isPinned, isFavorite, checklistItems.toList(),
                 audioDurationSec, audioFilePath, audioByteSize
             )
@@ -180,14 +308,14 @@ fun NoteEditorScreen(
 
     // Real-time automatic background save with 500ms debounce (active only in Writing/Edit mode)
     LaunchedEffect(
-        isEditMode, title, content, category, selectedTint.id, backgroundId, customColorArgb,
+        isEditMode, title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
         isPinned, isFavorite, checklistItems.toList(),
         audioDurationSec, audioFilePath, audioByteSize
     ) {
         if (!isEditMode) return@LaunchedEffect
         kotlinx.coroutines.delay(500)
         onAutoSave?.invoke(
-            title, content, category, selectedTint.id, backgroundId, customColorArgb,
+            title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
             isPinned, isFavorite, checklistItems.toList(),
             audioDurationSec, audioFilePath, audioByteSize
         )
@@ -198,7 +326,7 @@ fun NoteEditorScreen(
         playbackController.stop()
         if (isEditMode) {
             onSave(
-                title, content, category, selectedTint.id, backgroundId, customColorArgb,
+                title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
                 isPinned, isFavorite, checklistItems.toList(),
                 audioDurationSec, audioFilePath, audioByteSize
             )
@@ -210,7 +338,7 @@ fun NoteEditorScreen(
                 category != note.category
             ) {
                 onAutoSave?.invoke(
-                    title, content, category, selectedTint.id, backgroundId, customColorArgb,
+                    title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
                     isPinned, isFavorite, checklistItems.toList(),
                     audioDurationSec, audioFilePath, audioByteSize
                 )
@@ -235,10 +363,14 @@ fun NoteEditorScreen(
     val accentColor = surfaceColors.accentColor
     val pillFill = surfaceColors.pillFill
 
-    val wordCount = remember(content) {
-        if (content.isBlank()) 0 else content.trim().split("\\s+".toRegex()).size
+    val wordCount = remember(pagesSnapshot) {
+        pagesSnapshot.sumOf { pageText ->
+            if (pageText.isBlank()) 0 else pageText.trim().split("\\s+".toRegex()).size
+        }
     }
-    val charCount = content.length
+    val charCount = remember(pagesSnapshot) {
+        pagesSnapshot.sumOf { it.length }
+    }
 
     FrostedBackdrop(isDark = isDark) {
         // Per-document background or custom document color layer
@@ -305,7 +437,7 @@ fun NoteEditorScreen(
                             playbackController.stop()
                             if (isEditMode) {
                                 onSave(
-                                    title, content, category, selectedTint.id, backgroundId, customColorArgb,
+                                    title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
                                     isPinned, isFavorite, checklistItems.toList(),
                                     audioDurationSec, audioFilePath, audioByteSize
                                 )
@@ -317,7 +449,7 @@ fun NoteEditorScreen(
                                     category != note.category
                                 ) {
                                     onAutoSave?.invoke(
-                                        title, content, category, selectedTint.id, backgroundId, customColorArgb,
+                                        title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
                                         isPinned, isFavorite, checklistItems.toList(),
                                         audioDurationSec, audioFilePath, audioByteSize
                                     )
@@ -416,7 +548,7 @@ fun NoteEditorScreen(
                                     indication = ripple(bounded = true)
                                 ) {
                                     onSave(
-                                        title, content, category, selectedTint.id, backgroundId, customColorArgb,
+                                        title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
                                         isPinned, isFavorite, checklistItems.toList(),
                                         audioDurationSec, audioFilePath, audioByteSize
                                     )
@@ -461,244 +593,502 @@ fun NoteEditorScreen(
                 }
             }
 
-            // 2. Full-Height Writing Area (Title right at top + Writing Canvas stretching edge-to-edge down to bottom toolbar)
-            BoxWithConstraints(
+            // 2. Title + Multi-Page Navigator Bar + Swipeable HorizontalPager Writing Canvas
+            Column(
                 modifier = Modifier
-                    .weight(1f)
                     .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 4.dp)
             ) {
-                val minCanvasHeight = maxHeight
-                val scrollState = rememberScrollState()
-
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = minCanvasHeight)
-                        .verticalScroll(scrollState)
-                        .padding(horizontal = 20.dp, vertical = 6.dp)
-                ) {
-                    // Title (Editable in Edit mode; Read-Only selectable text in View-Only mode)
-                    if (isEditMode) {
-                        BasicTextField(
-                            value = title,
-                            onValueChange = { title = it },
+                if (isEditMode) {
+                    BasicTextField(
+                        value = title,
+                        onValueChange = { updateTitleBounded(it) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("editor_title_input"),
+                        textStyle = TextStyle(
+                            fontSize = 23.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = textColor
+                        ),
+                        cursorBrush = SolidColor(selectedTint.accentColor),
+                        decorationBox = { innerTextField ->
+                            if (title.isEmpty()) {
+                                Text(
+                                    text = if (isArabic) "العنوان" else "Title",
+                                    style = TextStyle(
+                                        fontSize = 23.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = metaColor.copy(alpha = 0.6f)
+                                    )
+                                )
+                            }
+                            innerTextField()
+                        }
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                } else if (title.isNotEmpty()) {
+                    SelectionContainer {
+                        Text(
+                            text = title,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .testTag("editor_title_input"),
-                            textStyle = TextStyle(
+                                .testTag("editor_title_readonly"),
+                            style = TextStyle(
                                 fontSize = 23.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = textColor
-                            ),
-                            cursorBrush = SolidColor(selectedTint.accentColor),
-                            decorationBox = { innerTextField ->
-                                if (title.isEmpty()) {
-                                    Text(
-                                        text = if (isArabic) "العنوان" else "Title",
-                                        style = TextStyle(
-                                            fontSize = 23.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = metaColor.copy(alpha = 0.6f)
+                            )
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
+
+                // Multi-Page Strip (Page indicator, quick page pills, + add page up to 100, size cap 900 KB)
+                val activePageDisplayIdx = pagerState.currentPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
+                val sizeRatio = totalNoteBytes.toFloat() / NotePagesCodec.MAX_NOTE_BYTES.toFloat()
+                val sizeIndicatorColor = when {
+                    sizeRatio >= 0.96f -> Color(0xFFEF4444)
+                    sizeRatio >= 0.80f -> Color(0xFFF59E0B)
+                    else -> metaColor
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Page Counter Pill (tappable to open All Pages Navigator Dialog)
+                    Row(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(accentColor.copy(alpha = if (effectiveDark) 0.20f else 0.12f))
+                            .border(
+                                width = 0.9.dp,
+                                color = accentColor.copy(alpha = 0.42f),
+                                shape = CircleShape
+                            )
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = ripple(bounded = true)
+                            ) { showPagePickerDialog = true }
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                            .testTag("editor_page_counter_pill"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AutoStories,
+                            contentDescription = if (isArabic) "صفحات المسودة" else "Draft Pages",
+                            tint = accentColor,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = if (isArabic) {
+                                "صفحة ${activePageDisplayIdx + 1}/${pages.size}"
+                            } else {
+                                "Page ${activePageDisplayIdx + 1}/${pages.size}"
+                            },
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = textColor
+                        )
+                    }
+
+                    // Scrollable Quick-Jump Page Chips
+                    if (pages.size > 1) {
+                        LazyRow(
+                            state = pageChipListState,
+                            modifier = Modifier.weight(1f),
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            itemsIndexed(pages) { idx, _ ->
+                                val isSelectedPage = idx == pagerState.currentPage
+                                Box(
+                                    modifier = Modifier
+                                        .defaultMinSize(minWidth = 28.dp, minHeight = 28.dp)
+                                        .clip(CircleShape)
+                                        .background(
+                                            if (isSelectedPage) accentColor
+                                            else pillFill.copy(alpha = 0.72f)
                                         )
+                                        .clickable(
+                                            interactionSource = remember { MutableInteractionSource() },
+                                            indication = ripple(bounded = true)
+                                        ) {
+                                            coroutineScope.launch {
+                                                pagerState.animateScrollToPage(idx)
+                                            }
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                        .testTag("editor_page_chip_$idx"),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "${idx + 1}",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelectedPage) Color.White else metaColor
                                     )
                                 }
-                                innerTextField()
                             }
+                        }
+                    } else {
+                        Text(
+                            text = if (isEditMode) {
+                                if (isArabic) "اسحب لليمين لصفحة جديدة" else "Swipe for Page 2"
+                            } else "",
+                            fontSize = 11.sp,
+                            color = metaColor.copy(alpha = 0.75f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
                         )
-                        Spacer(modifier = Modifier.height(14.dp))
-                    } else if (title.isNotEmpty()) {
-                        SelectionContainer {
-                            Text(
-                                text = title,
+                    }
+
+                    // Note size indicator (against 900 KB limit)
+                    if (pages.size > 1 || totalNoteBytes >= 1024L) {
+                        Text(
+                            text = "${NotePagesCodec.formatSizeKb(totalNoteBytes, isArabic)} / ${if (isArabic) "900 ك.ب" else "900 KB"}",
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = sizeIndicatorColor,
+                            modifier = Modifier.testTag("editor_note_size_label")
+                        )
+                    }
+
+                    if (isEditMode) {
+                        if (pages.size > 1 && pagerState.currentPage < pages.size) {
+                            Box(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("editor_title_readonly"),
-                                style = TextStyle(
-                                    fontSize = 23.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = textColor
+                                    .size(30.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFFEF4444).copy(alpha = 0.14f))
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = ripple(bounded = true)
+                                    ) { removePageAt(pagerState.currentPage) }
+                                    .testTag("editor_remove_page_button"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.DeleteOutline,
+                                    contentDescription = if (isArabic) "حذف الصفحة الحالية" else "Delete current page",
+                                    tint = Color(0xFFEF4444),
+                                    modifier = Modifier.size(16.dp)
                                 )
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .size(30.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (canAppendAnotherPage) accentColor.copy(alpha = if (effectiveDark) 0.25f else 0.16f)
+                                    else metaColor.copy(alpha = 0.14f)
+                                )
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = ripple(bounded = true)
+                                ) { addPageAndNavigate() }
+                                .testTag("editor_add_page_button"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = if (isArabic) "إضافة صفحة جديدة" else "Add New Page",
+                                tint = if (canAppendAnotherPage) accentColor else metaColor,
+                                modifier = Modifier.size(17.dp)
                             )
                         }
-                        Spacer(modifier = Modifier.height(14.dp))
                     }
+                }
 
-                    // Interactive Audio Player Card (only shown when a voice memo / audio file is attached)
-                    if (audioDurationSec > 0 || audioFilePath.isNotBlank()) {
-                        val stableAudioTrackId = remember(note.syncId) {
-                            "editor_${note.syncId.ifBlank { note.id.toString() }}"
-                        }
-                        AudioPlayerCard(
-                            trackId = stableAudioTrackId,
-                            title = title.ifBlank {
-                                if (isArabic) "تسجيل صوتي مرفق" else "Attached Voice Memo"
-                            },
-                            filePathOrUri = audioFilePath,
-                            durationSec = audioDurationSec,
-                            byteSize = audioByteSize,
-                            playbackController = playbackController,
-                            isDark = effectiveDark,
-                            isArabic = isArabic,
-                            canDelete = isEditMode,
-                            onDelete = {
-                                audioDurationSec = 0
-                                audioFilePath = ""
-                                audioByteSize = 0L
-                            },
-                            modifier = Modifier.padding(bottom = 12.dp)
+                AnimatedVisibility(visible = limitWarningMessage != null) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 6.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFFEF4444).copy(alpha = if (effectiveDark) 0.22f else 0.12f))
+                            .border(1.dp, Color(0xFFEF4444).copy(alpha = 0.45f), RoundedCornerShape(12.dp))
+                            .padding(horizontal = 12.dp, vertical = 7.dp)
+                    ) {
+                        Text(
+                            text = limitWarningMessage.orEmpty(),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (effectiveDark) Color(0xFFFCA5A5) else Color(0xFFB91C1C)
                         )
                     }
+                }
+            }
 
-                    // Checklist Items (only shown if checklist items exist)
-                    if (checklistItems.isNotEmpty()) {
+            HorizontalPager(
+                state = pagerState,
+                beyondViewportPageCount = 1,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .testTag("editor_pages_pager")
+            ) { pageIndex ->
+                if (pageIndex < pages.size) {
+                    val pageScrollState = rememberScrollState()
+                    BoxWithConstraints(
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        val minCanvasHeight = maxHeight
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(bottom = 12.dp)
+                                .heightIn(min = minCanvasHeight)
+                                .verticalScroll(pageScrollState)
+                                .padding(horizontal = 20.dp, vertical = 6.dp)
                         ) {
-                            checklistItems.forEachIndexed { index, item ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = if (item.isDone) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
-                                        contentDescription = if (isArabic) "تحديد المهمة" else "Toggle checklist item",
-                                        tint = if (item.isDone) selectedTint.accentColor else metaColor,
-                                        modifier = Modifier
-                                            .size(22.dp)
-                                            .clickable(enabled = isEditMode) {
-                                                checklistItems[index] = item.copy(isDone = !item.isDone)
-                                            }
+                            // Audio & Checklist live cleanly at the top of Page 1
+                            if (pageIndex == 0) {
+                                if (audioDurationSec > 0 || audioFilePath.isNotBlank()) {
+                                    val stableAudioTrackId = remember(note.syncId) {
+                                        "editor_${note.syncId.ifBlank { note.id.toString() }}"
+                                    }
+                                    AudioPlayerCard(
+                                        trackId = stableAudioTrackId,
+                                        title = title.ifBlank {
+                                            if (isArabic) "تسجيل صوتي مرفق" else "Attached Voice Memo"
+                                        },
+                                        filePathOrUri = audioFilePath,
+                                        durationSec = audioDurationSec,
+                                        byteSize = audioByteSize,
+                                        playbackController = playbackController,
+                                        isDark = effectiveDark,
+                                        isArabic = isArabic,
+                                        canDelete = isEditMode,
+                                        onDelete = {
+                                            audioDurationSec = 0
+                                            audioFilePath = ""
+                                            audioByteSize = 0L
+                                        },
+                                        modifier = Modifier.padding(bottom = 12.dp)
                                     )
+                                }
 
-                                    Spacer(modifier = Modifier.width(8.dp))
+                                if (checklistItems.isNotEmpty()) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(bottom = 12.dp)
+                                    ) {
+                                        checklistItems.forEachIndexed { index, item ->
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(vertical = 4.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Icon(
+                                                    imageVector = if (item.isDone) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
+                                                    contentDescription = if (isArabic) "تحديد المهمة" else "Toggle checklist item",
+                                                    tint = if (item.isDone) selectedTint.accentColor else metaColor,
+                                                    modifier = Modifier
+                                                        .size(22.dp)
+                                                        .clickable(enabled = isEditMode) {
+                                                            checklistItems[index] = item.copy(isDone = !item.isDone)
+                                                        }
+                                                )
 
-                                    if (isEditMode) {
-                                        BasicTextField(
-                                            value = item.text,
-                                            onValueChange = { newText ->
-                                                checklistItems[index] = item.copy(text = newText)
-                                            },
-                                            modifier = Modifier.weight(1f),
-                                            textStyle = TextStyle(
-                                                fontSize = 15.sp,
-                                                color = if (item.isDone) metaColor else textColor,
-                                                textDecoration = if (item.isDone) TextDecoration.LineThrough else TextDecoration.None
-                                            ),
-                                            cursorBrush = SolidColor(selectedTint.accentColor),
-                                            decorationBox = { inner ->
-                                                if (item.text.isEmpty()) {
+                                                Spacer(modifier = Modifier.width(8.dp))
+
+                                                if (isEditMode) {
+                                                    BasicTextField(
+                                                        value = item.text,
+                                                        onValueChange = { newText ->
+                                                            val curItemBytes = item.text.toByteArray(Charsets.UTF_8).size.toLong()
+                                                            val budget = (NotePagesCodec.MAX_NOTE_BYTES - (totalNoteBytes - curItemBytes) - 8L).coerceAtLeast(0L)
+                                                            val (fitted, truncated) = NotePagesCodec.fitWithinByteBudget(newText, budget)
+                                                            checklistItems[index] = item.copy(text = fitted)
+                                                            if (truncated) triggerLimitWarning(isCountLimit = false)
+                                                        },
+                                                        modifier = Modifier.weight(1f),
+                                                        textStyle = TextStyle(
+                                                            fontSize = 15.sp,
+                                                            color = if (item.isDone) metaColor else textColor,
+                                                            textDecoration = if (item.isDone) TextDecoration.LineThrough else TextDecoration.None
+                                                        ),
+                                                        cursorBrush = SolidColor(selectedTint.accentColor),
+                                                        decorationBox = { inner ->
+                                                            if (item.text.isEmpty()) {
+                                                                Text(
+                                                                    text = if (isArabic) "عنصر مهمة..." else "Checklist item...",
+                                                                    fontSize = 15.sp,
+                                                                    color = metaColor.copy(alpha = 0.55f)
+                                                                )
+                                                            }
+                                                            inner()
+                                                        }
+                                                    )
+
+                                                    IconButton(
+                                                        onClick = { checklistItems.removeAt(index) },
+                                                        modifier = Modifier.size(32.dp)
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Close,
+                                                            contentDescription = if (isArabic) "إزالة العنصر" else "Remove",
+                                                            tint = metaColor,
+                                                            modifier = Modifier.size(16.dp)
+                                                        )
+                                                    }
+                                                } else {
                                                     Text(
-                                                        text = if (isArabic) "عنصر مهمة..." else "Checklist item...",
-                                                        fontSize = 15.sp,
-                                                        color = metaColor.copy(alpha = 0.55f)
+                                                        text = item.text,
+                                                        modifier = Modifier.weight(1f),
+                                                        style = TextStyle(
+                                                            fontSize = 15.sp,
+                                                            color = if (item.isDone) metaColor else textColor,
+                                                            textDecoration = if (item.isDone) TextDecoration.LineThrough else TextDecoration.None
+                                                        )
                                                     )
                                                 }
-                                                inner()
                                             }
-                                        )
-
-                                        IconButton(
-                                            onClick = { checklistItems.removeAt(index) },
-                                            modifier = Modifier.size(32.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Close,
-                                                contentDescription = if (isArabic) "إزالة العنصر" else "Remove",
-                                                tint = metaColor,
-                                                modifier = Modifier.size(16.dp)
-                                            )
                                         }
-                                    } else {
-                                        Text(
-                                            text = item.text,
-                                            modifier = Modifier.weight(1f),
-                                            style = TextStyle(
-                                                fontSize = 15.sp,
-                                                color = if (item.isDone) metaColor else textColor,
-                                                textDecoration = if (item.isDone) TextDecoration.LineThrough else TextDecoration.None
-                                            )
-                                        )
+
+                                        if (isEditMode) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .clickable {
+                                                        if (totalNoteBytes + 32L <= NotePagesCodec.MAX_NOTE_BYTES) {
+                                                            checklistItems.add(ChecklistItem(text = "", isDone = false))
+                                                        } else {
+                                                            triggerLimitWarning(isCountLimit = false)
+                                                        }
+                                                    }
+                                                    .padding(vertical = 6.dp, horizontal = 4.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Add,
+                                                    contentDescription = null,
+                                                    tint = selectedTint.accentColor,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = if (isArabic) "عنصر جديد" else "List item",
+                                                    fontSize = 13.5.sp,
+                                                    fontWeight = FontWeight.Medium,
+                                                    color = selectedTint.accentColor
+                                                )
+                                            }
+                                        }
                                     }
                                 }
+                            } else {
+                                Text(
+                                    text = if (isArabic) "صفحة ${pageIndex + 1}" else "Page ${pageIndex + 1}",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = accentColor.copy(alpha = 0.85f),
+                                    modifier = Modifier.padding(bottom = 8.dp)
+                                )
+                            }
+
+                            val pageText = pages[pageIndex]
+                            val remainingMinHeight = (minCanvasHeight - 64.dp).coerceAtLeast(220.dp)
+                            val fieldTestTag = if (pageIndex == 0) {
+                                if (isEditMode) "editor_content_input" else "editor_content_readonly"
+                            } else {
+                                if (isEditMode) "editor_content_input_page_$pageIndex" else "editor_content_readonly_page_$pageIndex"
                             }
 
                             if (isEditMode) {
-                                Row(
+                                BasicTextField(
+                                    value = pageText,
+                                    onValueChange = { updatePageTextBounded(pageIndex, it) },
                                     modifier = Modifier
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .clickable {
-                                            checklistItems.add(ChecklistItem(text = "", isDone = false))
+                                        .fillMaxWidth()
+                                        .defaultMinSize(minHeight = remainingMinHeight)
+                                        .testTag(fieldTestTag),
+                                    textStyle = TextStyle(
+                                        fontSize = 16.sp,
+                                        color = bodyColor,
+                                        lineHeight = 24.sp
+                                    ),
+                                    cursorBrush = SolidColor(selectedTint.accentColor),
+                                    decorationBox = { innerTextField ->
+                                        Box(modifier = Modifier.fillMaxWidth()) {
+                                            if (pageText.isEmpty()) {
+                                                Text(
+                                                    text = if (pageIndex == 0) {
+                                                        if (isArabic) "اكتب أفكارك وملاحظاتك هنا بحرية..." else "Note"
+                                                    } else {
+                                                        if (isArabic) "اكتب محتوى الصفحة ${pageIndex + 1} هنا..." else "Write page ${pageIndex + 1} here..."
+                                                    },
+                                                    style = TextStyle(
+                                                        fontSize = 16.sp,
+                                                        color = metaColor.copy(alpha = 0.6f),
+                                                        lineHeight = 24.sp
+                                                    )
+                                                )
+                                            }
+                                            innerTextField()
                                         }
-                                        .padding(vertical = 6.dp, horizontal = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Add,
-                                        contentDescription = null,
-                                        tint = selectedTint.accentColor,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
+                                    }
+                                )
+                            } else {
+                                SelectionContainer {
                                     Text(
-                                        text = if (isArabic) "عنصر جديد" else "List item",
-                                        fontSize = 13.5.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = selectedTint.accentColor
+                                        text = pageText,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .defaultMinSize(minHeight = remainingMinHeight)
+                                            .testTag(fieldTestTag),
+                                        style = TextStyle(
+                                            fontSize = 16.sp,
+                                            color = bodyColor,
+                                            lineHeight = 24.sp
+                                        )
                                     )
                                 }
                             }
                         }
                     }
-
-                    // Main Full-Screen Note Content: Editable in Edit mode, Read-Only selectable in View-Only mode
-                    val remainingMinHeight = (minCanvasHeight - 64.dp).coerceAtLeast(220.dp)
-                    if (isEditMode) {
-                        BasicTextField(
-                            value = content,
-                            onValueChange = { content = it },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .defaultMinSize(minHeight = remainingMinHeight)
-                                .testTag("editor_content_input"),
-                            textStyle = TextStyle(
-                                fontSize = 16.sp,
-                                color = bodyColor,
-                                lineHeight = 24.sp
-                            ),
-                            cursorBrush = SolidColor(selectedTint.accentColor),
-                            decorationBox = { innerTextField ->
-                                Box(modifier = Modifier.fillMaxWidth()) {
-                                    if (content.isEmpty()) {
-                                        Text(
-                                            text = if (isArabic) "اكتب أفكارك وملاحظاتك هنا بحرية..." else "Note",
-                                            style = TextStyle(
-                                                fontSize = 16.sp,
-                                                color = metaColor.copy(alpha = 0.6f),
-                                                lineHeight = 24.sp
-                                            )
-                                        )
-                                    }
-                                    innerTextField()
-                                }
-                            }
-                        )
-                    } else {
-                        SelectionContainer {
-                            Text(
-                                text = content,
+                } else {
+                    // Trailing virtual swipe slot -> settles seamlessly into Page N+1
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(32.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Box(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .defaultMinSize(minHeight = remainingMinHeight)
-                                    .testTag("editor_content_readonly"),
-                                style = TextStyle(
-                                    fontSize = 16.sp,
-                                    color = bodyColor,
-                                    lineHeight = 24.sp
+                                    .size(56.dp)
+                                    .clip(CircleShape)
+                                    .background(accentColor.copy(alpha = 0.16f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Add,
+                                    contentDescription = null,
+                                    tint = accentColor,
+                                    modifier = Modifier.size(28.dp)
                                 )
+                            }
+                            Text(
+                                text = if (isArabic) "جاري فتح الصفحة ${pages.size + 1}..." else "Opening Page ${pages.size + 1}...",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = textColor,
+                                textAlign = TextAlign.Center
                             )
                         }
                     }
@@ -765,7 +1155,14 @@ fun NoteEditorScreen(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = ripple(bounded = true)
                                 ) {
-                                    checklistItems.add(ChecklistItem(text = "", isDone = false))
+                                    if (totalNoteBytes + 32L <= NotePagesCodec.MAX_NOTE_BYTES) {
+                                        checklistItems.add(ChecklistItem(text = "", isDone = false))
+                                        if (pagerState.currentPage != 0) {
+                                            coroutineScope.launch { pagerState.animateScrollToPage(0) }
+                                        }
+                                    } else {
+                                        triggerLimitWarning(isCountLimit = false)
+                                    }
                                 },
                             contentAlignment = Alignment.Center
                         ) {
@@ -920,7 +1317,7 @@ fun NoteEditorScreen(
                                     },
                                     onClick = {
                                         showMoreMenu = false
-                                        shareNoteText(context, title, content, checklistItems)
+                                        shareNoteText(context, title, pages.toList(), checklistItems, isArabic)
                                     }
                                 )
 
@@ -967,6 +1364,119 @@ fun NoteEditorScreen(
                                             showMoreMenu = false
                                             onDelete()
                                         }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Quick All-Pages Navigator Dialog (supports up to 100 pages cleanly)
+        if (showPagePickerDialog) {
+            Dialog(onDismissRequest = { showPagePickerDialog = false }) {
+                LiquidGlassCard(
+                    isDark = effectiveDark,
+                    tint = selectedTint,
+                    shape = RoundedCornerShape(24.dp),
+                    borderWidth = 1.4.dp,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    text = if (isArabic) "صفحات المسودة (${pages.size}/100)" else "Draft Pages (${pages.size}/100)",
+                                    fontSize = 17.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = textColor
+                                )
+                                Text(
+                                    text = if (isArabic) {
+                                        "الحجم: ${NotePagesCodec.formatSizeKb(totalNoteBytes, true)} من 900 ك.ب"
+                                    } else {
+                                        "Size: ${NotePagesCodec.formatSizeKb(totalNoteBytes, false)} / 900 KB"
+                                    },
+                                    fontSize = 12.sp,
+                                    color = metaColor
+                                )
+                            }
+                            if (isEditMode) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .background(accentColor.copy(alpha = 0.2f))
+                                        .clickable {
+                                            showPagePickerDialog = false
+                                            addPageAndNavigate()
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 7.dp)
+                                ) {
+                                    Text(
+                                        text = if (isArabic) "+ صفحة" else "+ Page",
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = accentColor
+                                    )
+                                }
+                            }
+                        }
+
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(3),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 320.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            contentPadding = PaddingValues(vertical = 4.dp)
+                        ) {
+                            gridItemsIndexed(pages) { index, pageText ->
+                                val isSelected = index == pagerState.currentPage
+                                Column(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(
+                                            if (isSelected) accentColor.copy(alpha = if (effectiveDark) 0.28f else 0.18f)
+                                            else pillFill.copy(alpha = 0.72f)
+                                        )
+                                        .border(
+                                            width = if (isSelected) 1.4.dp else 0.8.dp,
+                                            color = if (isSelected) accentColor else metaColor.copy(alpha = 0.25f),
+                                            shape = RoundedCornerShape(14.dp)
+                                        )
+                                        .clickable {
+                                            showPagePickerDialog = false
+                                            coroutineScope.launch {
+                                                pagerState.animateScrollToPage(index)
+                                            }
+                                        }
+                                        .padding(10.dp)
+                                ) {
+                                    Text(
+                                        text = if (isArabic) "ص ${index + 1}" else "P${index + 1}",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = if (isSelected) accentColor else textColor
+                                    )
+                                    Spacer(modifier = Modifier.height(3.dp))
+                                    Text(
+                                        text = pageText.trim().ifBlank { if (isArabic) "فارغة" else "Empty" },
+                                        fontSize = 10.5.sp,
+                                        color = metaColor,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                        lineHeight = 14.sp
                                     )
                                 }
                             }
@@ -1029,6 +1539,9 @@ fun NoteEditorScreen(
                     audioFilePath = filePath
                     audioByteSize = byteSize
                     showVoiceRecorderDialog = false
+                    if (pagerState.currentPage != 0) {
+                        coroutineScope.launch { pagerState.animateScrollToPage(0) }
+                    }
                 }
             )
         }
@@ -1038,12 +1551,23 @@ fun NoteEditorScreen(
 private fun shareNoteText(
     context: Context,
     title: String,
-    content: String,
-    checklist: List<ChecklistItem>
+    pages: List<String>,
+    checklist: List<ChecklistItem>,
+    isArabic: Boolean
 ) {
     val sb = StringBuilder()
     if (title.isNotBlank()) sb.append("$title\n\n")
-    if (content.isNotBlank()) sb.append("$content\n\n")
+    if (pages.size <= 1) {
+        val single = pages.firstOrNull().orEmpty()
+        if (single.isNotBlank()) sb.append("$single\n\n")
+    } else {
+        pages.forEachIndexed { idx, pageText ->
+            if (pageText.isNotBlank()) {
+                val label = if (isArabic) "--- صفحة ${idx + 1} ---" else "--- Page ${idx + 1} ---"
+                sb.append("$label\n$pageText\n\n")
+            }
+        }
+    }
     if (checklist.isNotEmpty()) {
         checklist.forEach {
             val mark = if (it.isDone) "[✓]" else "[ ]"
