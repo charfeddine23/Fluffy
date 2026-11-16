@@ -55,6 +55,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Archive
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudDone
@@ -157,6 +158,8 @@ fun SettingsDrawer(
     onSelectLanguage: (AppLanguage) -> Unit = {},
     onToggleViewMode: () -> Unit,
     selectedThemeId: String = "obsidian_liquid_glass",
+    isColoredBordersEnabled: Boolean = true,
+    onToggleColoredBorders: (Boolean) -> Unit = {},
     onOpenThemes: () -> Unit = {},
     trashedCount: Int = 0,
     archivedCount: Int = 0,
@@ -1428,6 +1431,85 @@ fun SettingsDrawer(
                                                 subTextColor = subTextColor,
                                                 onClick = onToggleViewMode
                                             )
+
+                                            HorizontalDivider(
+                                                color = dividerColor,
+                                                modifier = Modifier.padding(horizontal = 16.dp)
+                                            )
+
+                                            // 4. Frame & Container Border Colors Toggle
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .defaultMinSize(minHeight = 56.dp)
+                                                    .clickable(
+                                                        interactionSource = remember { MutableInteractionSource() },
+                                                        indication = ripple(bounded = true)
+                                                    ) {
+                                                        onToggleColoredBorders(!isColoredBordersEnabled)
+                                                    }
+                                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .padding(end = 10.dp)
+                                                ) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(36.dp)
+                                                            .clip(CircleShape)
+                                                            .background(secondaryAccent.copy(alpha = 0.14f)),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Rounded.AutoAwesome,
+                                                            contentDescription = null,
+                                                            tint = secondaryAccent,
+                                                            modifier = Modifier.size(19.dp)
+                                                        )
+                                                    }
+                                                    Spacer(modifier = Modifier.width(12.dp))
+                                                    Column {
+                                                        Text(
+                                                            text = tr(
+                                                                "ألوان حواف الإطارات",
+                                                                "Couleurs des bordures",
+                                                                "Frame Border Colors",
+                                                                "Initen n yirawen"
+                                                            ),
+                                                            fontSize = 14.sp,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            color = textColor
+                                                        )
+                                                        Text(
+                                                            text = tr(
+                                                                "تشغيل أو إيقاف الألوان في حواف الإطارات والحاويات",
+                                                                "Activer/désactiver les couleurs des cadres et conteneurs",
+                                                                "Toggle colors on frame & container edges",
+                                                                "Rmed neɣ sens initen ɣef yirawen n tkerrayin"
+                                                            ),
+                                                            fontSize = 11.5.sp,
+                                                            color = subTextColor
+                                                        )
+                                                    }
+                                                }
+
+                                                Switch(
+                                                    checked = isColoredBordersEnabled,
+                                                    onCheckedChange = onToggleColoredBorders,
+                                                    modifier = Modifier.testTag("colored_borders_switch"),
+                                                    colors = SwitchDefaults.colors(
+                                                        checkedThumbColor = if (effectiveDark) activePreset.background else Color.White,
+                                                        checkedTrackColor = primaryAccent,
+                                                        uncheckedThumbColor = subTextColor,
+                                                        uncheckedTrackColor = activePreset.surfaceVariant
+                                                    )
+                                                )
+                                            }
                                         }
                                     }
                                 }

@@ -7,11 +7,13 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
+import com.example.ui.glass.LocalColoredContainerBorders
 
 @Composable
 fun FluffyTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     themePreset: AppThemePreset = if (darkTheme) AppThemeRegistry.defaultDark else AppThemeRegistry.defaultLight,
+    coloredContainerBorders: Boolean = true,
     content: @Composable () -> Unit
 ) {
     val colorScheme = if (themePreset.isDark) {
@@ -54,7 +56,10 @@ fun FluffyTheme(
         )
     }
 
-    CompositionLocalProvider(LocalAppThemePreset provides themePreset) {
+    CompositionLocalProvider(
+        LocalAppThemePreset provides themePreset,
+        LocalColoredContainerBorders provides coloredContainerBorders
+    ) {
         MaterialTheme(
             colorScheme = colorScheme,
             typography = Typography,

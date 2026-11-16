@@ -108,6 +108,7 @@ fun FluffyHomeScreen(
     val isArabic by viewModel.isArabic.collectAsState()
     val isGridView by viewModel.isGridView.collectAsState()
     val selectedThemeId by viewModel.selectedThemeId.collectAsState()
+    val isColoredBordersEnabled by viewModel.isColoredBordersEnabled.collectAsState()
     val isBiometricEnabled by viewModel.isBiometricEnabled.collectAsState()
     val isScreenshotProtectionEnabled by viewModel.isScreenshotProtectionEnabled.collectAsState()
     val isVaultLockEnabled by viewModel.isVaultLockEnabled.collectAsState()
@@ -780,6 +781,8 @@ fun FluffyHomeScreen(
                 onSelectLanguage = { lang -> viewModel.setAppLanguage(lang) },
                 onToggleViewMode = { viewModel.toggleViewMode() },
                 selectedThemeId = selectedThemeId,
+                isColoredBordersEnabled = isColoredBordersEnabled,
+                onToggleColoredBorders = { viewModel.setColoredBordersEnabled(it) },
                 onOpenThemes = { viewModel.openThemesScreen(fromSettings = true) },
                 trashedCount = trashedNotes.size,
                 archivedCount = archivedNotes.size,

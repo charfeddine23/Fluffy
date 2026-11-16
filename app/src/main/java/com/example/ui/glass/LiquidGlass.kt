@@ -25,6 +25,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.BlurredEdgeTreatment
@@ -53,6 +54,8 @@ import com.example.data.model.GlassTint
 import com.example.ui.theme.LocalAppThemePreset
 import kotlin.math.cos
 import kotlin.math.sin
+
+val LocalColoredContainerBorders = staticCompositionLocalOf { true }
 
 /**
  * Resolves the exact 2mm physical screen dimension into Dp using DisplayMetrics,
@@ -119,6 +122,7 @@ fun BlurryScreenEdges(
     edgeColorOverride: Color? = null
 ) {
     val activePreset = LocalAppThemePreset.current
+    val coloredBorders = LocalColoredContainerBorders.current
     val effectiveDark = if (edgeColorOverride != null) isDark else (activePreset.isDark || isDark)
     val edgeBase = edgeColorOverride ?: activePreset.background
     val edgeSurface = edgeColorOverride ?: activePreset.surface
@@ -172,10 +176,11 @@ fun BlurryScreenEdges(
                 val coreAlpha = if (effectiveDark) 0.78f else 0.80f
                 val midAlpha = if (effectiveDark) 0.44f else 0.46f
                 val tailAlpha = if (effectiveDark) 0.14f else 0.16f
-                val hairlineColor = if (effectiveDark) {
-                    activePreset.primary.copy(alpha = 0.16f)
-                } else {
-                    Color.White.copy(alpha = 0.42f)
+                val hairlineColor = when {
+                    !coloredBorders && effectiveDark -> Color.White.copy(alpha = 0.12f)
+                    !coloredBorders -> Color(0xFF0F172A).copy(alpha = 0.10f)
+                    effectiveDark -> activePreset.primary.copy(alpha = 0.16f)
+                    else -> Color.White.copy(alpha = 0.42f)
                 }
 
                 // Left 2mm blurry edge
@@ -385,6 +390,7 @@ fun Modifier.liquidGlass(
     customFill: Color? = null
 ): Modifier {
     val activePreset = LocalAppThemePreset.current
+    val coloredBorders = LocalColoredContainerBorders.current
     val effectiveDark = activePreset.isDark
     val presetFill = when {
         customFill != null -> customFill
@@ -399,22 +405,42 @@ fun Modifier.liquidGlass(
         else -> if (effectiveDark) tint.darkFill else tint.lightFill
     }
 
-    val borderColors = if (tint == GlassTint.FROST) {
-        listOf(
-            activePreset.primary.copy(alpha = if (effectiveDark) 0.82f else 0.70f),
-            activePreset.secondary.copy(alpha = if (effectiveDark) 0.78f else 0.65f),
-            activePreset.tertiary.copy(alpha = if (effectiveDark) 0.75f else 0.62f),
-            activePreset.primary.copy(alpha = if (effectiveDark) 0.72f else 0.60f)
-        )
-    } else {
-        listOf(
-            tint.chromaticLeading.copy(alpha = if (effectiveDark) 0.85f else 0.75f),
-            Color(0xFF38BDF8).copy(alpha = if (effectiveDark) 0.75f else 0.65f),
-            Color(0xFFC084FC).copy(alpha = if (effectiveDark) 0.85f else 0.75f),
-            Color(0xFFF472B6).copy(alpha = if (effectiveDark) 0.80f else 0.70f),
-            Color(0xFFFDE047).copy(alpha = if (effectiveDark) 0.60f else 0.50f),
-            tint.chromaticTrailing.copy(alpha = if (effectiveDark) 0.75f else 0.65f)
-        )
+    val borderColors = when {
+        !coloredBorders -> {
+            if (effectiveDark) {
+                listOf(
+                    Color.White.copy(alpha = 0.24f),
+                    Color.White.copy(alpha = 0.10f),
+                    Color.White.copy(alpha = 0.18f),
+                    Color.White.copy(alpha = 0.12f)
+                )
+            } else {
+                listOf(
+                    Color(0xFF0F172A).copy(alpha = 0.14f),
+                    Color(0xFF64748B).copy(alpha = 0.08f),
+                    Color(0xFF0F172A).copy(alpha = 0.12f),
+                    Color(0xFF64748B).copy(alpha = 0.09f)
+                )
+            }
+        }
+        tint == GlassTint.FROST -> {
+            listOf(
+                activePreset.primary.copy(alpha = if (effectiveDark) 0.82f else 0.70f),
+                activePreset.secondary.copy(alpha = if (effectiveDark) 0.78f else 0.65f),
+                activePreset.tertiary.copy(alpha = if (effectiveDark) 0.75f else 0.62f),
+                activePreset.primary.copy(alpha = if (effectiveDark) 0.72f else 0.60f)
+            )
+        }
+        else -> {
+            listOf(
+                tint.chromaticLeading.copy(alpha = if (effectiveDark) 0.85f else 0.75f),
+                Color(0xFF38BDF8).copy(alpha = if (effectiveDark) 0.75f else 0.65f),
+                Color(0xFFC084FC).copy(alpha = if (effectiveDark) 0.85f else 0.75f),
+                Color(0xFFF472B6).copy(alpha = if (effectiveDark) 0.80f else 0.70f),
+                Color(0xFFFDE047).copy(alpha = if (effectiveDark) 0.60f else 0.50f),
+                tint.chromaticTrailing.copy(alpha = if (effectiveDark) 0.75f else 0.65f)
+            )
+        }
     }
 
     return this

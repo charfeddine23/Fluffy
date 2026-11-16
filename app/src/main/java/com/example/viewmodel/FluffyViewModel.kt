@@ -63,6 +63,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             if (isDarkMode.value) AppThemePreset.DEFAULT_DARK_ID else AppThemePreset.DEFAULT_LIGHT_ID
         ) ?: AppThemePreset.DEFAULT_DARK_ID
     )
+    val isColoredBordersEnabled = MutableStateFlow(prefs.getBoolean("colored_container_borders", true))
 
     // Biometric Authentication, App Lock, Non-Screenshot & Vault Lock (Biometric + Passkey)
     val isBiometricEnabled = MutableStateFlow(prefs.getBoolean("biometric_enabled", false))
@@ -501,6 +502,12 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         persistSettingsSnapshot(syncToCloud = true)
     }
 
+    fun setColoredBordersEnabled(enabled: Boolean) {
+        isColoredBordersEnabled.value = enabled
+        prefs.edit().putBoolean("colored_container_borders", enabled).apply()
+        persistSettingsSnapshot(syncToCloud = true)
+    }
+
     fun openThemesScreen(fromSettings: Boolean = false) {
         openedThemesFromSettings = fromSettings || isSettingsDrawerOpen.value
         isSettingsDrawerOpen.value = false
@@ -802,7 +809,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         cloudSyncEnabled = true,
         selectedThemeId = selectedThemeId.value,
         appLanguageCode = appLanguage.value.code,
-        nonScreenshotEnabled = isScreenshotProtectionEnabled.value
+        nonScreenshotEnabled = isScreenshotProtectionEnabled.value,
+        coloredContainerBorders = isColoredBordersEnabled.value
     )
 
     private fun persistSettingsSnapshot(syncToCloud: Boolean = true) {
@@ -833,6 +841,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         isGridView.value = s.isGridView
         isBiometricEnabled.value = s.isBiometricEnabled
         isScreenshotProtectionEnabled.value = s.nonScreenshotEnabled
+        isColoredBordersEnabled.value = s.coloredContainerBorders
         selectedCategory.value = s.selectedCategory
         selectedThemeId.value = resolvedTheme.id
 
@@ -843,6 +852,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             .putBoolean("is_grid_view", s.isGridView)
             .putBoolean("biometric_enabled", s.isBiometricEnabled)
             .putBoolean("non_screenshot_enabled", s.nonScreenshotEnabled)
+            .putBoolean("colored_container_borders", s.coloredContainerBorders)
             .putString("selected_category", s.selectedCategory)
             .putString("selected_theme_id", resolvedTheme.id)
             .apply()

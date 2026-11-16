@@ -374,6 +374,7 @@ object FirebaseSyncRepository {
             "selectedThemeId" to settings.selectedThemeId,
             "appLanguageCode" to settings.appLanguageCode,
             "nonScreenshotEnabled" to settings.nonScreenshotEnabled,
+            "coloredContainerBorders" to settings.coloredContainerBorders,
             "updatedAt" to updatedAt,
             "serverUpdatedAt" to FieldValue.serverTimestamp()
         )
@@ -555,7 +556,8 @@ object FirebaseSyncRepository {
                 ?: if (isDark) "obsidian_liquid_glass" else "frosted_arctic_glass",
             appLanguageCode = getString("appLanguageCode")
                 ?: if (arabic) "ar" else "en",
-            nonScreenshotEnabled = getBoolean("nonScreenshotEnabled") ?: false
+            nonScreenshotEnabled = getBoolean("nonScreenshotEnabled") ?: false,
+            coloredContainerBorders = getBoolean("coloredContainerBorders") ?: true
         )
         return RemoteSettingsPayload(
             snapshot = snapshot,

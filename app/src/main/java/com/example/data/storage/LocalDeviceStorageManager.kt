@@ -27,7 +27,8 @@ data class FluffySettingsSnapshot(
     val cloudSyncEnabled: Boolean = true,
     val selectedThemeId: String = "obsidian_liquid_glass",
     val appLanguageCode: String = if (isArabic) "ar" else "en",
-    val nonScreenshotEnabled: Boolean = false
+    val nonScreenshotEnabled: Boolean = false,
+    val coloredContainerBorders: Boolean = true
 )
 
 data class FluffyBackupBundle(
@@ -438,6 +439,7 @@ object LocalDeviceStorageManager {
         put("selectedThemeId", s.selectedThemeId)
         put("appLanguageCode", s.appLanguageCode)
         put("nonScreenshotEnabled", s.nonScreenshotEnabled)
+        put("coloredContainerBorders", s.coloredContainerBorders)
     }
 
     private fun jsonToSettings(obj: JSONObject): FluffySettingsSnapshot {
@@ -458,7 +460,8 @@ object LocalDeviceStorageManager {
                 "appLanguageCode",
                 if (arabic) "ar" else "en"
             ),
-            nonScreenshotEnabled = obj.optBoolean("nonScreenshotEnabled", false)
+            nonScreenshotEnabled = obj.optBoolean("nonScreenshotEnabled", false),
+            coloredContainerBorders = obj.optBoolean("coloredContainerBorders", true)
         )
     }
 
