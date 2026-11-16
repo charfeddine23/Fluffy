@@ -28,9 +28,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Wallpaper
+import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
@@ -63,6 +65,7 @@ import com.example.ui.theme.LocalAppThemePreset
 fun DocumentStyleBottomSheet(
     isDark: Boolean,
     isArabic: Boolean,
+    isPremium: Boolean = false,
     selectedTint: GlassTint,
     customColorArgb: Long,
     backgroundId: String,
@@ -73,6 +76,7 @@ fun DocumentStyleBottomSheet(
     onSelectBackground: (String) -> Unit,
     onSelectCategory: (String) -> Unit,
     onResetStyle: () -> Unit,
+    onRequestPremiumUpgrade: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val activePreset = LocalAppThemePreset.current
@@ -129,8 +133,9 @@ fun DocumentStyleBottomSheet(
                             fontWeight = FontWeight.Bold,
                             color = textColor
                         )
+                        val totalCount = NoteBackgroundCatalog.all.size
                         Text(
-                            text = if (isArabic) "لون خاص أو اختر من 20 خلفية" else "Custom color or 20 backgrounds",
+                            text = if (isArabic) "لون خاص أو اختر من $totalCount خلفية (20 مجانية + 20 Premium)" else "Custom color or $totalCount backgrounds (20 Free + 20 Premium)",
                             fontSize = 11.5.sp,
                             color = metaColor
                         )
@@ -165,7 +170,7 @@ fun DocumentStyleBottomSheet(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // 2-Tab Switcher: Colors | 20 Backgrounds
+            // 2-Tab Switcher: Colors | 40 Backgrounds (20 Free + 20 Premium)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -186,7 +191,7 @@ fun DocumentStyleBottomSheet(
                     onClick = { activeTab = 0 }
                 )
                 StyleTabPill(
-                    label = if (isArabic) "الخلفيات (20)" else "Backgrounds (20)",
+                    label = if (isArabic) "الخلفيات (${NoteBackgroundCatalog.all.size})" else "Backgrounds (${NoteBackgroundCatalog.all.size})",
                     selected = activeTab == 1,
                     accent = activePreset.primary,
                     textColor = textColor,
@@ -455,13 +460,21 @@ fun DocumentStyleBottomSheet(
                     }
 
                     items(NoteBackgroundCatalog.all, key = { it.id }) { preset ->
+                        val isLocked = preset.isPremium && !isPremium
                         BackgroundGridTile(
                             preset = preset,
                             isSelected = backgroundId == preset.id,
+                            isLocked = isLocked,
                             isArabic = isArabic,
                             activeBorderColor = activePreset.primary,
                             metaColor = metaColor,
-                            onClick = { onSelectBackground(preset.id) }
+                            onClick = {
+                                if (isLocked) {
+                                    onRequestPremiumUpgrade()
+                                } else {
+                                    onSelectBackground(preset.id)
+                                }
+                            }
                         )
                     }
                 }
@@ -508,11 +521,19 @@ private fun StyleTabPill(
 private fun BackgroundGridTile(
     preset: NoteBackgroundPreset,
     isSelected: Boolean,
+    isLocked: Boolean,
     isArabic: Boolean,
     activeBorderColor: Color,
     metaColor: Color,
     onClick: () -> Unit
 ) {
+    val goldAccent = Color(0xFFF59E0B)
+    val tileBorderColor = when {
+        isSelected -> activeBorderColor
+        preset.isPremium -> goldAccent.copy(alpha = 0.55f)
+        else -> metaColor.copy(alpha = 0.25f)
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -528,8 +549,8 @@ private fun BackgroundGridTile(
                 .testTag("doc_bg_${preset.id}")
                 .clip(RoundedCornerShape(16.dp))
                 .border(
-                    width = if (isSelected) 2.5.dp else 1.dp,
-                    color = if (isSelected) activeBorderColor else metaColor.copy(alpha = 0.25f),
+                    width = if (isSelected) 2.5.dp else if (preset.isPremium) 1.3.dp else 1.dp,
+                    color = tileBorderColor,
                     shape = RoundedCornerShape(16.dp)
                 )
         ) {
@@ -563,6 +584,35 @@ private fun BackgroundGridTile(
                 )
             }
 
+            if (preset.isPremium) {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (isLocked) Color(0xCC0F172A) else Color(0xD9451A03)
+                        )
+                        .border(0.9.dp, Color(0xFFFBBF24).copy(alpha = 0.85f), CircleShape)
+                        .padding(horizontal = 6.dp, vertical = 2.5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isLocked) Icons.Default.Lock else Icons.Default.WorkspacePremium,
+                        contentDescription = if (isLocked) "Premium Locked" else "Premium Unlocked",
+                        tint = Color(0xFFFFD54F),
+                        modifier = Modifier.size(10.dp)
+                    )
+                    Text(
+                        text = "PRO",
+                        fontSize = 8.5.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color(0xFFFFE082)
+                    )
+                }
+            }
+
             if (isSelected) {
                 Box(
                     modifier = Modifier
@@ -587,7 +637,7 @@ private fun BackgroundGridTile(
             text = if (isArabic) preset.nameAr else preset.nameEn,
             fontSize = 11.sp,
             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-            color = if (isSelected) activeBorderColor else metaColor,
+            color = if (isSelected) activeBorderColor else if (preset.isPremium && !isLocked) goldAccent else metaColor,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center

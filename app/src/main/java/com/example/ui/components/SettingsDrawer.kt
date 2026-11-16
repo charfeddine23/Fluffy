@@ -162,7 +162,7 @@ fun SettingsDrawer(
     onSelectLanguage: (AppLanguage) -> Unit = {},
     onToggleViewMode: () -> Unit,
     onSelectViewMode: (NotesViewMode) -> Unit = { _ -> onToggleViewMode() },
-    selectedThemeId: String = "obsidian_liquid_glass",
+    selectedThemeId: String = "ayu_dark",
     isColoredBordersEnabled: Boolean = true,
     onToggleColoredBorders: (Boolean) -> Unit = {},
     onOpenThemes: () -> Unit = {},

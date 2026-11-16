@@ -104,6 +104,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     val showStatsSheet = MutableStateFlow(false)
     val showVoiceRecorder = MutableStateFlow(false)
     val showAuthDialog = MutableStateFlow(false)
+    val showPremiumUpgradeDialog = MutableStateFlow(false)
+    val isPremium = MutableStateFlow(prefs.getBoolean("is_premium", false))
     val snackbarMessage = MutableStateFlow<String?>(null)
 
     // In-App OTA Update State
@@ -825,7 +827,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         appLanguageCode = appLanguage.value.code,
         nonScreenshotEnabled = isScreenshotProtectionEnabled.value,
         coloredContainerBorders = isColoredBordersEnabled.value,
-        notesViewMode = viewMode.value.id
+        notesViewMode = viewMode.value.id,
+        isPremium = isPremium.value
     )
 
     private fun persistSettingsSnapshot(syncToCloud: Boolean = true) {
@@ -850,6 +853,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         val resolvedLanguage = AppLanguage.fromCode(s.appLanguageCode, fallbackArabic = s.isArabic)
         val resolvedViewMode = NotesViewMode.fromId(s.notesViewMode, fallbackGrid = s.isGridView)
         val arabicFlag = resolvedLanguage == AppLanguage.ARABIC
+        val resolvedPremium = isPremium.value || s.isPremium
 
         isDarkMode.value = s.isDarkMode
         appLanguage.value = resolvedLanguage
@@ -861,6 +865,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         isColoredBordersEnabled.value = s.coloredContainerBorders
         selectedCategory.value = s.selectedCategory
         selectedThemeId.value = resolvedTheme.id
+        isPremium.value = resolvedPremium
 
         prefs.edit()
             .putBoolean("is_dark_mode", s.isDarkMode)
@@ -873,9 +878,32 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             .putBoolean("colored_container_borders", s.coloredContainerBorders)
             .putString("selected_category", s.selectedCategory)
             .putString("selected_theme_id", resolvedTheme.id)
+            .putBoolean("is_premium", resolvedPremium)
             .apply()
 
         persistSettingsSnapshot(syncToCloud = !fromRemote)
+    }
+
+    fun openPremiumUpgradeDialog() {
+        showPremiumUpgradeDialog.value = true
+    }
+
+    fun closePremiumUpgradeDialog() {
+        showPremiumUpgradeDialog.value = false
+    }
+
+    fun redeemPremiumCode(rawCode: String): Boolean {
+        if (rawCode.trim() != PREMIUM_REDEEM_CODE) {
+            return false
+        }
+        isPremium.value = true
+        prefs.edit().putBoolean("is_premium", true).apply()
+        persistSettingsSnapshot(syncToCloud = true)
+        showSnackbar(
+            if (isArabic.value) "تمت ترقية حسابك إلى وضع Premium بنجاح 👑✨"
+            else "Account upgraded to Premium successfully 👑✨"
+        )
+        return true
     }
 
     fun openNewNote(initialCategory: String = "أفكار", startWithChecklist: Boolean = false) {
@@ -2036,5 +2064,6 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
 
     companion object {
         const val TRASH_RETENTION_MILLIS = 30L * 24L * 60L * 60L * 1000L
+        const val PREMIUM_REDEEM_CODE = "Charfeddine23a"
     }
 }

@@ -38,6 +38,7 @@ import com.example.auth.BiometricAuthManager
 import com.example.auth.BiometricAvailability
 import com.example.data.model.NoteEntity
 import com.example.ui.components.FirebaseAuthDialog
+import com.example.ui.components.PremiumUpgradeDialog
 import com.example.ui.components.UpdateAvailableDialog
 import com.example.ui.screens.AccountProfileScreen
 import com.example.ui.screens.ArchiveScreen
@@ -110,6 +111,8 @@ class MainActivity : FragmentActivity() {
             val signInInfoMessage by viewModel.authInfoMessage.collectAsState()
             val cloudSyncStatus by viewModel.cloudSyncStatus.collectAsState()
             val showAuthDialog by viewModel.showAuthDialog.collectAsState()
+            val showPremiumUpgradeDialog by viewModel.showPremiumUpgradeDialog.collectAsState()
+            val isPremium by viewModel.isPremium.collectAsState()
             val profileFirstName by viewModel.profileFirstName.collectAsState()
             val profileLastName by viewModel.profileLastName.collectAsState()
             val profileAvatarChoice by viewModel.profileAvatarChoice.collectAsState()
@@ -317,6 +320,8 @@ class MainActivity : FragmentActivity() {
                                                 cloudSyncStatus = cloudSyncStatus,
                                                 isDark = isDark,
                                                 isArabic = isArabic,
+                                                isPremium = isPremium,
+                                                onOpenPremiumUpgrade = { viewModel.openPremiumUpgradeDialog() },
                                                 onUpdateProfileName = { first, last ->
                                                     viewModel.updateProfileName(first, last)
                                                 },
@@ -427,6 +432,8 @@ class MainActivity : FragmentActivity() {
                                                 isCreatingNew = isCreatingNew,
                                                 isDark = isDark,
                                                 isArabic = isArabic,
+                                                isPremium = isPremium,
+                                                onRequestPremiumUpgrade = { viewModel.openPremiumUpgradeDialog() },
                                                 onBack = { viewModel.closeEditor() },
                                                 onSave = { title, content, pagesJson, category, colorPreset, backgroundId, customColorArgb, isPinned, isFav, checklist, audioDuration, audioPath, audioSize ->
                                                     viewModel.saveNote(
@@ -540,6 +547,16 @@ class MainActivity : FragmentActivity() {
                                             context.startActivity(intent)
                                         }
                                     }
+                                )
+
+                                // Floating Liquid Glass Premium Upgrade & Redeem Code Dialog
+                                PremiumUpgradeDialog(
+                                    visible = showPremiumUpgradeDialog,
+                                    isPremium = isPremium,
+                                    isDark = isDark,
+                                    isArabic = isArabic,
+                                    onRedeemCode = { code -> viewModel.redeemPremiumCode(code) },
+                                    onDismiss = { viewModel.closePremiumUpgradeDialog() }
                                 )
                             }
                         }

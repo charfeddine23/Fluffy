@@ -78,11 +78,13 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.GlassTint
 import com.example.data.repository.CloudSyncStatus
 import com.example.data.repository.FirebaseUserInfo
+import com.example.ui.components.AccountTierBadge
 import com.example.ui.components.AvatarPickerSheet
 import com.example.ui.components.ProfileAvatar
 import com.example.ui.glass.FrostedBackdrop
@@ -106,6 +108,8 @@ fun AccountProfileScreen(
     cloudSyncStatus: CloudSyncStatus,
     isDark: Boolean,
     isArabic: Boolean,
+    isPremium: Boolean = false,
+    onOpenPremiumUpgrade: () -> Unit = {},
     onUpdateProfileName: (firstName: String, lastName: String) -> Unit,
     onToggleUseGoogleAccountName: (Boolean) -> Unit,
     onSelectCustomPhoto: (android.net.Uri) -> Unit,
@@ -500,16 +504,34 @@ fun AccountProfileScreen(
 
                                         Spacer(modifier = Modifier.height(16.dp))
 
-                                        // Full Display Name (clean, sleek, zero extra buttons)
-                                        Text(
-                                            text = fullDisplayName,
-                                            style = MaterialTheme.typography.headlineSmall.copy(
-                                                fontWeight = FontWeight.ExtraBold,
-                                                fontSize = 24.sp,
-                                                color = textColor,
-                                                textAlign = TextAlign.Center
+                                        // Full Display Name + Clickable Free / Premium Tier Badge beside username
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(
+                                                space = 10.dp,
+                                                alignment = Alignment.CenterHorizontally
+                                            ),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = fullDisplayName,
+                                                style = MaterialTheme.typography.headlineSmall.copy(
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    fontSize = 23.sp,
+                                                    color = textColor,
+                                                    textAlign = TextAlign.Center
+                                                ),
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f, fill = false)
                                             )
-                                        )
+                                            AccountTierBadge(
+                                                isPremium = isPremium,
+                                                isDark = isDark,
+                                                isArabic = isArabic,
+                                                onClick = onOpenPremiumUpgrade
+                                            )
+                                        }
 
                                         val subIdentity = when {
                                             !currentUser?.email.isNullOrBlank() -> currentUser?.email.orEmpty()

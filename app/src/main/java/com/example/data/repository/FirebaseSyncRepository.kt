@@ -378,6 +378,7 @@ object FirebaseSyncRepository {
             "appLanguageCode" to settings.appLanguageCode,
             "nonScreenshotEnabled" to settings.nonScreenshotEnabled,
             "coloredContainerBorders" to settings.coloredContainerBorders,
+            "isPremium" to settings.isPremium,
             "updatedAt" to updatedAt,
             "serverUpdatedAt" to FieldValue.serverTimestamp()
         )
@@ -558,12 +559,13 @@ object FirebaseSyncRepository {
             selectedCategory = getString("selectedCategory") ?: "ALL",
             cloudSyncEnabled = getBoolean("cloudSyncEnabled") ?: true,
             selectedThemeId = getString("selectedThemeId")
-                ?: if (isDark) "obsidian_liquid_glass" else "frosted_arctic_glass",
+                ?: if (isDark) "ayu_dark" else "frosted_arctic_glass",
             appLanguageCode = getString("appLanguageCode")
                 ?: if (arabic) "ar" else "en",
             nonScreenshotEnabled = getBoolean("nonScreenshotEnabled") ?: false,
             coloredContainerBorders = getBoolean("coloredContainerBorders") ?: true,
-            notesViewMode = getString("notesViewMode") ?: if (isGrid) "grid" else "list"
+            notesViewMode = getString("notesViewMode") ?: if (isGrid) "grid" else "list",
+            isPremium = getBoolean("isPremium") ?: false
         )
         return RemoteSettingsPayload(
             snapshot = snapshot,

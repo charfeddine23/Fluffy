@@ -38,7 +38,15 @@ enum class BackgroundPattern {
     CARBON_WEAVE,
     EMBER_SPARKS,
     ZEN_RINGS,
-    PRISM_SHEEN
+    PRISM_SHEEN,
+    GOLD_FOIL_VEINS,
+    SILK_CONTOURS,
+    CELESTIAL_RINGS,
+    DIAMOND_FACETS,
+    ROYAL_FILIGREE,
+    NOCTURNE_ORBS,
+    STARLIGHT_MANDALA,
+    HOLO_RIBBONS
 }
 
 data class NoteBackgroundPreset(
@@ -48,7 +56,8 @@ data class NoteBackgroundPreset(
     val colors: List<Color>,
     val accentColor: Color,
     val pattern: BackgroundPattern,
-    val isDarkSurface: Boolean
+    val isDarkSurface: Boolean,
+    val isPremium: Boolean = false
 )
 
 data class NoteDocumentColorOption(
@@ -254,6 +263,207 @@ object NoteBackgroundCatalog {
             accentColor = Color(0xFF8B5CF6),
             pattern = BackgroundPattern.PRISM_SHEEN,
             isDarkSurface = false
+        ),
+        // --- 20 Exclusive Premium Luxury Backgrounds ---
+        NoteBackgroundPreset(
+            id = "royal_obsidian_gold",
+            nameAr = "ذهب الأوبسيديان",
+            nameEn = "Obsidian Gold",
+            colors = listOf(Color(0xFF070709), Color(0xFF17130A), Color(0xFF0A090C)),
+            accentColor = Color(0xFFFBBF24),
+            pattern = BackgroundPattern.GOLD_FOIL_VEINS,
+            isDarkSurface = true,
+            isPremium = true
+        ),
+        NoteBackgroundPreset(
+            id = "champagne_marble",
+            nameAr = "رخام الشامبانيا",
+            nameEn = "Champagne Marble",
+            colors = listOf(Color(0xFFFFFBF4), Color(0xFFFDF2DF), Color(0xFFF7E7CE)),
+            accentColor = Color(0xFFB45309),
+            pattern = BackgroundPattern.GOLD_FOIL_VEINS,
+            isDarkSurface = false,
+            isPremium = true
+        ),
+        NoteBackgroundPreset(
+            id = "imperial_emerald_gold",
+            nameAr = "زمرد إمبراطوري",
+            nameEn = "Imperial Emerald",
+            colors = listOf(Color(0xFF021E17), Color(0xFF053B2E), Color(0xFF04221B)),
+            accentColor = Color(0xFFF59E0B),
+            pattern = BackgroundPattern.ROYAL_FILIGREE,
+            isDarkSurface = true,
+            isPremium = true
+        ),
+        NoteBackgroundPreset(
+            id = "midnight_sapphire_luxe",
+            nameAr = "ياقوت منتصف الليل",
+            nameEn = "Midnight Sapphire",
+            colors = listOf(Color(0xFF040B24), Color(0xFF0D2159), Color(0xFF061136)),
+            accentColor = Color(0xFF60A5FA),
+            pattern = BackgroundPattern.CELESTIAL_RINGS,
+            isDarkSurface = true,
+            isPremium = true
+        ),
+        NoteBackgroundPreset(
+            id = "diamond_aurora",
+            nameAr = "شفق الماس",
+            nameEn = "Diamond Aurora",
+            colors = listOf(Color(0xFF051322), Color(0xFF13284A), Color(0xFF091B33)),
+            accentColor = Color(0xFF67E8F9),
+            pattern = BackgroundPattern.HOLO_RIBBONS,
+            isDarkSurface = true,
+            isPremium = true
+        ),
+        NoteBackgroundPreset(
+            id = "rose_quartz_silk",
+            nameAr = "حرير الكوارتز",
+            nameEn = "Rose Quartz Silk",
+            colors = listOf(Color(0xFFFFF5F8), Color(0xFFFCE7F0), Color(0xFFFDF2F8)),
+            accentColor = Color(0xFFBE185D),
+            pattern = BackgroundPattern.SILK_CONTOURS,
+            isDarkSurface = false,
+            isPremium = true
+        ),
+        NoteBackgroundPreset(
+            id = "liquid_platinum",
+            nameAr = "بلاتين سائل",
+            nameEn = "Liquid Platinum",
+            colors = listOf(Color(0xFF111318), Color(0xFF232833), Color(0xFF161922)),
+            accentColor = Color(0xFFE2E8F0),
+            pattern = BackgroundPattern.SILK_CONTOURS,
+            isDarkSurface = true,
+            isPremium = true
+        ),
+        NoteBackgroundPreset(
+            id = "celestial_eclipse",
+            nameAr = "كسوف سماوي",
+            nameEn = "Celestial Eclipse",
+            colors = listOf(Color(0xFF090612), Color(0xFF221338), Color(0xFF120B21)),
+            accentColor = Color(0xFFFCD34D),
+            pattern = BackgroundPattern.CELESTIAL_RINGS,
+            isDarkSurface = true,
+            isPremium = true
+        ),
+        NoteBackgroundPreset(
+            id = "amethyst_velvet",
+            nameAr = "مخمل الجمشت",
+            nameEn = "Amethyst Velvet",
+            colors = listOf(Color(0xFF1B0933), Color(0xFF391269), Color(0xFF140726)),
+            accentColor = Color(0xFFD8B4FE),
+            pattern = BackgroundPattern.NOCTURNE_ORBS,
+            isDarkSurface = true,
+            isPremium = true
+        ),
+        NoteBackgroundPreset(
+            id = "opaline_pearl",
+            nameAr = "لؤلؤ أوبالين",
+            nameEn = "Opaline Pearl",
+            colors = listOf(Color(0xFFF6F9FF), Color(0xFFEDE9FE), Color(0xFFE0F2FE)),
+            accentColor = Color(0xFF6366F1),
+            pattern = BackgroundPattern.DIAMOND_FACETS,
+            isDarkSurface = false,
+            isPremium = true
+        ),
+        NoteBackgroundPreset(
+            id = "crimson_royal_velvet",
+            nameAr = "مخمل قرمزي ملكي",
+            nameEn = "Royal Crimson",
+            colors = listOf(Color(0xFF22050D), Color(0xFF4D0D1F), Color(0xFF18040A)),
+            accentColor = Color(0xFFFBBF24),
+            pattern = BackgroundPattern.GOLD_FOIL_VEINS,
+            isDarkSurface = true,
+            isPremium = true
+        ),
+        NoteBackgroundPreset(
+            id = "jade_imperial_mist",
+            nameAr = "ضباب اليشم",
+            nameEn = "Imperial Jade",
+            colors = listOf(Color(0xFFECFDF7), Color(0xFFD1FAE5), Color(0xFFF0FDF9)),
+            accentColor = Color(0xFF047857),
+            pattern = BackgroundPattern.SILK_CONTOURS,
+            isDarkSurface = false,
+            isPremium = true
+        ),
+        NoteBackgroundPreset(
+            id = "astral_nebula",
+            nameAr = "سديم نجمي",
+            nameEn = "Astral Nebula",
+            colors = listOf(Color(0xFF060818), Color(0xFF1B144A), Color(0xFF0B102E)),
+            accentColor = Color(0xFFF472B6),
+            pattern = BackgroundPattern.STARLIGHT_MANDALA,
+            isDarkSurface = true,
+            isPremium = true
+        ),
+        NoteBackgroundPreset(
+            id = "desert_mirage_gold",
+            nameAr = "سراب الذهب",
+            nameEn = "Mirage Gold",
+            colors = listOf(Color(0xFFFFF8EC), Color(0xFFFEF0D1), Color(0xFFFDE2B8)),
+            accentColor = Color(0xFFC2410C),
+            pattern = BackgroundPattern.ROYAL_FILIGREE,
+            isDarkSurface = false,
+            isPremium = true
+        ),
+        NoteBackgroundPreset(
+            id = "peacock_iridescent",
+            nameAr = "طاووس قزحي",
+            nameEn = "Peacock Holo",
+            colors = listOf(Color(0xFF041D26), Color(0xFF0A3A47), Color(0xFF111D3B)),
+            accentColor = Color(0xFF2DD4BF),
+            pattern = BackgroundPattern.HOLO_RIBBONS,
+            isDarkSurface = true,
+            isPremium = true
+        ),
+        NoteBackgroundPreset(
+            id = "bronze_horizon",
+            nameAr = "أفق البرونز",
+            nameEn = "Bronze Horizon",
+            colors = listOf(Color(0xFF1C1009), Color(0xFF3D2212), Color(0xFF160C07)),
+            accentColor = Color(0xFFFB923C),
+            pattern = BackgroundPattern.NOCTURNE_ORBS,
+            isDarkSurface = true,
+            isPremium = true
+        ),
+        NoteBackgroundPreset(
+            id = "frosted_tanzanite",
+            nameAr = "تنزانيت متجمد",
+            nameEn = "Frosted Tanzanite",
+            colors = listOf(Color(0xFFEEF2FF), Color(0xFFE0E7FF), Color(0xFFF3E8FF)),
+            accentColor = Color(0xFF4F46E5),
+            pattern = BackgroundPattern.DIAMOND_FACETS,
+            isDarkSurface = false,
+            isPremium = true
+        ),
+        NoteBackgroundPreset(
+            id = "obsidian_prism_pro",
+            nameAr = "منشور الأوبسيديان",
+            nameEn = "Obsidian Prism",
+            colors = listOf(Color(0xFF070911), Color(0xFF13182B), Color(0xFF0A0D18)),
+            accentColor = Color(0xFF38BDF8),
+            pattern = BackgroundPattern.DIAMOND_FACETS,
+            isDarkSurface = true,
+            isPremium = true
+        ),
+        NoteBackgroundPreset(
+            id = "ivory_gold_atelier",
+            nameAr = "عاجي مذهب فاخر",
+            nameEn = "Ivory Gold",
+            colors = listOf(Color(0xFFFFFDF7), Color(0xFFFAF3E0), Color(0xFFFFF8E8)),
+            accentColor = Color(0xFFD97706),
+            pattern = BackgroundPattern.ROYAL_FILIGREE,
+            isDarkSurface = false,
+            isPremium = true
+        ),
+        NoteBackgroundPreset(
+            id = "cosmic_aurora_crown",
+            nameAr = "تاج المجرة",
+            nameEn = "Cosmic Crown",
+            colors = listOf(Color(0xFF080414), Color(0xFF1E0F3D), Color(0xFF0A1633)),
+            accentColor = Color(0xFFFBBF24),
+            pattern = BackgroundPattern.STARLIGHT_MANDALA,
+            isDarkSurface = true,
+            isPremium = true
         )
     )
 
@@ -762,6 +972,243 @@ fun DrawScope.drawNoteBackgroundPreset(
                 start = Offset(w * 0.1f, h * 0.6f),
                 end = Offset(w * 0.1f + dx, h * 0.6f + dy),
                 strokeWidth = (w * 0.08f).coerceAtLeast(10f)
+            )
+        }
+
+        BackgroundPattern.GOLD_FOIL_VEINS -> {
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(accent.copy(alpha = 0.20f * alphaScale), Color.Transparent),
+                    center = Offset(w * 0.78f, h * 0.22f),
+                    radius = w * 0.65f
+                ),
+                center = Offset(w * 0.78f, h * 0.22f),
+                radius = w * 0.65f
+            )
+            val goldBrush = Brush.linearGradient(
+                colors = listOf(
+                    accent.copy(alpha = 0.45f * alphaScale),
+                    Color(0xFFFFF3C4).copy(alpha = 0.50f * alphaScale),
+                    accent.copy(alpha = 0.18f * alphaScale)
+                )
+            )
+            for (i in 0..4) {
+                val startY = h * (0.14f + i * 0.19f)
+                val vein = Path().apply {
+                    moveTo(0f, startY)
+                    cubicTo(
+                        w * 0.28f, startY - h * 0.06f,
+                        w * 0.66f, startY + h * 0.10f,
+                        w, startY - h * 0.04f
+                    )
+                }
+                drawPath(
+                    path = vein,
+                    brush = goldBrush,
+                    style = Stroke(width = if (i % 2 == 0) 2.2f else 1.1f, cap = StrokeCap.Round)
+                )
+            }
+            val flecks = if (isCompactCard) 8 else 18
+            for (i in 0 until flecks) {
+                val fx = ((i * 59 + 17) % 92 + 4) / 100f * w
+                val fy = ((i * 37 + 23) % 90 + 5) / 100f * h
+                drawCircle(
+                    color = accent.copy(alpha = 0.42f * alphaScale),
+                    radius = if (i % 3 == 0) 2.2f else 1.2f,
+                    center = Offset(fx, fy)
+                )
+            }
+        }
+
+        BackgroundPattern.SILK_CONTOURS -> {
+            for (layer in 0..4) {
+                val baseY = h * (0.18f + layer * 0.17f)
+                val path = Path().apply {
+                    moveTo(-w * 0.1f, baseY)
+                    cubicTo(
+                        w * 0.30f, baseY + h * 0.12f,
+                        w * 0.68f, baseY - h * 0.12f,
+                        w * 1.1f, baseY + h * 0.05f
+                    )
+                }
+                drawPath(
+                    path = path,
+                    brush = Brush.horizontalGradient(
+                        colors = listOf(
+                            Color.Transparent,
+                            accent.copy(alpha = (0.24f - layer * 0.03f).coerceAtLeast(0.06f) * alphaScale),
+                            Color.White.copy(alpha = 0.16f * alphaScale),
+                            Color.Transparent
+                        )
+                    ),
+                    style = Stroke(width = (w * 0.025f).coerceIn(2f, 8f), cap = StrokeCap.Round)
+                )
+            }
+        }
+
+        BackgroundPattern.CELESTIAL_RINGS -> {
+            val center = Offset(w * 0.72f, h * 0.28f)
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(accent.copy(alpha = 0.30f * alphaScale), Color.Transparent),
+                    center = center,
+                    radius = w * 0.55f
+                ),
+                center = center,
+                radius = w * 0.55f
+            )
+            for (ring in 1..4) {
+                drawCircle(
+                    color = accent.copy(alpha = (0.22f - ring * 0.03f).coerceAtLeast(0.06f) * alphaScale),
+                    radius = w * (0.14f + ring * 0.11f),
+                    center = center,
+                    style = Stroke(width = if (ring == 2) 2f else 1.1f)
+                )
+            }
+            val dotRadius = if (isCompactCard) 3.5f else 6f
+            drawCircle(
+                color = accent.copy(alpha = 0.75f * alphaScale),
+                radius = dotRadius,
+                center = Offset(center.x - w * 0.25f, center.y + w * 0.09f)
+            )
+        }
+
+        BackgroundPattern.DIAMOND_FACETS -> {
+            val facets = listOf(
+                listOf(Offset(0f, 0f), Offset(w * 0.52f, 0f), Offset(w * 0.24f, h * 0.42f)),
+                listOf(Offset(w * 0.52f, 0f), Offset(w, 0f), Offset(w * 0.76f, h * 0.36f)),
+                listOf(Offset(w * 0.24f, h * 0.42f), Offset(w * 0.76f, h * 0.36f), Offset(w * 0.50f, h * 0.78f)),
+                listOf(Offset(0f, h), Offset(w * 0.42f, h), Offset(w * 0.18f, h * 0.62f))
+            )
+            facets.forEachIndexed { idx, pts ->
+                val poly = Path().apply {
+                    moveTo(pts[0].x, pts[0].y)
+                    lineTo(pts[1].x, pts[1].y)
+                    lineTo(pts[2].x, pts[2].y)
+                    close()
+                }
+                val tintColor = if (idx % 2 == 0) accent else Color.White
+                drawPath(
+                    path = poly,
+                    color = tintColor.copy(alpha = (0.11f + idx * 0.02f) * alphaScale)
+                )
+                drawPath(
+                    path = poly,
+                    color = accent.copy(alpha = 0.18f * alphaScale),
+                    style = Stroke(width = 1f)
+                )
+            }
+        }
+
+        BackgroundPattern.ROYAL_FILIGREE -> {
+            val cornerOffsets = listOf(
+                Offset(0f, 0f),
+                Offset(w, 0f),
+                Offset(0f, h),
+                Offset(w, h)
+            )
+            cornerOffsets.forEach { corner ->
+                for (r in 1..3) {
+                    drawCircle(
+                        color = accent.copy(alpha = (0.20f - r * 0.04f) * alphaScale),
+                        radius = w * (0.10f * r),
+                        center = corner,
+                        style = Stroke(width = 1.4f)
+                    )
+                }
+            }
+            val inset = (w * 0.06f).coerceIn(8f, 22f)
+            drawRoundRect(
+                color = accent.copy(alpha = 0.18f * alphaScale),
+                topLeft = Offset(inset, inset),
+                size = Size(w - inset * 2f, h - inset * 2f),
+                cornerRadius = CornerRadius(18f, 18f),
+                style = Stroke(width = 1.2f)
+            )
+        }
+
+        BackgroundPattern.NOCTURNE_ORBS -> {
+            val orbSpecs = listOf(
+                Triple(0.22f, 0.24f, 0.48f),
+                Triple(0.84f, 0.44f, 0.44f),
+                Triple(0.36f, 0.84f, 0.52f)
+            )
+            orbSpecs.forEachIndexed { idx, (ox, oy, or) ->
+                val color = if (idx == 1) Color.White.copy(alpha = 0.18f) else accent
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(color.copy(alpha = 0.30f * alphaScale), Color.Transparent),
+                        center = Offset(w * ox, h * oy),
+                        radius = w * or
+                    ),
+                    center = Offset(w * ox, h * oy),
+                    radius = w * or
+                )
+            }
+        }
+
+        BackgroundPattern.STARLIGHT_MANDALA -> {
+            val center = Offset(w * 0.5f, h * 0.44f)
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(accent.copy(alpha = 0.28f * alphaScale), Color.Transparent),
+                    center = center,
+                    radius = w * 0.62f
+                ),
+                center = center,
+                radius = w * 0.62f
+            )
+            val spokes = if (isCompactCard) 8 else 12
+            val len = w * 0.42f
+            for (i in 0 until spokes) {
+                val angle = (2.0 * PI * i / spokes).toFloat()
+                drawLine(
+                    color = accent.copy(alpha = 0.20f * alphaScale),
+                    start = center,
+                    end = Offset(center.x + cos(angle) * len, center.y + sin(angle) * len),
+                    strokeWidth = 1.2f
+                )
+            }
+            val stars = if (isCompactCard) 12 else 28
+            for (i in 0 until stars) {
+                val sx = ((i * 71 + 13) % 94 + 3) / 100f * w
+                val sy = ((i * 47 + 29) % 92 + 4) / 100f * h
+                drawCircle(
+                    color = Color.White.copy(alpha = 0.55f * alphaScale),
+                    radius = if (i % 4 == 0) 2.3f else 1.2f,
+                    center = Offset(sx, sy)
+                )
+            }
+        }
+
+        BackgroundPattern.HOLO_RIBBONS -> {
+            val holoBrush = Brush.linearGradient(
+                colors = listOf(
+                    accent.copy(alpha = 0.34f * alphaScale),
+                    Color(0xFFA855F7).copy(alpha = 0.26f * alphaScale),
+                    Color(0xFFEC4899).copy(alpha = 0.22f * alphaScale),
+                    Color(0xFF38BDF8).copy(alpha = 0.30f * alphaScale)
+                ),
+                start = Offset(0f, 0f),
+                end = Offset(w, h)
+            )
+            val r1 = Path().apply {
+                moveTo(0f, h * 0.28f)
+                cubicTo(w * 0.35f, h * 0.08f, w * 0.68f, h * 0.52f, w, h * 0.22f)
+            }
+            val r2 = Path().apply {
+                moveTo(0f, h * 0.72f)
+                cubicTo(w * 0.38f, h * 0.90f, w * 0.70f, h * 0.46f, w, h * 0.78f)
+            }
+            drawPath(
+                path = r1,
+                brush = holoBrush,
+                style = Stroke(width = (w * 0.09f).coerceAtLeast(9f), cap = StrokeCap.Round)
+            )
+            drawPath(
+                path = r2,
+                brush = holoBrush,
+                style = Stroke(width = (w * 0.07f).coerceAtLeast(7f), cap = StrokeCap.Round)
             )
         }
     }

@@ -25,11 +25,12 @@ data class FluffySettingsSnapshot(
     val isBiometricEnabled: Boolean,
     val selectedCategory: String,
     val cloudSyncEnabled: Boolean = true,
-    val selectedThemeId: String = "obsidian_liquid_glass",
+    val selectedThemeId: String = "ayu_dark",
     val appLanguageCode: String = if (isArabic) "ar" else "en",
     val nonScreenshotEnabled: Boolean = false,
     val coloredContainerBorders: Boolean = true,
-    val notesViewMode: String = if (isGridView) "grid" else "list"
+    val notesViewMode: String = if (isGridView) "grid" else "list",
+    val isPremium: Boolean = false
 )
 
 data class FluffyBackupBundle(
@@ -442,6 +443,7 @@ object LocalDeviceStorageManager {
         put("nonScreenshotEnabled", s.nonScreenshotEnabled)
         put("coloredContainerBorders", s.coloredContainerBorders)
         put("notesViewMode", s.notesViewMode)
+        put("isPremium", s.isPremium)
     }
 
     private fun jsonToSettings(obj: JSONObject): FluffySettingsSnapshot {
@@ -457,7 +459,7 @@ object LocalDeviceStorageManager {
             cloudSyncEnabled = obj.optBoolean("cloudSyncEnabled", true),
             selectedThemeId = obj.optString(
                 "selectedThemeId",
-                if (dark) "obsidian_liquid_glass" else "frosted_arctic_glass"
+                if (dark) "ayu_dark" else "frosted_arctic_glass"
             ),
             appLanguageCode = obj.optString(
                 "appLanguageCode",
@@ -468,7 +470,8 @@ object LocalDeviceStorageManager {
             notesViewMode = obj.optString(
                 "notesViewMode",
                 if (gridFlag) "grid" else "list"
-            )
+            ),
+            isPremium = obj.optBoolean("isPremium", false)
         )
     }
 

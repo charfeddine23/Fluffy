@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import androidx.activity.compose.BackHandler
@@ -51,11 +53,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
@@ -73,6 +77,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -87,6 +92,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -122,6 +128,8 @@ fun NoteEditorScreen(
     isCreatingNew: Boolean = note.id == 0L,
     isDark: Boolean,
     isArabic: Boolean,
+    isPremium: Boolean = false,
+    onRequestPremiumUpgrade: () -> Unit = {},
     onBack: () -> Unit,
     onSave: (
         title: String,
@@ -188,6 +196,8 @@ fun NoteEditorScreen(
     var showMoreMenu by remember { mutableStateOf(false) }
     var showPagePickerDialog by remember { mutableStateOf(false) }
     var limitWarningMessage by remember { mutableStateOf<String?>(null) }
+    var copyFeedbackMessage by remember { mutableStateOf<String?>(null) }
+    var justCopiedPage by remember { mutableStateOf(false) }
 
     val checklistItems = remember {
         mutableStateListOf<ChecklistItem>().apply {
@@ -236,11 +246,19 @@ fun NoteEditorScreen(
         }
     }
 
-    // Auto-clear limit warning toast banner
+    // Auto-clear limit warning & copy feedback banners
     LaunchedEffect(limitWarningMessage) {
         if (limitWarningMessage != null) {
             kotlinx.coroutines.delay(3000)
             limitWarningMessage = null
+        }
+    }
+
+    LaunchedEffect(justCopiedPage, copyFeedbackMessage) {
+        if (justCopiedPage || copyFeedbackMessage != null) {
+            kotlinx.coroutines.delay(2200)
+            justCopiedPage = false
+            copyFeedbackMessage = null
         }
     }
 
@@ -471,18 +489,125 @@ fun NoteEditorScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Style & 20 Backgrounds quick button (accessible in BOTH View & Edit modes)
+                    // One-Tap Copy Current Page Content Button (Read / View-Only Mode) beside Background Button
+                    if (!isEditMode) {
+                        val currentReadPageIdx = pagerState.currentPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
+                        val copyAccent = Color(0xFF10B981)
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .minimumInteractiveComponentSize()
+                                .testTag("editor_copy_page_button")
+                                .liquidGlass(
+                                    isDark = effectiveDark,
+                                    tint = if (justCopiedPage) GlassTint.EMERALD else GlassTint.FROST,
+                                    shape = RoundedCornerShape(14.dp),
+                                    borderWidth = 1.dp,
+                                    customFill = if (justCopiedPage) copyAccent.copy(alpha = 0.26f) else pillFill
+                                )
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = ripple(bounded = true)
+                                ) {
+                                    val rawPageText = pages.getOrNull(currentReadPageIdx).orEmpty()
+                                    val fallbackChecklistText = if (currentReadPageIdx == 0 && checklistItems.isNotEmpty()) {
+                                        checklistItems
+                                            .filter { it.text.isNotBlank() }
+                                            .joinToString("\n") { item ->
+                                                "${if (item.isDone) "[✓]" else "[ ]"} ${item.text}"
+                                            }
+                                    } else {
+                                        ""
+                                    }
+                                    val textToCopy = rawPageText.ifBlank { fallbackChecklistText }
+                                    if (textToCopy.isNotEmpty()) {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        clipboard.setPrimaryClip(ClipData.newPlainText("Fluffy Page Content", textToCopy))
+                                        justCopiedPage = true
+                                        copyFeedbackMessage = if (isArabic) {
+                                            "تم نسخ محتوى الصفحة ${currentReadPageIdx + 1} ✓"
+                                        } else {
+                                            "Page ${currentReadPageIdx + 1} copied ✓"
+                                        }
+                                    } else {
+                                        copyFeedbackMessage = if (isArabic) {
+                                            "الصفحة فارغة للنسخ"
+                                        } else {
+                                            "Current page is empty"
+                                        }
+                                    }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (justCopiedPage) Icons.Default.Check else Icons.Default.ContentCopy,
+                                contentDescription = if (isArabic) "نسخ محتوى الصفحة" else "Copy page content",
+                                tint = if (justCopiedPage) copyAccent else textColor,
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+                    }
+
+                    // Luxurious Style & 40 Backgrounds Jewel Trigger Button
                     val hasCustomVisual = activeBgPreset != null || customColorArgb != 0L || selectedTint != GlassTint.FROST
+                    val jewelRingColors = if (activeBgPreset != null) {
+                        listOf(
+                            activeBgPreset.accentColor,
+                            Color(0xFFFFD54F),
+                            activeBgPreset.colors.firstOrNull() ?: accentColor,
+                            activeBgPreset.accentColor
+                        )
+                    } else {
+                        listOf(
+                            Color(0xFFFBBF24).copy(alpha = 0.85f),
+                            accentColor,
+                            Color(0xFFC084FC).copy(alpha = 0.85f),
+                            Color(0xFF38BDF8).copy(alpha = 0.85f)
+                        )
+                    }
+                    val jewelFillBrush = if (activeBgPreset != null) {
+                        Brush.linearGradient(activeBgPreset.colors)
+                    } else if (customColorArgb != 0L) {
+                        val c = Color(customColorArgb.toInt())
+                        Brush.linearGradient(listOf(c.copy(alpha = 0.88f), c))
+                    } else {
+                        Brush.linearGradient(
+                            colors = if (effectiveDark) {
+                                listOf(
+                                    Color(0xFF1E293B).copy(alpha = 0.90f),
+                                    Color(0xFF0F172A).copy(alpha = 0.88f)
+                                )
+                            } else {
+                                listOf(
+                                    Color.White.copy(alpha = 0.94f),
+                                    Color(0xFFF1F5F9).copy(alpha = 0.88f)
+                                )
+                            }
+                        )
+                    }
+                    val jewelIconTint = when {
+                        activeBgPreset != null -> if (activeBgPreset.isDarkSurface) Color(0xFFFFF8E1) else Color(0xFF0F172A)
+                        hasCustomVisual -> accentColor
+                        else -> textColor
+                    }
+
                     Box(
                         modifier = Modifier
-                            .size(44.dp)
+                            .size(46.dp)
+                            .minimumInteractiveComponentSize()
                             .testTag("editor_style_top_button")
-                            .liquidGlass(
-                                isDark = effectiveDark,
-                                tint = selectedTint,
-                                shape = RoundedCornerShape(14.dp),
-                                borderWidth = 1.dp,
-                                customFill = if (hasCustomVisual) accentColor.copy(alpha = 0.22f) else pillFill
+                            .shadow(
+                                elevation = if (hasCustomVisual) 8.dp else 4.dp,
+                                shape = RoundedCornerShape(15.dp),
+                                ambientColor = accentColor.copy(alpha = 0.35f),
+                                spotColor = Color(0xFFFBBF24).copy(alpha = 0.30f)
+                            )
+                            .clip(RoundedCornerShape(15.dp))
+                            .background(jewelFillBrush)
+                            .border(
+                                width = 1.6.dp,
+                                brush = Brush.linearGradient(jewelRingColors),
+                                shape = RoundedCornerShape(15.dp)
                             )
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
@@ -493,11 +618,34 @@ fun NoteEditorScreen(
                             },
                         contentAlignment = Alignment.Center
                     ) {
+                        // Subtle top-to-bottom glass sheen highlight
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(
+                                    Brush.verticalGradient(
+                                        colors = listOf(
+                                            Color.White.copy(alpha = if (effectiveDark) 0.16f else 0.34f),
+                                            Color.Transparent
+                                        )
+                                    )
+                                )
+                        )
                         Icon(
                             imageVector = if (activeBgPreset != null) Icons.Default.Wallpaper else Icons.Default.Palette,
                             contentDescription = if (isArabic) "ألوان وخلفيات المستند" else "Document Colors & Backgrounds",
-                            tint = if (hasCustomVisual) accentColor else textColor,
-                            modifier = Modifier.size(20.dp)
+                            tint = jewelIconTint,
+                            modifier = Modifier.size(19.dp)
+                        )
+                        // Crown/Sparkle miniature jewel corner accent
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = null,
+                            tint = Color(0xFFFFD54F),
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(4.dp)
+                                .size(10.dp)
                         )
                     }
 
@@ -805,6 +953,27 @@ fun NoteEditorScreen(
                                 modifier = Modifier.size(17.dp)
                             )
                         }
+                    }
+                }
+
+                AnimatedVisibility(visible = copyFeedbackMessage != null) {
+                    val isCopySuccess = justCopiedPage
+                    val toastAccent = if (isCopySuccess) Color(0xFF10B981) else accentColor
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 6.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(toastAccent.copy(alpha = if (effectiveDark) 0.20f else 0.12f))
+                            .border(1.dp, toastAccent.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
+                            .padding(horizontal = 12.dp, vertical = 7.dp)
+                    ) {
+                        Text(
+                            text = copyFeedbackMessage.orEmpty(),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (effectiveDark) Color(0xFFA7F3D0) else Color(0xFF065F46)
+                        )
                     }
                 }
 
@@ -1203,18 +1372,29 @@ fun NoteEditorScreen(
                             )
                         }
 
-                        // 20 Document Backgrounds button
+                        // Luxurious 40 Document Backgrounds button
+                        val bottomBgColors = activeBgPreset?.colors ?: listOf(
+                            Color(0xFF1E293B).copy(alpha = if (effectiveDark) 0.90f else 0.12f),
+                            accentColor.copy(alpha = 0.22f)
+                        )
+                        val bottomRing = listOf(
+                            Color(0xFFFFD54F),
+                            accentColor,
+                            Color(0xFFC084FC)
+                        )
                         Box(
                             modifier = Modifier
-                                .size(44.dp)
+                                .size(46.dp)
+                                .minimumInteractiveComponentSize()
                                 .testTag("editor_backgrounds_button")
-                                .liquidGlass(
-                                    isDark = effectiveDark,
-                                    tint = if (activeBgPreset != null) selectedTint else GlassTint.FROST,
+                                .shadow(
+                                    elevation = 6.dp,
                                     shape = CircleShape,
-                                    borderWidth = 1.dp,
-                                    customFill = if (activeBgPreset != null) accentColor.copy(alpha = 0.26f) else pillFill
+                                    ambientColor = accentColor.copy(alpha = 0.35f)
                                 )
+                                .clip(CircleShape)
+                                .background(Brush.linearGradient(bottomBgColors))
+                                .border(1.5.dp, Brush.linearGradient(bottomRing), CircleShape)
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = ripple(bounded = true)
@@ -1226,9 +1406,21 @@ fun NoteEditorScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Wallpaper,
-                                contentDescription = if (isArabic) "خلفيات المستند (20)" else "Document Backgrounds (20)",
-                                tint = if (activeBgPreset != null) accentColor else textColor,
-                                modifier = Modifier.size(20.dp)
+                                contentDescription = if (isArabic) "خلفيات المستند (40)" else "Document Backgrounds (40)",
+                                tint = when {
+                                    activeBgPreset != null -> if (activeBgPreset.isDarkSurface) Color(0xFFFFF8E1) else Color(0xFF0F172A)
+                                    else -> textColor
+                                },
+                                modifier = Modifier.size(19.dp)
+                            )
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = null,
+                                tint = Color(0xFFFFD54F),
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(4.dp)
+                                    .size(10.dp)
                             )
                         }
                     }
@@ -1486,11 +1678,12 @@ fun NoteEditorScreen(
             }
         }
 
-        // Document Colors & 20 Backgrounds Modal Bottom Sheet
+        // Document Colors & 40 Backgrounds (20 Free + 20 Premium) Modal Bottom Sheet
         if (showStyleSheet) {
             DocumentStyleBottomSheet(
                 isDark = isDark,
                 isArabic = isArabic,
+                isPremium = isPremium,
                 selectedTint = selectedTint,
                 customColorArgb = customColorArgb,
                 backgroundId = backgroundId,
@@ -1523,6 +1716,10 @@ fun NoteEditorScreen(
                     customColorArgb = 0L
                     backgroundId = NoteBackgroundCatalog.NONE_ID
                     triggerImmediateSaveIfViewMode()
+                },
+                onRequestPremiumUpgrade = {
+                    showStyleSheet = false
+                    onRequestPremiumUpgrade()
                 },
                 onDismiss = { showStyleSheet = false }
             )

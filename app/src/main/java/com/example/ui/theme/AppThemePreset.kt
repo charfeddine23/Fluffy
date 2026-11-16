@@ -36,7 +36,7 @@ data class AppThemePreset(
         get() = listOf(background, surface, primary, secondary, tertiary)
 
     companion object {
-        const val DEFAULT_DARK_ID = "obsidian_liquid_glass"
+        const val DEFAULT_DARK_ID = "ayu_dark"
         const val DEFAULT_LIGHT_ID = "frosted_arctic_glass"
     }
 }
