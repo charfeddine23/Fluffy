@@ -59,7 +59,6 @@ import com.example.data.model.NoteBackgroundCatalog
 import com.example.data.model.NoteEntity
 import com.example.ui.glass.FrostedBackdrop
 import com.example.ui.glass.LiquidGlassCard
-import com.example.ui.glass.darkLiquidGlass
 import com.example.ui.glass.liquidGlass
 import com.example.ui.theme.LocalAppThemePreset
 import com.example.ui.theme.tr
@@ -108,15 +107,15 @@ fun TrashScreen(
                         modifier = Modifier
                             .size(44.dp)
                             .testTag("trash_back_button")
-                            .darkLiquidGlass(
+                            .liquidGlass(
+                                isDark = isDark,
+                                tint = GlassTint.FROST,
                                 shape = CircleShape,
-                                elevation = 10.dp,
-                                rimWidth = 1.25.dp,
-                                baseAlpha = 0.50f
+                                borderWidth = 1.2.dp
                             )
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
-                                indication = ripple(bounded = true, color = Color.White),
+                                indication = ripple(bounded = true),
                                 onClick = onBack
                             ),
                         contentAlignment = Alignment.Center
@@ -124,7 +123,7 @@ fun TrashScreen(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = tr("رجوع", "Retour", "Back", "Uɣal"),
-                            tint = Color.White,
+                            tint = textColor,
                             modifier = Modifier.size(21.dp)
                         )
                     }

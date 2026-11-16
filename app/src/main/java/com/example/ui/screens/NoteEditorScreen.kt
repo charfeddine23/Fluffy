@@ -14,6 +14,10 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -81,6 +85,7 @@ import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -91,6 +96,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -101,6 +107,10 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
@@ -108,6 +118,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -124,8 +135,8 @@ import com.example.ui.components.DocumentStyleBottomSheet
 import com.example.ui.components.VoiceRecorderDialog
 import com.example.ui.glass.FrostedBackdrop
 import com.example.ui.glass.LiquidGlassCard
-import com.example.ui.glass.darkLiquidGlass
 import com.example.ui.glass.liquidGlass
+import java.util.Locale
 import kotlinx.coroutines.launch
 
 @Composable
@@ -204,6 +215,9 @@ fun NoteEditorScreen(
     var limitWarningMessage by remember { mutableStateOf<String?>(null) }
     var copyFeedbackMessage by remember { mutableStateOf<String?>(null) }
     var justCopiedPage by remember { mutableStateOf(false) }
+    var readZoomScale by remember { mutableFloatStateOf(1f) }
+    var readPanOffset by remember { mutableStateOf(Offset.Zero) }
+    var readViewportSize by remember { mutableStateOf(IntSize.Zero) }
 
     val checklistItems = remember {
         mutableStateListOf<ChecklistItem>().apply {
@@ -228,6 +242,12 @@ fun NoteEditorScreen(
     }
     val pagerState = rememberPagerState(initialPage = 0, pageCount = { pagerPageCount })
     val pageChipListState = rememberLazyListState()
+
+    // Reset zoom & pan cleanly when toggling Edit mode or switching pages
+    LaunchedEffect(isEditMode, pagerState.currentPage) {
+        readZoomScale = 1f
+        readPanOffset = Offset.Zero
+    }
 
     // Auto-create page when user swipes into the trailing virtual slot (e.g., swipe right in Arabic RTL -> Page 2)
     LaunchedEffect(pagerState.settledPage, isEditMode, pages.size, canAppendAnotherPage, isPremium) {
@@ -462,15 +482,10 @@ fun NoteEditorScreen(
                     modifier = Modifier
                         .size(44.dp)
                         .testTag("editor_back_button")
-                        .darkLiquidGlass(
-                            shape = CircleShape,
-                            elevation = 8.dp,
-                            rimWidth = 1.25.dp,
-                            baseAlpha = 0.50f
-                        )
+                        .clip(CircleShape)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
-                            indication = ripple(bounded = true, color = Color.White)
+                            indication = ripple(bounded = true)
                         ) {
                             playbackController.stop()
                             if (isEditMode) {
@@ -500,8 +515,8 @@ fun NoteEditorScreen(
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = if (isArabic) "رجوع" else "Back",
-                        tint = Color.White,
-                        modifier = Modifier.size(21.dp)
+                        tint = textColor,
+                        modifier = Modifier.size(22.dp)
                     )
                 }
 
@@ -518,16 +533,16 @@ fun NoteEditorScreen(
                                 .size(44.dp)
                                 .minimumInteractiveComponentSize()
                                 .testTag("editor_copy_page_button")
-                                .darkLiquidGlass(
+                                .liquidGlass(
+                                    isDark = effectiveDark,
+                                    tint = if (justCopiedPage) GlassTint.EMERALD else GlassTint.FROST,
                                     shape = RoundedCornerShape(14.dp),
-                                    tintColor = if (justCopiedPage) copyAccent else null,
-                                    elevation = 8.dp,
-                                    rimWidth = 1.2.dp,
-                                    baseAlpha = 0.50f
+                                    borderWidth = 1.dp,
+                                    customFill = if (justCopiedPage) copyAccent.copy(alpha = 0.26f) else pillFill
                                 )
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true, color = Color.White)
+                                    indication = ripple(bounded = true)
                                 ) {
                                     val rawPageText = pages.getOrNull(currentReadPageIdx).orEmpty()
                                     val fallbackChecklistText = if (currentReadPageIdx == 0 && checklistItems.isNotEmpty()) {
@@ -562,28 +577,28 @@ fun NoteEditorScreen(
                             Icon(
                                 imageVector = if (justCopiedPage) Icons.Default.Check else Icons.Default.ContentCopy,
                                 contentDescription = if (isArabic) "نسخ محتوى الصفحة" else "Copy page content",
-                                tint = if (justCopiedPage) Color(0xFF34D399) else Color.White,
+                                tint = if (justCopiedPage) copyAccent else textColor,
                                 modifier = Modifier.size(19.dp)
                             )
                         }
                     }
 
-                    // Style & Backgrounds button (Dark Liquid Glass frame + custom landscape-art icon)
+                    // Style & Backgrounds button (original pill glass + landscape-art icon)
                     val hasCustomVisual = activeBgPreset != null || customColorArgb != 0L || selectedTint != GlassTint.FROST
                     Box(
                         modifier = Modifier
                             .size(44.dp)
                             .testTag("editor_style_top_button")
-                            .darkLiquidGlass(
+                            .liquidGlass(
+                                isDark = effectiveDark,
+                                tint = selectedTint,
                                 shape = RoundedCornerShape(14.dp),
-                                tintColor = if (hasCustomVisual) accentColor else null,
-                                elevation = 8.dp,
-                                rimWidth = 1.2.dp,
-                                baseAlpha = 0.50f
+                                borderWidth = 1.dp,
+                                customFill = if (hasCustomVisual) accentColor.copy(alpha = 0.22f) else pillFill
                             )
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
-                                indication = ripple(bounded = true, color = Color.White)
+                                indication = ripple(bounded = true)
                             ) {
                                 styleSheetInitialTab = if (activeBgPreset != null) 1 else 0
                                 showStyleSheet = true
@@ -591,8 +606,8 @@ fun NoteEditorScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         BackgroundArtworkIcon(
-                            tint = Color.White,
-                            secondaryTint = Color(0xFFFBBF24),
+                            tint = if (hasCustomVisual) accentColor else textColor,
+                            secondaryTint = accentColor,
                             modifier = Modifier.size(22.dp)
                         )
                     }
@@ -602,16 +617,16 @@ fun NoteEditorScreen(
                         modifier = Modifier
                             .size(44.dp)
                             .testTag("editor_pin_toggle")
-                            .darkLiquidGlass(
+                            .liquidGlass(
+                                isDark = effectiveDark,
+                                tint = if (isPinned) GlassTint.AMBER else GlassTint.FROST,
                                 shape = RoundedCornerShape(14.dp),
-                                tintColor = if (isPinned) Color(0xFFFBBF24) else null,
-                                elevation = 8.dp,
-                                rimWidth = 1.2.dp,
-                                baseAlpha = 0.50f
+                                borderWidth = 1.dp,
+                                customFill = if (isPinned) Color(0xFFFBBF24).copy(alpha = 0.25f) else pillFill
                             )
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
-                                indication = ripple(bounded = true, color = Color.White)
+                                indication = ripple(bounded = true)
                             ) {
                                 isPinned = !isPinned
                                 triggerImmediateSaveIfViewMode()
@@ -621,7 +636,7 @@ fun NoteEditorScreen(
                         Icon(
                             imageVector = Icons.Default.PushPin,
                             contentDescription = if (isArabic) "تثبيت" else "Pin",
-                            tint = if (isPinned) Color(0xFFFBBF24) else Color.White,
+                            tint = if (isPinned) Color(0xFFFBBF24) else textColor,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -632,16 +647,16 @@ fun NoteEditorScreen(
                             modifier = Modifier
                                 .size(44.dp)
                                 .testTag("editor_save_button")
-                                .darkLiquidGlass(
+                                .liquidGlass(
+                                    isDark = effectiveDark,
+                                    tint = selectedTint,
                                     shape = RoundedCornerShape(14.dp),
-                                    tintColor = accentColor,
-                                    elevation = 8.dp,
-                                    rimWidth = 1.25.dp,
-                                    baseAlpha = 0.52f
+                                    borderWidth = 1.2.dp,
+                                    customFill = accentColor.copy(alpha = if (effectiveDark) 0.28f else 0.18f)
                                 )
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true, color = Color.White)
+                                    indication = ripple(bounded = true)
                                 ) {
                                     onSave(
                                         title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
@@ -654,7 +669,7 @@ fun NoteEditorScreen(
                             Icon(
                                 imageVector = Icons.Default.Check,
                                 contentDescription = if (isArabic) "حفظ" else "Save",
-                                tint = Color.White,
+                                tint = textColor,
                                 modifier = Modifier.size(21.dp)
                             )
                         }
@@ -663,16 +678,16 @@ fun NoteEditorScreen(
                             modifier = Modifier
                                 .size(44.dp)
                                 .testTag("editor_edit_button")
-                                .darkLiquidGlass(
+                                .liquidGlass(
+                                    isDark = effectiveDark,
+                                    tint = selectedTint,
                                     shape = RoundedCornerShape(14.dp),
-                                    tintColor = accentColor,
-                                    elevation = 8.dp,
-                                    rimWidth = 1.25.dp,
-                                    baseAlpha = 0.52f
+                                    borderWidth = 1.2.dp,
+                                    customFill = accentColor.copy(alpha = if (effectiveDark) 0.26f else 0.16f)
                                 )
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true, color = Color.White)
+                                    indication = ripple(bounded = true)
                                 ) {
                                     isEditMode = true
                                 },
@@ -681,7 +696,7 @@ fun NoteEditorScreen(
                             Icon(
                                 imageVector = Icons.Default.Edit,
                                 contentDescription = if (isArabic) "تعديل" else "Edit",
-                                tint = Color.White,
+                                tint = textColor,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -971,6 +986,7 @@ fun NoteEditorScreen(
             HorizontalPager(
                 state = pagerState,
                 beyondViewportPageCount = 1,
+                userScrollEnabled = isEditMode || readZoomScale <= 1.02f,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
@@ -979,13 +995,70 @@ fun NoteEditorScreen(
                 if (pageIndex < pages.size) {
                     val pageScrollState = rememberScrollState()
                     BoxWithConstraints(
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clipToBounds()
+                            .onSizeChanged { readViewportSize = it }
+                            .pointerInput(isEditMode, pageIndex) {
+                                if (isEditMode) return@pointerInput
+                                awaitEachGesture {
+                                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                    var wasMultiTouch = false
+                                    do {
+                                        val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+                                        val pressedChanges = event.changes.filter { it.pressed }
+                                        if (pressedChanges.size >= 2) {
+                                            wasMultiTouch = true
+                                            val zoomChange = event.calculateZoom()
+                                            val panChange = event.calculatePan()
+                                            val newScale = (readZoomScale * zoomChange).coerceIn(1f, 3.0f)
+                                            readZoomScale = newScale
+                                            if (newScale <= 1.01f) {
+                                                readPanOffset = Offset.Zero
+                                            } else {
+                                                val maxX = (readViewportSize.width * (newScale - 1f)) / 2f
+                                                val maxY = (readViewportSize.height * (newScale - 1f)) / 2f
+                                                val candidate = readPanOffset + panChange
+                                                readPanOffset = Offset(
+                                                    x = candidate.x.coerceIn(-maxX, maxX),
+                                                    y = candidate.y.coerceIn(-maxY, maxY)
+                                                )
+                                            }
+                                            event.changes.forEach { it.consume() }
+                                        } else if (pressedChanges.size == 1 && !wasMultiTouch && readZoomScale > 1.02f) {
+                                            val change = pressedChanges.first()
+                                            val delta = change.position - change.previousPosition
+                                            if (delta.getDistanceSquared() > 2f) {
+                                                val maxX = (readViewportSize.width * (readZoomScale - 1f)) / 2f
+                                                val maxY = (readViewportSize.height * (readZoomScale - 1f)) / 2f
+                                                val candidate = readPanOffset + delta
+                                                readPanOffset = Offset(
+                                                    x = candidate.x.coerceIn(-maxX, maxX),
+                                                    y = candidate.y.coerceIn(-maxY, maxY)
+                                                )
+                                                change.consume()
+                                            }
+                                        }
+                                    } while (event.changes.any { it.pressed })
+                                    if (readZoomScale <= 1.03f) {
+                                        readZoomScale = 1f
+                                        readPanOffset = Offset.Zero
+                                    }
+                                }
+                            }
                     ) {
                         val minCanvasHeight = maxHeight
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .heightIn(min = minCanvasHeight)
+                                .graphicsLayer {
+                                    val activeScale = if (!isEditMode) readZoomScale else 1f
+                                    scaleX = activeScale
+                                    scaleY = activeScale
+                                    translationX = if (!isEditMode) readPanOffset.x else 0f
+                                    translationY = if (!isEditMode) readPanOffset.y else 0f
+                                }
                                 .verticalScroll(pageScrollState)
                                 .padding(horizontal = 20.dp, vertical = 6.dp)
                         ) {
@@ -1196,6 +1269,39 @@ fun NoteEditorScreen(
                                 }
                             }
                         }
+
+                        if (!isEditMode && readZoomScale > 1.02f && pageIndex == pagerState.currentPage) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(16.dp)
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("editor_read_zoom_reset")
+                                    .liquidGlass(
+                                        isDark = effectiveDark,
+                                        tint = selectedTint,
+                                        shape = CircleShape,
+                                        borderWidth = 1.dp,
+                                        customFill = accentColor.copy(alpha = if (effectiveDark) 0.28f else 0.18f)
+                                    )
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = ripple(bounded = true)
+                                    ) {
+                                        readZoomScale = 1f
+                                        readPanOffset = Offset.Zero
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "${String.format(Locale.US, "%.1fx", readZoomScale)} ↺",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = textColor
+                                )
+                            }
+                        }
                     }
                 } else {
                     // Trailing virtual swipe slot -> settles seamlessly into Page N+1
@@ -1252,48 +1358,48 @@ fun NoteEditorScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        // Add Voice Memo button (Dark Liquid Glass Circle)
+                        // Add Voice Memo button
                         val hasAttachedAudio = audioDurationSec > 0 || audioFilePath.isNotBlank()
                         Box(
                             modifier = Modifier
                                 .size(44.dp)
                                 .testTag("editor_add_voice_button")
-                                .darkLiquidGlass(
+                                .liquidGlass(
+                                    isDark = effectiveDark,
+                                    tint = if (hasAttachedAudio) GlassTint.ROSE else GlassTint.FROST,
                                     shape = CircleShape,
-                                    tintColor = if (hasAttachedAudio) Color(0xFFEC4899) else null,
-                                    elevation = 9.dp,
-                                    rimWidth = 1.25.dp,
-                                    baseAlpha = 0.50f
+                                    borderWidth = 1.dp,
+                                    customFill = if (hasAttachedAudio) Color(0xFFEC4899).copy(alpha = 0.24f) else pillFill
                                 )
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true, color = Color.White)
+                                    indication = ripple(bounded = true)
                                 ) { showVoiceRecorderDialog = true },
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Mic,
                                 contentDescription = if (isArabic) "إضافة تسجيل صوتي" else "Add Voice Memo",
-                                tint = if (hasAttachedAudio) Color(0xFFF472B6) else Color.White,
+                                tint = if (hasAttachedAudio) Color(0xFFEC4899) else textColor,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
 
-                        // Add Checklist button (Dark Liquid Glass Circle)
+                        // Add Checklist button
                         Box(
                             modifier = Modifier
                                 .size(44.dp)
                                 .testTag("editor_add_checklist_button")
-                                .darkLiquidGlass(
+                                .liquidGlass(
+                                    isDark = effectiveDark,
+                                    tint = if (checklistItems.isNotEmpty()) selectedTint else GlassTint.FROST,
                                     shape = CircleShape,
-                                    tintColor = if (checklistItems.isNotEmpty()) accentColor else null,
-                                    elevation = 9.dp,
-                                    rimWidth = 1.25.dp,
-                                    baseAlpha = 0.50f
+                                    borderWidth = 1.dp,
+                                    customFill = if (checklistItems.isNotEmpty()) accentColor.copy(alpha = 0.22f) else pillFill
                                 )
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true, color = Color.White)
+                                    indication = ripple(bounded = true)
                                 ) {
                                     if (totalNoteBytes + 32L <= NotePagesCodec.MAX_NOTE_BYTES) {
                                         checklistItems.add(ChecklistItem(text = "", isDone = false))
@@ -1309,26 +1415,26 @@ fun NoteEditorScreen(
                             Icon(
                                 imageVector = Icons.Default.CheckBox,
                                 contentDescription = if (isArabic) "إضافة قائمة مهام" else "Add Checklist",
-                                tint = Color.White,
+                                tint = if (checklistItems.isNotEmpty()) accentColor else textColor,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
 
-                        // Document Colors & Category button (Dark Liquid Glass Circle)
+                        // Document Colors & Category button
                         Box(
                             modifier = Modifier
                                 .size(44.dp)
                                 .testTag("editor_palette_button")
-                                .darkLiquidGlass(
+                                .liquidGlass(
+                                    isDark = effectiveDark,
+                                    tint = selectedTint,
                                     shape = CircleShape,
-                                    tintColor = if (customColorArgb != 0L || selectedTint != GlassTint.FROST) accentColor else null,
-                                    elevation = 9.dp,
-                                    rimWidth = 1.25.dp,
-                                    baseAlpha = 0.50f
+                                    borderWidth = 1.dp,
+                                    customFill = if (customColorArgb != 0L || selectedTint != GlassTint.FROST) accentColor.copy(alpha = 0.24f) else pillFill
                                 )
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true, color = Color.White)
+                                    indication = ripple(bounded = true)
                                 ) {
                                     styleSheetInitialTab = 0
                                     showStyleSheet = true
@@ -1338,26 +1444,26 @@ fun NoteEditorScreen(
                             Icon(
                                 imageVector = Icons.Default.Palette,
                                 contentDescription = if (isArabic) "تلوين المستند" else "Document Color",
-                                tint = Color.White,
+                                tint = if (customColorArgb != 0L || selectedTint != GlassTint.FROST) accentColor else textColor,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
 
-                        // Document Backgrounds button (Dark Liquid Glass circle + custom artwork icon)
+                        // Document Backgrounds button
                         Box(
                             modifier = Modifier
                                 .size(44.dp)
                                 .testTag("editor_backgrounds_button")
-                                .darkLiquidGlass(
+                                .liquidGlass(
+                                    isDark = effectiveDark,
+                                    tint = selectedTint,
                                     shape = CircleShape,
-                                    tintColor = if (activeBgPreset != null) accentColor else null,
-                                    elevation = 9.dp,
-                                    rimWidth = 1.25.dp,
-                                    baseAlpha = 0.50f
+                                    borderWidth = 1.dp,
+                                    customFill = if (activeBgPreset != null) accentColor.copy(alpha = 0.24f) else pillFill
                                 )
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true, color = Color.White)
+                                    indication = ripple(bounded = true)
                                 ) {
                                     styleSheetInitialTab = 1
                                     showStyleSheet = true
@@ -1365,8 +1471,8 @@ fun NoteEditorScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             BackgroundArtworkIcon(
-                                tint = Color.White,
-                                secondaryTint = Color(0xFFFBBF24),
+                                tint = if (activeBgPreset != null) accentColor else textColor,
+                                secondaryTint = accentColor,
                                 modifier = Modifier.size(22.dp)
                             )
                         }
@@ -1390,22 +1496,23 @@ fun NoteEditorScreen(
                                 modifier = Modifier
                                     .size(44.dp)
                                     .testTag("editor_more_button")
-                                    .darkLiquidGlass(
+                                    .liquidGlass(
+                                        isDark = effectiveDark,
+                                        tint = GlassTint.FROST,
                                         shape = CircleShape,
-                                        elevation = 9.dp,
-                                        rimWidth = 1.25.dp,
-                                        baseAlpha = 0.50f
+                                        borderWidth = 1.dp,
+                                        customFill = pillFill
                                     )
                                     .clickable(
                                         interactionSource = remember { MutableInteractionSource() },
-                                        indication = ripple(bounded = true, color = Color.White)
+                                        indication = ripple(bounded = true)
                                     ) { showMoreMenu = true },
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.MoreVert,
                                     contentDescription = if (isArabic) "خيارات إضافية" else "More options",
-                                    tint = Color.White,
+                                    tint = textColor,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }

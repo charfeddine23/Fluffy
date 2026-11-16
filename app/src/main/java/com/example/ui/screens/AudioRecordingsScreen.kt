@@ -78,7 +78,6 @@ import com.example.ui.components.VoiceRecorderDialog
 import com.example.ui.components.formatMillis
 import com.example.ui.glass.FrostedBackdrop
 import com.example.ui.glass.LiquidGlassCard
-import com.example.ui.glass.darkLiquidGlass
 import com.example.ui.glass.liquidGlass
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -222,15 +221,15 @@ fun AudioRecordingsScreen(
                             modifier = Modifier
                                 .size(42.dp)
                                 .testTag("audio_screen_back_button")
-                                .darkLiquidGlass(
+                                .liquidGlass(
+                                    isDark = isDark,
+                                    tint = GlassTint.FROST,
                                     shape = CircleShape,
-                                    elevation = 10.dp,
-                                    rimWidth = 1.25.dp,
-                                    baseAlpha = 0.50f
+                                    borderWidth = 1.2.dp
                                 )
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true, color = Color.White),
+                                    indication = ripple(bounded = true),
                                     onClick = onBack
                                 ),
                             contentAlignment = Alignment.Center
@@ -238,7 +237,7 @@ fun AudioRecordingsScreen(
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = if (isArabic) "رجوع" else "Back",
-                                tint = Color.White,
+                                tint = textColor,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -266,16 +265,15 @@ fun AudioRecordingsScreen(
                             modifier = Modifier
                                 .size(42.dp)
                                 .testTag("audio_screen_import_button")
-                                .darkLiquidGlass(
+                                .liquidGlass(
+                                    isDark = isDark,
+                                    tint = GlassTint.CYAN,
                                     shape = CircleShape,
-                                    tintColor = accentCyan,
-                                    elevation = 10.dp,
-                                    rimWidth = 1.25.dp,
-                                    baseAlpha = 0.50f
+                                    borderWidth = 1.2.dp
                                 )
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true, color = Color.White)
+                                    indication = ripple(bounded = true)
                                 ) {
                                     importAudioLauncher.launch(arrayOf("audio/*"))
                                 },
@@ -284,7 +282,7 @@ fun AudioRecordingsScreen(
                             Icon(
                                 imageVector = Icons.Rounded.FolderOpen,
                                 contentDescription = if (isArabic) "استيراد صوت" else "Import Audio",
-                                tint = Color.White,
+                                tint = accentCyan,
                                 modifier = Modifier.size(19.dp)
                             )
                         }

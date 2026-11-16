@@ -51,7 +51,9 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import com.example.ui.glass.darkLiquidGlass
+import com.example.data.model.GlassTint
+import com.example.ui.glass.liquidGlass
+import com.example.ui.theme.LocalAppThemePreset
 
 @Composable
 fun FluffyBottomBar(
@@ -62,6 +64,8 @@ fun FluffyBottomBar(
     onNewVoiceNote: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val activePreset = LocalAppThemePreset.current
+    val accentColor = activePreset.primary
     var isExpanded by remember { mutableStateOf(false) }
 
     if (isExpanded) {
@@ -127,7 +131,7 @@ fun FluffyBottomBar(
                     .padding(horizontal = 20.dp, vertical = 20.dp),
                 contentAlignment = BiasAlignment(animatedBias, 1.0f)
             ) {
-                // Dark Liquid Glass Floating Plus Button -> Morphs smoothly into Dark Liquid Glass Action Capsule
+                // Original Liquid Glass Floating Plus Button -> Morphs smoothly into Liquid Glass Action Capsule
                 Box(
                     modifier = Modifier
                         .width(animatedWidth)
@@ -137,12 +141,16 @@ fun FluffyBottomBar(
                             scaleY = plusScale
                         }
                         .testTag("morphing_action_dock")
-                        .darkLiquidGlass(
+                        .liquidGlass(
+                            isDark = isDark,
+                            tint = if (isExpanded) GlassTint.FROST else GlassTint.CYAN,
                             shape = RoundedCornerShape(32.dp),
-                            elevation = 16.dp,
-                            rimWidth = 1.4.dp,
-                            baseAlpha = if (isExpanded) 0.62f else 0.48f,
-                            isPressed = !isExpanded && isPlusPressed
+                            borderWidth = 1.5.dp,
+                            customFill = if (isExpanded) {
+                                if (isDark) activePreset.surface.copy(alpha = 0.82f) else Color.White.copy(alpha = 0.88f)
+                            } else {
+                                accentColor.copy(alpha = if (isDark) 0.44f else 0.88f)
+                            }
                         )
                 ) {
                     if (!isExpanded) {
@@ -178,6 +186,8 @@ fun FluffyBottomBar(
                             // Icon 1: Voice Note (Microphone)
                             HorizontalActionButton(
                                 icon = Icons.Default.Mic,
+                                isDark = isDark,
+                                glassTint = GlassTint.ROSE,
                                 tintColor = Color(0xFFF43F5E),
                                 contentDescription = if (isArabic) "تسجيل صوتي" else "Voice Note",
                                 testTag = "action_voice_note_btn",
@@ -190,7 +200,9 @@ fun FluffyBottomBar(
                             // Icon 2: New Text Note (Center, Prominent)
                             HorizontalActionButton(
                                 icon = Icons.Default.EditNote,
-                                tintColor = Color(0xFF38BDF8),
+                                isDark = isDark,
+                                glassTint = GlassTint.CYAN,
+                                tintColor = accentColor,
                                 contentDescription = if (isArabic) "ملاحظة جديدة" else "New Note",
                                 testTag = "action_new_note_btn",
                                 onClick = {
@@ -202,7 +214,9 @@ fun FluffyBottomBar(
                             // Icon 3: Checklist
                             HorizontalActionButton(
                                 icon = Icons.Default.Checklist,
-                                tintColor = Color(0xFF34D399),
+                                isDark = isDark,
+                                glassTint = GlassTint.EMERALD,
+                                tintColor = Color(0xFF10B981),
                                 contentDescription = if (isArabic) "قائمة مهام" else "New Checklist",
                                 testTag = "action_checklist_btn",
                                 onClick = {
@@ -227,16 +241,16 @@ fun FluffyBottomBar(
                                         scaleY = closeScale
                                     }
                                     .testTag("action_collapse_dock_btn")
-                                    .darkLiquidGlass(
+                                    .liquidGlass(
+                                        isDark = isDark,
+                                        tint = GlassTint.FROST,
                                         shape = CircleShape,
-                                        elevation = 6.dp,
-                                        rimWidth = 1.1.dp,
-                                        baseAlpha = 0.44f,
-                                        isPressed = isClosePressed
+                                        borderWidth = 1.2.dp,
+                                        customFill = if (isDark) Color.White.copy(alpha = 0.12f) else Color(0xFF0F172A).copy(alpha = 0.08f)
                                     )
                                     .clickable(
                                         interactionSource = closeInteraction,
-                                        indication = ripple(bounded = true, color = Color.White),
+                                        indication = ripple(bounded = true),
                                         onClick = { isExpanded = false }
                                     ),
                                 contentAlignment = Alignment.Center
@@ -244,7 +258,7 @@ fun FluffyBottomBar(
                                 Icon(
                                     imageVector = Icons.Default.Close,
                                     contentDescription = if (isArabic) "إغلاق" else "Close",
-                                    tint = Color.White.copy(alpha = 0.90f),
+                                    tint = if (isDark) Color.White.copy(alpha = 0.90f) else Color(0xFF0F172A),
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -259,6 +273,8 @@ fun FluffyBottomBar(
 @Composable
 private fun HorizontalActionButton(
     icon: ImageVector,
+    isDark: Boolean,
+    glassTint: GlassTint,
     tintColor: Color,
     contentDescription: String,
     testTag: String,
@@ -279,17 +295,16 @@ private fun HorizontalActionButton(
                 scaleY = scale
             }
             .testTag(testTag)
-            .darkLiquidGlass(
+            .liquidGlass(
+                isDark = isDark,
+                tint = glassTint,
                 shape = CircleShape,
-                tintColor = tintColor,
-                elevation = 8.dp,
-                rimWidth = 1.15.dp,
-                baseAlpha = 0.46f,
-                isPressed = isPressed
+                borderWidth = 1.25.dp,
+                customFill = tintColor.copy(alpha = if (isDark) 0.26f else 0.16f)
             )
             .clickable(
                 interactionSource = interactionSource,
-                indication = ripple(bounded = true, color = Color.White),
+                indication = ripple(bounded = true, color = tintColor),
                 onClick = onClick
             ),
         contentAlignment = Alignment.Center
@@ -297,7 +312,7 @@ private fun HorizontalActionButton(
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            tint = Color.White,
+            tint = tintColor,
             modifier = Modifier.size(24.dp)
         )
     }

@@ -81,7 +81,6 @@ import com.example.data.model.VaultItemEntity
 import com.example.data.storage.LocalDeviceStorageManager
 import com.example.ui.glass.FrostedBackdrop
 import com.example.ui.glass.LiquidGlassCard
-import com.example.ui.glass.darkLiquidGlass
 import com.example.ui.glass.liquidGlass
 import com.example.ui.theme.LocalAppThemePreset
 import com.example.ui.theme.tr
@@ -197,18 +196,18 @@ fun VaultScreen(
                         Box(
                             modifier = Modifier
                                 .size(42.dp)
-                                .darkLiquidGlass(
+                                .liquidGlass(
+                                    isDark = effectiveDark,
+                                    tint = GlassTint.FROST,
                                     shape = CircleShape,
-                                    elevation = 10.dp,
-                                    rimWidth = 1.25.dp,
-                                    baseAlpha = 0.50f
+                                    borderWidth = 1.2.dp
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = tr("رجوع", "Retour", "Back", "Uɣal"),
-                                tint = Color.White,
+                                tint = textColor,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -424,18 +423,18 @@ fun VaultScreen(
                     Box(
                         modifier = Modifier
                             .size(42.dp)
-                            .darkLiquidGlass(
+                            .liquidGlass(
+                                isDark = isDark,
+                                tint = GlassTint.FROST,
                                 shape = CircleShape,
-                                elevation = 10.dp,
-                                rimWidth = 1.25.dp,
-                                baseAlpha = 0.50f
+                                borderWidth = 1.2.dp
                             ),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = if (isArabic) "رجوع" else "Back",
-                            tint = Color.White,
+                            tint = textColor,
                             modifier = Modifier.size(20.dp)
                         )
                     }

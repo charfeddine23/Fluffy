@@ -59,7 +59,6 @@ import androidx.compose.ui.unit.sp
 import com.example.data.model.GlassTint
 import com.example.ui.glass.FrostedBackdrop
 import com.example.ui.glass.LiquidGlassCard
-import com.example.ui.glass.darkLiquidGlass
 import com.example.ui.glass.liquidGlass
 import com.example.ui.theme.AppThemeGroup
 import com.example.ui.theme.AppThemePreset
@@ -119,15 +118,15 @@ fun ThemesScreen(
                     modifier = Modifier
                         .size(44.dp)
                         .testTag("themes_back_button")
-                        .darkLiquidGlass(
+                        .liquidGlass(
+                            isDark = isDark,
+                            tint = GlassTint.FROST,
                             shape = CircleShape,
-                            elevation = 10.dp,
-                            rimWidth = 1.25.dp,
-                            baseAlpha = 0.50f
+                            borderWidth = 1.2.dp
                         )
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
-                            indication = ripple(bounded = true, color = Color.White),
+                            indication = ripple(bounded = true),
                             onClick = onBack
                         ),
                     contentAlignment = Alignment.Center
@@ -135,7 +134,7 @@ fun ThemesScreen(
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = if (isArabic) "رجوع" else "Back",
-                        tint = Color.White,
+                        tint = textColor,
                         modifier = Modifier.size(21.dp)
                     )
                 }

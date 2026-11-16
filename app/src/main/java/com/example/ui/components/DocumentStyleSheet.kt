@@ -30,7 +30,6 @@ import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -138,31 +137,6 @@ fun DocumentStyleBottomSheet(
                             text = if (isArabic) "لون خاص أو اختر من $totalCount خلفية (20 مجانية + 20 Premium)" else "Custom color or $totalCount backgrounds (20 Free + 20 Premium)",
                             fontSize = 11.5.sp,
                             color = metaColor
-                        )
-                    }
-                }
-
-                if (customColorArgb != 0L || backgroundId != NoteBackgroundCatalog.NONE_ID || selectedTint != GlassTint.FROST) {
-                    Row(
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .background(cardBg)
-                            .clickable { onResetStyle() }
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = if (isArabic) "إعادة للافتراضي" else "Reset",
-                            tint = activePreset.primary,
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Text(
-                            text = if (isArabic) "افتراضي" else "Reset",
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = activePreset.primary
                         )
                     }
                 }
