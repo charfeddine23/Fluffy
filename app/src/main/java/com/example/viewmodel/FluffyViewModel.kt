@@ -580,12 +580,13 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun openAccountScreen() {
-        isSettingsDrawerOpen.value = false
         isThemesScreenOpen.value = false
         isTrashScreenOpen.value = false
         isArchiveScreenOpen.value = false
         isAudioPlayerScreenOpen.value = false
-        isAccountScreenOpen.value = true
+        isAccountScreenOpen.value = false
+        requestedSettingsPage.value = "ACCOUNT_CLOUD"
+        isSettingsDrawerOpen.value = true
     }
 
     fun closeAccountScreen() {

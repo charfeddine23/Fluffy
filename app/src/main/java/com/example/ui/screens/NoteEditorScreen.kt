@@ -10,6 +10,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -53,7 +54,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckBox
@@ -71,7 +71,6 @@ import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Unarchive
-import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -92,10 +91,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
@@ -205,13 +210,14 @@ fun NoteEditorScreen(
         }
     }
 
+    val maxAllowedPages = NotePagesCodec.maxPagesForTier(isPremium)
     val pagesSnapshot = pages.toList()
     val page1Content = pagesSnapshot.firstOrNull().orEmpty()
     val encodedExtraPages = remember(pagesSnapshot) { NotePagesCodec.encodeExtraPages(pagesSnapshot) }
     val totalNoteBytes = remember(title, pagesSnapshot, checklistItems.toList()) {
         NotePagesCodec.estimateNoteBytes(title, pagesSnapshot, checklistItems.toList())
     }
-    val canAppendAnotherPage = pages.size < NotePagesCodec.MAX_NOTE_PAGES &&
+    val canAppendAnotherPage = pages.size < maxAllowedPages &&
         totalNoteBytes + 8L <= NotePagesCodec.MAX_NOTE_BYTES
 
     val pagerPageCount = if (isEditMode && canAppendAnotherPage) {
@@ -223,13 +229,17 @@ fun NoteEditorScreen(
     val pageChipListState = rememberLazyListState()
 
     // Auto-create page when user swipes into the trailing virtual slot (e.g., swipe right in Arabic RTL -> Page 2)
-    LaunchedEffect(pagerState.settledPage, isEditMode, pages.size, canAppendAnotherPage) {
+    LaunchedEffect(pagerState.settledPage, isEditMode, pages.size, canAppendAnotherPage, isPremium) {
         if (isEditMode && pagerState.settledPage == pages.size) {
             if (canAppendAnotherPage) {
                 pages.add("")
             } else {
-                limitWarningMessage = if (pages.size >= NotePagesCodec.MAX_NOTE_PAGES) {
-                    if (isArabic) "تم الوصول إلى الحد الأقصى: 100 صفحة في المسودة" else "Maximum limit reached: 100 pages per note"
+                limitWarningMessage = if (pages.size >= maxAllowedPages) {
+                    if (isPremium) {
+                        if (isArabic) "تم الوصول إلى الحد الأقصى: 100 صفحة في المسودة" else "Maximum limit reached: 100 pages per note"
+                    } else {
+                        if (isArabic) "الحد الأقصى في الوضع المجاني 5 صفحات — قم بالترقية لإضافة حتى 100 صفحة" else "Free limit: 5 pages max — Upgrade to Premium for up to 100 pages"
+                    }
                 } else {
                     if (isArabic) "تم الوصول إلى الحد الأقصى للحجم: 900 كيلوبايت للمسودة" else "Note size limit reached: 900 KB max"
                 }
@@ -249,7 +259,7 @@ fun NoteEditorScreen(
     // Auto-clear limit warning & copy feedback banners
     LaunchedEffect(limitWarningMessage) {
         if (limitWarningMessage != null) {
-            kotlinx.coroutines.delay(3000)
+            kotlinx.coroutines.delay(3400)
             limitWarningMessage = null
         }
     }
@@ -264,14 +274,18 @@ fun NoteEditorScreen(
 
     fun triggerLimitWarning(isCountLimit: Boolean = false) {
         limitWarningMessage = if (isCountLimit) {
-            if (isArabic) "الحد الأقصى 100 صفحة لكل مسودة" else "Maximum 100 pages per note"
+            if (isPremium) {
+                if (isArabic) "الحد الأقصى 100 صفحة لكل مسودة" else "Maximum 100 pages per note"
+            } else {
+                if (isArabic) "الحد الأقصى في الوضع المجاني 5 صفحات — قم بالترقية لـ 100 صفحة" else "Free mode limit: 5 pages max — Upgrade for 100 pages"
+            }
         } else {
             if (isArabic) "تم الوصول للحد الأقصى لحجم المسودة (900 كيلوبايت)" else "Note size limit reached (900 KB)"
         }
     }
 
     fun addPageAndNavigate() {
-        if (pages.size >= NotePagesCodec.MAX_NOTE_PAGES) {
+        if (pages.size >= maxAllowedPages) {
             triggerLimitWarning(isCountLimit = true)
             return
         }
@@ -548,66 +562,18 @@ fun NoteEditorScreen(
                         }
                     }
 
-                    // Luxurious Style & 40 Backgrounds Jewel Trigger Button
+                    // Style & Backgrounds button (original clean glass frame + sleek custom landscape-art icon)
                     val hasCustomVisual = activeBgPreset != null || customColorArgb != 0L || selectedTint != GlassTint.FROST
-                    val jewelRingColors = if (activeBgPreset != null) {
-                        listOf(
-                            activeBgPreset.accentColor,
-                            Color(0xFFFFD54F),
-                            activeBgPreset.colors.firstOrNull() ?: accentColor,
-                            activeBgPreset.accentColor
-                        )
-                    } else {
-                        listOf(
-                            Color(0xFFFBBF24).copy(alpha = 0.85f),
-                            accentColor,
-                            Color(0xFFC084FC).copy(alpha = 0.85f),
-                            Color(0xFF38BDF8).copy(alpha = 0.85f)
-                        )
-                    }
-                    val jewelFillBrush = if (activeBgPreset != null) {
-                        Brush.linearGradient(activeBgPreset.colors)
-                    } else if (customColorArgb != 0L) {
-                        val c = Color(customColorArgb.toInt())
-                        Brush.linearGradient(listOf(c.copy(alpha = 0.88f), c))
-                    } else {
-                        Brush.linearGradient(
-                            colors = if (effectiveDark) {
-                                listOf(
-                                    Color(0xFF1E293B).copy(alpha = 0.90f),
-                                    Color(0xFF0F172A).copy(alpha = 0.88f)
-                                )
-                            } else {
-                                listOf(
-                                    Color.White.copy(alpha = 0.94f),
-                                    Color(0xFFF1F5F9).copy(alpha = 0.88f)
-                                )
-                            }
-                        )
-                    }
-                    val jewelIconTint = when {
-                        activeBgPreset != null -> if (activeBgPreset.isDarkSurface) Color(0xFFFFF8E1) else Color(0xFF0F172A)
-                        hasCustomVisual -> accentColor
-                        else -> textColor
-                    }
-
                     Box(
                         modifier = Modifier
-                            .size(46.dp)
-                            .minimumInteractiveComponentSize()
+                            .size(44.dp)
                             .testTag("editor_style_top_button")
-                            .shadow(
-                                elevation = if (hasCustomVisual) 8.dp else 4.dp,
-                                shape = RoundedCornerShape(15.dp),
-                                ambientColor = accentColor.copy(alpha = 0.35f),
-                                spotColor = Color(0xFFFBBF24).copy(alpha = 0.30f)
-                            )
-                            .clip(RoundedCornerShape(15.dp))
-                            .background(jewelFillBrush)
-                            .border(
-                                width = 1.6.dp,
-                                brush = Brush.linearGradient(jewelRingColors),
-                                shape = RoundedCornerShape(15.dp)
+                            .liquidGlass(
+                                isDark = effectiveDark,
+                                tint = selectedTint,
+                                shape = RoundedCornerShape(14.dp),
+                                borderWidth = 1.dp,
+                                customFill = if (hasCustomVisual) accentColor.copy(alpha = 0.22f) else pillFill
                             )
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
@@ -618,34 +584,10 @@ fun NoteEditorScreen(
                             },
                         contentAlignment = Alignment.Center
                     ) {
-                        // Subtle top-to-bottom glass sheen highlight
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(
-                                    Brush.verticalGradient(
-                                        colors = listOf(
-                                            Color.White.copy(alpha = if (effectiveDark) 0.16f else 0.34f),
-                                            Color.Transparent
-                                        )
-                                    )
-                                )
-                        )
-                        Icon(
-                            imageVector = if (activeBgPreset != null) Icons.Default.Wallpaper else Icons.Default.Palette,
-                            contentDescription = if (isArabic) "ألوان وخلفيات المستند" else "Document Colors & Backgrounds",
-                            tint = jewelIconTint,
-                            modifier = Modifier.size(19.dp)
-                        )
-                        // Crown/Sparkle miniature jewel corner accent
-                        Icon(
-                            imageVector = Icons.Default.AutoAwesome,
-                            contentDescription = null,
-                            tint = Color(0xFFFFD54F),
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(4.dp)
-                                .size(10.dp)
+                        BackgroundArtworkIcon(
+                            tint = if (hasCustomVisual) accentColor else textColor,
+                            secondaryTint = Color(0xFFFBBF24),
+                            modifier = Modifier.size(22.dp)
                         )
                     }
 
@@ -978,21 +920,44 @@ fun NoteEditorScreen(
                 }
 
                 AnimatedVisibility(visible = limitWarningMessage != null) {
-                    Box(
+                    val isFreePageCapWarning = !isPremium && pages.size >= maxAllowedPages
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(bottom = 6.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .background(Color(0xFFEF4444).copy(alpha = if (effectiveDark) 0.22f else 0.12f))
                             .border(1.dp, Color(0xFFEF4444).copy(alpha = 0.45f), RoundedCornerShape(12.dp))
-                            .padding(horizontal = 12.dp, vertical = 7.dp)
+                            .clickable(enabled = isFreePageCapWarning) {
+                                onRequestPremiumUpgrade()
+                            }
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
                             text = limitWarningMessage.orEmpty(),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = if (effectiveDark) Color(0xFFFCA5A5) else Color(0xFFB91C1C)
+                            color = if (effectiveDark) Color(0xFFFCA5A5) else Color(0xFFB91C1C),
+                            modifier = Modifier.weight(1f)
                         )
+                        if (isFreePageCapWarning) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(Color(0xFFF59E0B))
+                                    .padding(horizontal = 9.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = if (isArabic) "ترقية" else "Upgrade",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFF1F1200)
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -1372,29 +1337,18 @@ fun NoteEditorScreen(
                             )
                         }
 
-                        // Luxurious 40 Document Backgrounds button
-                        val bottomBgColors = activeBgPreset?.colors ?: listOf(
-                            Color(0xFF1E293B).copy(alpha = if (effectiveDark) 0.90f else 0.12f),
-                            accentColor.copy(alpha = 0.22f)
-                        )
-                        val bottomRing = listOf(
-                            Color(0xFFFFD54F),
-                            accentColor,
-                            Color(0xFFC084FC)
-                        )
+                        // Document Backgrounds button (original clean liquidGlass circle + sleek custom artwork icon)
                         Box(
                             modifier = Modifier
-                                .size(46.dp)
-                                .minimumInteractiveComponentSize()
+                                .size(44.dp)
                                 .testTag("editor_backgrounds_button")
-                                .shadow(
-                                    elevation = 6.dp,
+                                .liquidGlass(
+                                    isDark = effectiveDark,
+                                    tint = if (activeBgPreset != null) selectedTint else GlassTint.FROST,
                                     shape = CircleShape,
-                                    ambientColor = accentColor.copy(alpha = 0.35f)
+                                    borderWidth = 1.dp,
+                                    customFill = if (activeBgPreset != null) accentColor.copy(alpha = 0.26f) else pillFill
                                 )
-                                .clip(CircleShape)
-                                .background(Brush.linearGradient(bottomBgColors))
-                                .border(1.5.dp, Brush.linearGradient(bottomRing), CircleShape)
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = ripple(bounded = true)
@@ -1404,23 +1358,10 @@ fun NoteEditorScreen(
                                 },
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Wallpaper,
-                                contentDescription = if (isArabic) "خلفيات المستند (40)" else "Document Backgrounds (40)",
-                                tint = when {
-                                    activeBgPreset != null -> if (activeBgPreset.isDarkSurface) Color(0xFFFFF8E1) else Color(0xFF0F172A)
-                                    else -> textColor
-                                },
-                                modifier = Modifier.size(19.dp)
-                            )
-                            Icon(
-                                imageVector = Icons.Default.AutoAwesome,
-                                contentDescription = null,
-                                tint = Color(0xFFFFD54F),
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .padding(4.dp)
-                                    .size(10.dp)
+                            BackgroundArtworkIcon(
+                                tint = if (activeBgPreset != null) accentColor else textColor,
+                                secondaryTint = Color(0xFFFBBF24),
+                                modifier = Modifier.size(22.dp)
                             )
                         }
                     }
@@ -1586,9 +1527,9 @@ fun NoteEditorScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column {
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = if (isArabic) "صفحات المسودة (${pages.size}/100)" else "Draft Pages (${pages.size}/100)",
+                                    text = if (isArabic) "صفحات المسودة (${pages.size}/$maxAllowedPages)" else "Draft Pages (${pages.size}/$maxAllowedPages)",
                                     fontSize = 17.sp,
                                     fontWeight = FontWeight.ExtraBold,
                                     color = textColor
@@ -1604,21 +1545,33 @@ fun NoteEditorScreen(
                                 )
                             }
                             if (isEditMode) {
+                                val atFreeCap = !isPremium && pages.size >= maxAllowedPages
                                 Box(
                                     modifier = Modifier
                                         .clip(CircleShape)
-                                        .background(accentColor.copy(alpha = 0.2f))
+                                        .background(
+                                            if (atFreeCap) Color(0xFFF59E0B).copy(alpha = 0.22f)
+                                            else accentColor.copy(alpha = 0.2f)
+                                        )
                                         .clickable {
                                             showPagePickerDialog = false
-                                            addPageAndNavigate()
+                                            if (atFreeCap) {
+                                                onRequestPremiumUpgrade()
+                                            } else {
+                                                addPageAndNavigate()
+                                            }
                                         }
                                         .padding(horizontal = 12.dp, vertical = 7.dp)
                                 ) {
                                     Text(
-                                        text = if (isArabic) "+ صفحة" else "+ Page",
+                                        text = if (atFreeCap) {
+                                            if (isArabic) "ترقية (100) 👑" else "Upgrade (100) 👑"
+                                        } else {
+                                            if (isArabic) "+ صفحة" else "+ Page"
+                                        },
                                         fontSize = 12.5.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = accentColor
+                                        color = if (atFreeCap) Color(0xFFF59E0B) else accentColor
                                     )
                                 }
                             }
@@ -1779,4 +1732,76 @@ private fun shareNoteText(
         putExtra(Intent.EXTRA_TEXT, sb.toString())
     }
     context.startActivity(Intent.createChooser(intent, "Share note via"))
+}
+
+/**
+ * Sleek custom-drawn layered canvas & scenic horizon illustration icon for Document Backgrounds.
+ */
+@Composable
+private fun BackgroundArtworkIcon(
+    tint: Color,
+    secondaryTint: Color,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+
+        // Subtle back layered card offset at top-right
+        val backLeft = w * 0.22f
+        val backTop = h * 0.08f
+        val backW = w * 0.70f
+        val backH = h * 0.66f
+        drawRoundRect(
+            color = tint.copy(alpha = 0.36f),
+            topLeft = Offset(backLeft, backTop),
+            size = Size(backW, backH),
+            cornerRadius = CornerRadius(w * 0.16f, w * 0.16f),
+            style = Stroke(width = w * 0.065f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        )
+
+        // Main foreground artwork frame
+        val frameLeft = w * 0.08f
+        val frameTop = h * 0.24f
+        val frameW = w * 0.72f
+        val frameH = h * 0.68f
+        drawRoundRect(
+            color = tint.copy(alpha = 0.12f),
+            topLeft = Offset(frameLeft, frameTop),
+            size = Size(frameW, frameH),
+            cornerRadius = CornerRadius(w * 0.16f, w * 0.16f)
+        )
+        drawRoundRect(
+            color = tint,
+            topLeft = Offset(frameLeft, frameTop),
+            size = Size(frameW, frameH),
+            cornerRadius = CornerRadius(w * 0.16f, w * 0.16f),
+            style = Stroke(width = w * 0.085f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        )
+
+        // Smooth rolling horizon wave inside the frame
+        val wavePath = Path().apply {
+            val bottom = frameTop + frameH - w * 0.04f
+            moveTo(frameLeft + w * 0.07f, bottom)
+            lineTo(frameLeft + w * 0.07f, frameTop + frameH * 0.64f)
+            cubicTo(
+                frameLeft + frameW * 0.32f, frameTop + frameH * 0.38f,
+                frameLeft + frameW * 0.54f, frameTop + frameH * 0.72f,
+                frameLeft + frameW - w * 0.07f, frameTop + frameH * 0.46f
+            )
+            lineTo(frameLeft + frameW - w * 0.07f, bottom)
+            close()
+        }
+        drawPath(
+            path = wavePath,
+            color = tint.copy(alpha = 0.78f)
+        )
+
+        // Radiant sun/orb jewel in upper-left of the canvas
+        drawCircle(
+            color = secondaryTint,
+            radius = w * 0.095f,
+            center = Offset(frameLeft + frameW * 0.30f, frameTop + frameH * 0.30f)
+        )
+    }
 }

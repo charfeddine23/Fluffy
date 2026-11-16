@@ -12,9 +12,14 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
@@ -24,6 +29,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -57,6 +63,7 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.AutoAwesomeMosaic
+import androidx.compose.material.icons.rounded.CameraAlt
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudDone
@@ -65,14 +72,16 @@ import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material.icons.rounded.GppBad
 import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LightMode
-import androidx.compose.material.icons.rounded.MenuBook
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Login
+import androidx.compose.material.icons.rounded.Logout
 import androidx.compose.material.icons.rounded.ManageAccounts
+import androidx.compose.material.icons.rounded.MenuBook
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Save
@@ -107,9 +116,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -118,6 +129,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -180,6 +192,8 @@ fun SettingsDrawer(
     hasPendingUpdate: Boolean = false,
     onCheckForUpdates: () -> Unit = {},
     isCloudSignedIn: Boolean = false,
+    isGuestMode: Boolean = false,
+    isPremium: Boolean = false,
     cloudSyncStatus: CloudSyncStatus = CloudSyncStatus.Disconnected,
     profileDisplayName: String? = null,
     profileEmail: String? = null,
@@ -187,9 +201,18 @@ fun SettingsDrawer(
     profileAvatarChoice: String = "",
     profileFirstName: String = "",
     profileLastName: String = "",
+    useGoogleAccountName: Boolean = false,
     onOpenProfile: () -> Unit = {},
+    onOpenPremiumUpgrade: () -> Unit = {},
+    onUpdateProfileName: (firstName: String, lastName: String) -> Unit = { _, _ -> },
+    onToggleUseGoogleAccountName: (Boolean) -> Unit = {},
+    onSelectCustomPhoto: (Uri) -> Unit = {},
+    onSelectPresetAvatar: (String) -> Unit = {},
+    onUseGooglePhoto: () -> Unit = {},
+    onUseInitialsAvatar: () -> Unit = {},
     onOpenCloudAuth: () -> Unit = {},
     onSyncCloudNow: () -> Unit = {},
+    onSignOutFirebase: () -> Unit = {},
     onExportLocalBackup: (Uri) -> Unit = {},
     onImportLocalBackup: (Uri) -> Unit = {},
     initialSubPage: String? = null,
@@ -208,6 +231,7 @@ fun SettingsDrawer(
     }
     var showLanguageDialog by remember { mutableStateOf(false) }
     var showPasskeySetupDialog by remember { mutableStateOf(false) }
+    var showAvatarPicker by remember { mutableStateOf(false) }
     val currentLanguage = LocalAppLanguage.current
 
     LaunchedEffect(isOpen, initialSubPage) {
@@ -223,6 +247,7 @@ fun SettingsDrawer(
             currentPage = SettingsPage.ROOT
             showLanguageDialog = false
             showPasskeySetupDialog = false
+            showAvatarPicker = false
         }
     }
 
@@ -917,277 +942,619 @@ fun SettingsDrawer(
                                 }
 
                                 SettingsPage.ACCOUNT_CLOUD -> {
-                                    // 1. Top Hero Profile Card (Enlarged + Prominent Profile Picture)
-                                    val fullProfileName = listOf(profileFirstName, profileLastName)
-                                        .filter { it.isNotBlank() }
-                                        .joinToString(" ")
-                                        .ifBlank { profileDisplayName?.takeIf { it.isNotBlank() } ?: profileEmail ?: "" }
-                                        .ifBlank {
-                                            tr("مستخدم Fluffy", "Utilisateur Fluffy", "Fluffy User", "Aseqdac n Fluffy")
-                                        }
+                                    val isLinked = isCloudSignedIn
+                                    val lightPrimary by animateColorAsState(
+                                        targetValue = if (isLinked) Color(0xFF10B981) else Color(0xFFEF4444),
+                                        animationSpec = tween(durationMillis = 700, easing = FastOutSlowInEasing),
+                                        label = "account_status_primary"
+                                    )
+                                    val lightSecondary by animateColorAsState(
+                                        targetValue = if (isLinked) Color(0xFF34D399) else Color(0xFFF43F5E),
+                                        animationSpec = tween(durationMillis = 700, easing = FastOutSlowInEasing),
+                                        label = "account_status_secondary"
+                                    )
 
-                                    LiquidGlassCard(
-                                        isDark = effectiveDark,
-                                        tint = GlassTint.FROST,
-                                        shape = RoundedCornerShape(24.dp),
-                                        borderWidth = 1.2.dp,
-                                        customFill = cardTileColor,
-                                        onClick = {
-                                            onClose()
-                                            onOpenProfile()
-                                        },
-                                        testTag = "settings_profile_button",
+                                    val profileInfinite = rememberInfiniteTransition(label = "drawer_profile_lights")
+                                    val haloRotation by profileInfinite.animateFloat(
+                                        initialValue = 0f,
+                                        targetValue = 360f,
+                                        animationSpec = infiniteRepeatable(
+                                            animation = tween(durationMillis = 7500, easing = LinearEasing),
+                                            repeatMode = RepeatMode.Restart
+                                        ),
+                                        label = "drawer_halo_rotation"
+                                    )
+                                    val auraPulse by profileInfinite.animateFloat(
+                                        initialValue = 0.80f,
+                                        targetValue = 1.08f,
+                                        animationSpec = infiniteRepeatable(
+                                            animation = tween(durationMillis = 2400, easing = FastOutSlowInEasing),
+                                            repeatMode = RepeatMode.Reverse
+                                        ),
+                                        label = "drawer_aura_pulse"
+                                    )
+                                    val beaconScale by profileInfinite.animateFloat(
+                                        initialValue = 0.85f,
+                                        targetValue = 1.28f,
+                                        animationSpec = infiniteRepeatable(
+                                            animation = tween(durationMillis = 1300, easing = FastOutSlowInEasing),
+                                            repeatMode = RepeatMode.Reverse
+                                        ),
+                                        label = "drawer_beacon_scale"
+                                    )
+
+                                    val fullProfileName = remember(
+                                        profileFirstName,
+                                        profileLastName,
+                                        useGoogleAccountName,
+                                        profileDisplayName,
+                                        isCloudSignedIn,
+                                        isGuestMode,
+                                        isArabic
+                                    ) {
+                                        val googleName = profileDisplayName?.trim().orEmpty()
+                                        val customFull = listOf(profileFirstName.trim(), profileLastName.trim())
+                                            .filter { it.isNotBlank() }
+                                            .joinToString(" ")
+                                        when {
+                                            useGoogleAccountName && googleName.isNotBlank() -> googleName
+                                            customFull.isNotBlank() -> customFull
+                                            googleName.isNotBlank() -> googleName
+                                            isCloudSignedIn -> if (isArabic) "مستخدم Fluffy" else "Fluffy User"
+                                            else -> if (isArabic) "مستخدم ضيف" else "Guest User"
+                                        }
+                                    }
+
+                                    // 1. Unified Profile Hero Card (Redesigned for Settings Drawer)
+                                    Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .defaultMinSize(minHeight = 112.dp)
+                                            .clip(RoundedCornerShape(24.dp))
+                                            .border(
+                                                width = 1.4.dp,
+                                                brush = Brush.linearGradient(
+                                                    listOf(
+                                                        lightSecondary.copy(alpha = 0.65f),
+                                                        lightPrimary.copy(alpha = 0.24f),
+                                                        primaryAccent.copy(alpha = 0.40f),
+                                                        lightPrimary.copy(alpha = 0.62f)
+                                                    )
+                                                ),
+                                                shape = RoundedCornerShape(24.dp)
+                                            )
                                     ) {
-                                        Column(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(horizontal = 18.dp, vertical = 18.dp),
-                                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                                        LiquidGlassCard(
+                                            isDark = effectiveDark,
+                                            tint = if (isLinked) GlassTint.EMERALD else GlassTint.FROST,
+                                            shape = RoundedCornerShape(24.dp),
+                                            borderWidth = 0.dp,
+                                            customFill = cardTileColor,
+                                            testTag = "account_hero_card",
+                                            modifier = Modifier.fillMaxWidth()
                                         ) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(14.dp)
-                                            ) {
-                                                ProfileAvatar(
-                                                    photoUrl = profilePhotoUrl,
-                                                    firstName = profileFirstName,
-                                                    lastName = profileLastName,
-                                                    displayName = profileDisplayName,
-                                                    email = profileEmail,
-                                                    isDark = effectiveDark,
-                                                    avatarChoice = profileAvatarChoice,
-                                                    size = 66.dp,
-                                                    borderWidth = 2.2.dp,
-                                                    fontSize = 22.sp
-                                                )
+                                            Box(modifier = Modifier.fillMaxWidth()) {
+                                                // Soft radial aura inside top of hero card
+                                                Canvas(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(145.dp)
+                                                ) {
+                                                    drawCircle(
+                                                        brush = Brush.radialGradient(
+                                                            colors = listOf(
+                                                                lightPrimary.copy(alpha = if (effectiveDark) 0.24f else 0.14f),
+                                                                Color.Transparent
+                                                            ),
+                                                            center = Offset(size.width / 2f, size.height * 0.50f),
+                                                            radius = size.width * 0.56f
+                                                        ),
+                                                        radius = size.width * 0.56f,
+                                                        center = Offset(size.width / 2f, size.height * 0.50f)
+                                                    )
+                                                }
 
                                                 Column(
-                                                    modifier = Modifier.weight(1f),
-                                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(horizontal = 16.dp, vertical = 16.dp),
+                                                    horizontalAlignment = Alignment.CenterHorizontally
                                                 ) {
-                                                    Text(
-                                                        text = fullProfileName,
-                                                        fontSize = 17.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = textColor,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis
-                                                    )
-                                                    if (!profileEmail.isNullOrBlank()) {
-                                                        Text(
-                                                            text = profileEmail,
-                                                            fontSize = 12.sp,
-                                                            color = subTextColor,
-                                                            maxLines = 1,
-                                                            overflow = TextOverflow.Ellipsis
-                                                        )
-                                                    } else {
+                                                    // Top Status Bar inside Hero Card: Account Mode + Pulsing Linked/Unlinked Dot
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
                                                         Text(
                                                             text = tr(
-                                                                "تعديل الاسم وصورة الحساب",
-                                                                "Gérer le nom et la photo",
-                                                                "Manage name & profile photo",
-                                                                "Sefrek isem d tugna n umiḍan"
+                                                                "الملف الشخصي",
+                                                                "Profil",
+                                                                "Profile",
+                                                                "Amaɣnu"
                                                             ),
+                                                            fontSize = 11.5.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = subTextColor
+                                                        )
+
+                                                        Row(
+                                                            modifier = Modifier
+                                                                .clip(CircleShape)
+                                                                .background(lightPrimary.copy(alpha = 0.16f))
+                                                                .border(1.dp, lightPrimary.copy(alpha = 0.42f), CircleShape)
+                                                                .padding(horizontal = 10.dp, vertical = 4.dp),
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                                        ) {
+                                                            Box(
+                                                                modifier = Modifier
+                                                                    .size(7.dp)
+                                                                    .scale(beaconScale)
+                                                                    .clip(CircleShape)
+                                                                    .background(lightSecondary)
+                                                            )
+                                                            Text(
+                                                                text = if (isLinked) {
+                                                                    tr("مرتبط", "Lié", "Linked", "Yeqqen")
+                                                                } else {
+                                                                    tr("غير مرتبط", "Non lié", "Unlinked", "Ur yeqqin ara")
+                                                                },
+                                                                fontSize = 10.5.sp,
+                                                                fontWeight = FontWeight.ExtraBold,
+                                                                color = lightSecondary
+                                                            )
+                                                        }
+                                                    }
+
+                                                    Spacer(modifier = Modifier.height(10.dp))
+
+                                                    // Interactive Avatar Cluster with Animated Aura, Rotating Ring & Camera Badge
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(102.dp)
+                                                            .testTag("profile_avatar_edit_trigger")
+                                                            .clickable(
+                                                                interactionSource = remember { MutableInteractionSource() },
+                                                                indication = null
+                                                            ) { showAvatarPicker = true },
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Canvas(
+                                                            modifier = Modifier
+                                                                .size(100.dp)
+                                                                .scale(auraPulse)
+                                                        ) {
+                                                            drawCircle(
+                                                                brush = Brush.radialGradient(
+                                                                    colors = listOf(
+                                                                        lightPrimary.copy(alpha = 0.34f),
+                                                                        lightSecondary.copy(alpha = 0.14f),
+                                                                        Color.Transparent
+                                                                    )
+                                                                )
+                                                            )
+                                                        }
+
+                                                        Canvas(
+                                                            modifier = Modifier
+                                                                .size(92.dp)
+                                                                .graphicsLayer { rotationZ = haloRotation }
+                                                        ) {
+                                                            drawCircle(
+                                                                brush = Brush.sweepGradient(
+                                                                    colors = listOf(
+                                                                        lightSecondary,
+                                                                        lightPrimary.copy(alpha = 0.22f),
+                                                                        Color.White.copy(alpha = 0.88f),
+                                                                        lightPrimary.copy(alpha = 0.22f),
+                                                                        lightSecondary
+                                                                    )
+                                                                ),
+                                                                style = Stroke(width = 2.6.dp.toPx())
+                                                            )
+                                                        }
+
+                                                        ProfileAvatar(
+                                                            photoUrl = profilePhotoUrl,
+                                                            firstName = profileFirstName,
+                                                            lastName = profileLastName,
+                                                            displayName = profileDisplayName,
+                                                            email = profileEmail,
+                                                            isDark = effectiveDark,
+                                                            avatarChoice = profileAvatarChoice,
+                                                            size = 82.dp,
+                                                            borderWidth = 2.dp,
+                                                            fontSize = 26.sp,
+                                                            customRingBrush = Brush.linearGradient(
+                                                                listOf(lightSecondary, lightPrimary)
+                                                            )
+                                                        )
+
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .align(Alignment.BottomEnd)
+                                                                .padding(4.dp)
+                                                                .size(28.dp)
+                                                                .clip(CircleShape)
+                                                                .background(
+                                                                    Brush.linearGradient(
+                                                                        listOf(lightPrimary, primaryAccent)
+                                                                    )
+                                                                )
+                                                                .border(2.dp, activePreset.surface, CircleShape),
+                                                            contentAlignment = Alignment.Center
+                                                        ) {
+                                                            Icon(
+                                                                imageVector = Icons.Rounded.CameraAlt,
+                                                                contentDescription = tr(
+                                                                    "تعديل الصورة والاسم",
+                                                                    "Modifier photo et nom",
+                                                                    "Edit Photo & Name",
+                                                                    "Beddel tugna d yisem"
+                                                                ),
+                                                                tint = Color.White,
+                                                                modifier = Modifier.size(14.dp)
+                                                            )
+                                                        }
+                                                    }
+
+                                                    Spacer(modifier = Modifier.height(12.dp))
+
+                                                    // Full Display Name + Clickable Free / Premium Tier Badge
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.spacedBy(
+                                                            space = 8.dp,
+                                                            alignment = Alignment.CenterHorizontally
+                                                        ),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Text(
+                                                            text = fullProfileName,
+                                                            fontSize = 18.sp,
+                                                            fontWeight = FontWeight.ExtraBold,
+                                                            color = textColor,
+                                                            textAlign = TextAlign.Center,
+                                                            maxLines = 2,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                            modifier = Modifier.weight(1f, fill = false)
+                                                        )
+                                                        AccountTierBadge(
+                                                            isPremium = isPremium,
+                                                            isDark = effectiveDark,
+                                                            isArabic = isArabic,
+                                                            onClick = onOpenPremiumUpgrade
+                                                        )
+                                                    }
+
+                                                    val subIdentity = when {
+                                                        !profileEmail.isNullOrBlank() -> profileEmail
+                                                        isGuestMode -> tr("وضع الضيف", "Mode invité", "Guest Mode", "Askar n inebgi")
+                                                        else -> ""
+                                                    }
+                                                    if (subIdentity.isNotBlank()) {
+                                                        Spacer(modifier = Modifier.height(4.dp))
+                                                        Text(
+                                                            text = subIdentity,
                                                             fontSize = 12.sp,
                                                             color = subTextColor,
+                                                            textAlign = TextAlign.Center,
                                                             maxLines = 1,
                                                             overflow = TextOverflow.Ellipsis
                                                         )
                                                     }
-                                                }
 
-                                                Icon(
-                                                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                                                    contentDescription = null,
-                                                    tint = subTextColor,
-                                                    modifier = Modifier.size(20.dp)
-                                                )
-                                            }
+                                                    Spacer(modifier = Modifier.height(14.dp))
 
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .defaultMinSize(minHeight = 40.dp)
-                                                    .clip(RoundedCornerShape(14.dp))
-                                                    .background(secondaryAccent.copy(alpha = 0.14f))
-                                                    .padding(horizontal = 12.dp, vertical = 9.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.Center
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Rounded.Person,
-                                                    contentDescription = null,
-                                                    tint = secondaryAccent,
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                                Spacer(modifier = Modifier.width(6.dp))
-                                                Text(
-                                                    text = tr(
-                                                        "عرض وتعديل الملف الشخصي",
-                                                        "Voir et modifier le profil",
-                                                        "View & Edit Profile",
-                                                        "Sken d ubeddel n umaɣnu"
-                                                    ),
-                                                    fontSize = 12.5.sp,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    color = secondaryAccent
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    Spacer(modifier = Modifier.height(14.dp))
-
-                                    // 2. Cloud Sync Active
-                                    val isSyncBusy = cloudSyncStatus is CloudSyncStatus.Syncing
-                                    val syncColor = if (isCloudSignedIn) Color(0xFF10B981) else primaryAccent
-
-                                    LiquidGlassCard(
-                                        isDark = effectiveDark,
-                                        tint = GlassTint.FROST,
-                                        shape = RoundedCornerShape(20.dp),
-                                        borderWidth = 1.dp,
-                                        customFill = cardTileColor,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .testTag("settings_cloud_sync_card")
-                                    ) {
-                                        Column(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(16.dp),
-                                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                                        ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                            ) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(40.dp)
-                                                        .clip(CircleShape)
-                                                        .background(syncColor.copy(alpha = 0.15f)),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Icon(
-                                                        imageVector = if (isCloudSignedIn) Icons.Rounded.CloudDone else Icons.Rounded.CloudOff,
-                                                        contentDescription = null,
-                                                        tint = syncColor,
-                                                        modifier = Modifier.size(20.dp)
-                                                    )
-                                                }
-
-                                                Column(modifier = Modifier.weight(1f)) {
-                                                    Text(
-                                                        text = if (isCloudSignedIn) {
-                                                            "Cloud Sync Active"
-                                                        } else {
-                                                            tr(
-                                                                "المزامنة السحابية غير مفعلة",
-                                                                "Sync cloud désactivée",
-                                                                "Cloud Sync Inactive",
-                                                                "Amtawi n usigna yensa"
+                                                    // Compact Edit Photo & Name Pill inside Hero Card
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .defaultMinSize(minHeight = 44.dp)
+                                                            .testTag("settings_profile_button")
+                                                            .clip(RoundedCornerShape(14.dp))
+                                                            .background(secondaryAccent.copy(alpha = 0.14f))
+                                                            .border(
+                                                                width = 1.dp,
+                                                                color = secondaryAccent.copy(alpha = 0.30f),
+                                                                shape = RoundedCornerShape(14.dp)
                                                             )
-                                                        },
-                                                        fontSize = 14.sp,
-                                                        fontWeight = FontWeight.SemiBold,
-                                                        color = textColor
-                                                    )
-                                                    val syncSubtitle = if (isCloudSignedIn) {
-                                                        when (cloudSyncStatus) {
-                                                            CloudSyncStatus.Syncing ->
-                                                                tr("جاري المزامنة...", "Synchronisation...", "Syncing...", "Amtawi yetteddu...")
-                                                            is CloudSyncStatus.Synced -> {
-                                                                val t = SimpleDateFormat("HH:mm", Locale.getDefault())
-                                                                    .format(Date(cloudSyncStatus.lastSyncAt))
-                                                                tr(
-                                                                    "${cloudSyncStatus.syncedCount} ملاحظة • $t",
-                                                                    "${cloudSyncStatus.syncedCount} notes • $t",
-                                                                    "${cloudSyncStatus.syncedCount} notes • $t",
-                                                                    "${cloudSyncStatus.syncedCount} tira • $t"
-                                                                )
+                                                            .clickable(
+                                                                interactionSource = remember { MutableInteractionSource() },
+                                                                indication = ripple(bounded = true)
+                                                            ) {
+                                                                showAvatarPicker = true
                                                             }
-                                                            is CloudSyncStatus.Error ->
-                                                                if (isArabic) cloudSyncStatus.messageAr else cloudSyncStatus.messageEn
-                                                            CloudSyncStatus.Disconnected ->
-                                                                tr("مرتبط بالسحابة", "Connecté", "Connected", "Yeqqen")
-                                                        }
-                                                    } else {
-                                                        tr(
-                                                            "سجّل الدخول لتفعيل المزامنة السحابية",
-                                                            "Connectez-vous pour synchroniser",
-                                                            "Sign in to sync across devices",
-                                                            "Kcem i wakken ad temtawiḍ"
+                                                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.Center
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Rounded.Person,
+                                                            contentDescription = null,
+                                                            tint = secondaryAccent,
+                                                            modifier = Modifier.size(16.dp)
+                                                        )
+                                                        Spacer(modifier = Modifier.width(6.dp))
+                                                        Text(
+                                                            text = tr(
+                                                                "تعديل الصورة والاسم",
+                                                                "Modifier photo et nom",
+                                                                "Edit Photo & Name",
+                                                                "Beddel tugna d yisem"
+                                                            ),
+                                                            fontSize = 12.5.sp,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            color = secondaryAccent
                                                         )
                                                     }
-                                                    Text(
-                                                        text = syncSubtitle,
-                                                        fontSize = 11.5.sp,
-                                                        color = if (cloudSyncStatus is CloudSyncStatus.Error) Color(0xFFF43F5E) else subTextColor
-                                                    )
                                                 }
-                                            }
-
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .defaultMinSize(minHeight = 44.dp)
-                                                    .testTag("settings_cloud_sync_action")
-                                                    .clip(RoundedCornerShape(14.dp))
-                                                    .background(syncColor.copy(alpha = 0.14f))
-                                                    .clickable(
-                                                        enabled = !isSyncBusy,
-                                                        interactionSource = remember { MutableInteractionSource() },
-                                                        indication = ripple(bounded = true)
-                                                    ) {
-                                                        if (isCloudSignedIn) {
-                                                            onSyncCloudNow()
-                                                        } else {
-                                                            onClose()
-                                                            onOpenCloudAuth()
-                                                        }
-                                                    }
-                                                    .padding(vertical = 10.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.Center
-                                            ) {
-                                                if (isSyncBusy) {
-                                                    CircularProgressIndicator(
-                                                        modifier = Modifier.size(16.dp),
-                                                        strokeWidth = 2.dp,
-                                                        color = syncColor
-                                                    )
-                                                } else {
-                                                    Icon(
-                                                        imageVector = if (isCloudSignedIn) Icons.Rounded.Sync else Icons.Rounded.Login,
-                                                        contentDescription = null,
-                                                        tint = syncColor,
-                                                        modifier = Modifier.size(17.dp)
-                                                    )
-                                                }
-                                                Spacer(modifier = Modifier.width(6.dp))
-                                                Text(
-                                                    text = if (isCloudSignedIn) {
-                                                        tr("مزامنة الآن", "Synchroniser", "Sync Now", "Mtawi tura")
-                                                    } else {
-                                                        tr("تسجيل الدخول للمزامنة", "Se connecter", "Sign In to Activate", "Kcem tura")
-                                                    },
-                                                    fontSize = 12.5.sp,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    color = syncColor
-                                                )
                                             }
                                         }
                                     }
 
                                     Spacer(modifier = Modifier.height(14.dp))
 
-                                    // 3. Local Backup
+                                    // 2. Cloud Sync & Link Account Card
+                                    val isSyncBusy = cloudSyncStatus is CloudSyncStatus.Syncing
+
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(20.dp))
+                                            .border(
+                                                width = 1.1.dp,
+                                                color = lightPrimary.copy(alpha = 0.38f),
+                                                shape = RoundedCornerShape(20.dp)
+                                            )
+                                    ) {
+                                        LiquidGlassCard(
+                                            isDark = effectiveDark,
+                                            tint = if (isLinked) GlassTint.EMERALD else GlassTint.FROST,
+                                            shape = RoundedCornerShape(20.dp),
+                                            borderWidth = 0.dp,
+                                            customFill = cardTileColor,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .testTag("settings_cloud_sync_card")
+                                        ) {
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(16.dp),
+                                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                                ) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(42.dp)
+                                                            .clip(RoundedCornerShape(13.dp))
+                                                            .background(lightPrimary.copy(alpha = 0.16f))
+                                                            .border(
+                                                                width = 1.dp,
+                                                                color = lightPrimary.copy(alpha = 0.36f),
+                                                                shape = RoundedCornerShape(13.dp)
+                                                            ),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = if (isLinked) Icons.Rounded.CloudDone else Icons.Rounded.GppBad,
+                                                            contentDescription = null,
+                                                            tint = lightSecondary,
+                                                            modifier = Modifier.size(21.dp)
+                                                        )
+                                                    }
+
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Text(
+                                                            text = if (isLinked) {
+                                                                tr(
+                                                                    "مرتبط بالسحابة",
+                                                                    "Sync cloud active",
+                                                                    "Cloud Sync Active",
+                                                                    "Amtawi n usigna yermed"
+                                                                )
+                                                            } else {
+                                                                tr(
+                                                                    "غير مرتبط بحساب Google",
+                                                                    "Compte Google non lié",
+                                                                    "Google Not Linked",
+                                                                    "Amiḍan Google ur yeqqin ara"
+                                                                )
+                                                            },
+                                                            fontSize = 14.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = textColor
+                                                        )
+                                                        val syncSubtitle = if (isLinked) {
+                                                            when (cloudSyncStatus) {
+                                                                CloudSyncStatus.Syncing ->
+                                                                    tr("جاري المزامنة الفورية...", "Synchronisation...", "Syncing...", "Amtawi yetteddu...")
+                                                                is CloudSyncStatus.Synced -> {
+                                                                    val t = SimpleDateFormat("HH:mm", Locale.getDefault())
+                                                                        .format(Date(cloudSyncStatus.lastSyncAt))
+                                                                    tr(
+                                                                        "${cloudSyncStatus.syncedCount} ملاحظة • $t",
+                                                                        "${cloudSyncStatus.syncedCount} notes • $t",
+                                                                        "${cloudSyncStatus.syncedCount} notes • $t",
+                                                                        "${cloudSyncStatus.syncedCount} tira • $t"
+                                                                    )
+                                                                }
+                                                                is CloudSyncStatus.Error ->
+                                                                    if (isArabic) cloudSyncStatus.messageAr else cloudSyncStatus.messageEn
+                                                                CloudSyncStatus.Disconnected ->
+                                                                    tr("متصل بالسحابة", "Connecté", "Connected", "Yeqqen")
+                                                            }
+                                                        } else {
+                                                            tr(
+                                                                "الحفظ محلي حالياً — اربط حسابك للمزامنة",
+                                                                "Stockage local — liez votre compte",
+                                                                "Local storage only — link to sync",
+                                                                "Aḥraz adigan kan — qqen amiḍan"
+                                                            )
+                                                        }
+                                                        Text(
+                                                            text = syncSubtitle,
+                                                            fontSize = 11.5.sp,
+                                                            color = if (cloudSyncStatus is CloudSyncStatus.Error) Color(0xFFF43F5E) else subTextColor
+                                                        )
+                                                    }
+                                                }
+
+                                                HorizontalDivider(color = dividerColor)
+
+                                                if (!isLinked) {
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .defaultMinSize(minHeight = 46.dp)
+                                                            .testTag("firebase_auth_open_button")
+                                                            .clip(RoundedCornerShape(14.dp))
+                                                            .background(
+                                                                Brush.horizontalGradient(
+                                                                    listOf(
+                                                                        Color(0xFFEF4444).copy(alpha = 0.20f),
+                                                                        Color(0xFF10B981).copy(alpha = 0.22f)
+                                                                    )
+                                                                )
+                                                            )
+                                                            .border(
+                                                                width = 1.dp,
+                                                                color = lightPrimary.copy(alpha = 0.45f),
+                                                                shape = RoundedCornerShape(14.dp)
+                                                            )
+                                                            .clickable(
+                                                                interactionSource = remember { MutableInteractionSource() },
+                                                                indication = ripple(bounded = true)
+                                                            ) {
+                                                                onClose()
+                                                                onOpenCloudAuth()
+                                                            }
+                                                            .padding(horizontal = 12.dp, vertical = 11.dp),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.Center
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Rounded.Login,
+                                                            contentDescription = null,
+                                                            tint = Color(0xFF34D399),
+                                                            modifier = Modifier.size(18.dp)
+                                                        )
+                                                        Spacer(modifier = Modifier.width(8.dp))
+                                                        Text(
+                                                            text = tr(
+                                                                "ربط الحساب بـ Google",
+                                                                "Lier un compte Google",
+                                                                "Link Google Account",
+                                                                "Qqen amiḍan Google"
+                                                            ),
+                                                            fontSize = 12.5.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = textColor
+                                                        )
+                                                    }
+                                                } else {
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                    ) {
+                                                        Row(
+                                                            modifier = Modifier
+                                                                .weight(1f)
+                                                                .defaultMinSize(minHeight = 44.dp)
+                                                                .testTag("firebase_sync_now_button")
+                                                                .clip(RoundedCornerShape(14.dp))
+                                                                .background(Color(0xFF10B981).copy(alpha = 0.16f))
+                                                                .border(
+                                                                    1.dp,
+                                                                    Color(0xFF10B981).copy(alpha = 0.40f),
+                                                                    RoundedCornerShape(14.dp)
+                                                                )
+                                                                .clickable(
+                                                                    enabled = !isSyncBusy,
+                                                                    interactionSource = remember { MutableInteractionSource() },
+                                                                    indication = ripple(bounded = true)
+                                                                ) { onSyncCloudNow() }
+                                                                .padding(horizontal = 10.dp, vertical = 10.dp),
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.Center
+                                                        ) {
+                                                            if (isSyncBusy) {
+                                                                CircularProgressIndicator(
+                                                                    modifier = Modifier.size(15.dp),
+                                                                    strokeWidth = 2.dp,
+                                                                    color = Color(0xFF34D399)
+                                                                )
+                                                            } else {
+                                                                Icon(
+                                                                    imageVector = Icons.Rounded.Sync,
+                                                                    contentDescription = tr("مزامنة الآن", "Synchroniser", "Sync Now", "Mtawi"),
+                                                                    tint = Color(0xFF34D399),
+                                                                    modifier = Modifier.size(16.dp)
+                                                                )
+                                                            }
+                                                            Spacer(modifier = Modifier.width(6.dp))
+                                                            Text(
+                                                                text = tr("مزامنة الآن", "Synchroniser", "Sync Now", "Mtawi"),
+                                                                fontSize = 12.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = Color(0xFF34D399),
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                        }
+
+                                                        Row(
+                                                            modifier = Modifier
+                                                                .weight(1f)
+                                                                .defaultMinSize(minHeight = 44.dp)
+                                                                .testTag("firebase_sign_out_button")
+                                                                .clip(RoundedCornerShape(14.dp))
+                                                                .background(Color(0xFFF43F5E).copy(alpha = 0.15f))
+                                                                .border(
+                                                                    1.dp,
+                                                                    Color(0xFFF43F5E).copy(alpha = 0.35f),
+                                                                    RoundedCornerShape(14.dp)
+                                                                )
+                                                                .clickable(
+                                                                    interactionSource = remember { MutableInteractionSource() },
+                                                                    indication = ripple(bounded = true)
+                                                                ) {
+                                                                    onClose()
+                                                                    onSignOutFirebase()
+                                                                }
+                                                                .padding(horizontal = 10.dp, vertical = 10.dp),
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.Center
+                                                        ) {
+                                                            Icon(
+                                                                imageVector = Icons.Rounded.Logout,
+                                                                contentDescription = tr("تسجيل الخروج", "Déconnexion", "Sign Out", "Ffeɣ"),
+                                                                tint = Color(0xFFF43F5E),
+                                                                modifier = Modifier.size(16.dp)
+                                                            )
+                                                            Spacer(modifier = Modifier.width(6.dp))
+                                                            Text(
+                                                                text = tr("تسجيل الخروج", "Déconnexion", "Sign Out", "Ffeɣ"),
+                                                                fontSize = 12.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = Color(0xFFF43F5E),
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(14.dp))
+
+                                    // 3. Local Backup Card
                                     LiquidGlassCard(
                                         isDark = effectiveDark,
                                         tint = GlassTint.FROST,
@@ -1211,27 +1578,32 @@ fun SettingsDrawer(
                                                 Box(
                                                     modifier = Modifier
                                                         .size(40.dp)
-                                                        .clip(CircleShape)
-                                                        .background(tertiaryAccent.copy(alpha = 0.14f)),
+                                                        .clip(RoundedCornerShape(12.dp))
+                                                        .background(Color(0xFF10B981).copy(alpha = 0.14f)),
                                                     contentAlignment = Alignment.Center
                                                 ) {
                                                     Icon(
                                                         imageVector = Icons.Rounded.SdStorage,
                                                         contentDescription = null,
-                                                        tint = tertiaryAccent,
+                                                        tint = Color(0xFF34D399),
                                                         modifier = Modifier.size(20.dp)
                                                     )
                                                 }
                                                 Column(modifier = Modifier.weight(1f)) {
                                                     Text(
-                                                        text = "Local Backup",
+                                                        text = tr(
+                                                            "النسخ الاحتياطي المحلي",
+                                                            "Sauvegarde locale",
+                                                            "Local Backup",
+                                                            "Aḥraz adigan"
+                                                        ),
                                                         fontSize = 14.sp,
-                                                        fontWeight = FontWeight.SemiBold,
+                                                        fontWeight = FontWeight.Bold,
                                                         color = textColor
                                                     )
                                                     Text(
                                                         text = tr(
-                                                            "حفظ واستعادة نسخة على الهاتف",
+                                                            "حفظ واستعادة نسخة احتياطية على الهاتف",
                                                             "Sauvegarder et restaurer sur l'appareil",
                                                             "Save & restore backup on device",
                                                             "Sekles d tririt n tɣellist deg tmacint"
@@ -1241,6 +1613,8 @@ fun SettingsDrawer(
                                                     )
                                                 }
                                             }
+
+                                            HorizontalDivider(color = dividerColor)
 
                                             Row(
                                                 modifier = Modifier.fillMaxWidth(),
@@ -1253,6 +1627,11 @@ fun SettingsDrawer(
                                                         .testTag("settings_local_backup_export")
                                                         .clip(RoundedCornerShape(14.dp))
                                                         .background(Color(0xFF10B981).copy(alpha = 0.15f))
+                                                        .border(
+                                                            1.dp,
+                                                            Color(0xFF10B981).copy(alpha = 0.34f),
+                                                            RoundedCornerShape(14.dp)
+                                                        )
                                                         .clickable {
                                                             exportBackupLauncher.launch(
                                                                 "Fluffy_Backup_${System.currentTimeMillis()}.json"
@@ -1273,7 +1652,9 @@ fun SettingsDrawer(
                                                         text = tr("حفظ نسخة", "Sauvegarder", "Save", "Sekles"),
                                                         fontSize = 12.sp,
                                                         fontWeight = FontWeight.SemiBold,
-                                                        color = Color(0xFF10B981)
+                                                        color = Color(0xFF10B981),
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
                                                     )
                                                 }
 
@@ -1283,7 +1664,12 @@ fun SettingsDrawer(
                                                         .defaultMinSize(minHeight = 44.dp)
                                                         .testTag("settings_local_backup_import")
                                                         .clip(RoundedCornerShape(14.dp))
-                                                        .background(primaryAccent.copy(alpha = 0.14f))
+                                                        .background(Color(0xFFF59E0B).copy(alpha = 0.15f))
+                                                        .border(
+                                                            1.dp,
+                                                            Color(0xFFF59E0B).copy(alpha = 0.34f),
+                                                            RoundedCornerShape(14.dp)
+                                                        )
                                                         .clickable {
                                                             importBackupLauncher.launch(arrayOf("application/json", "*/*"))
                                                         }
@@ -1294,7 +1680,7 @@ fun SettingsDrawer(
                                                     Icon(
                                                         imageVector = Icons.Rounded.FolderOpen,
                                                         contentDescription = null,
-                                                        tint = primaryAccent,
+                                                        tint = Color(0xFFF59E0B),
                                                         modifier = Modifier.size(16.dp)
                                                     )
                                                     Spacer(modifier = Modifier.width(6.dp))
@@ -1302,7 +1688,9 @@ fun SettingsDrawer(
                                                         text = tr("استعادة", "Restaurer", "Restore", "Err-d"),
                                                         fontSize = 12.sp,
                                                         fontWeight = FontWeight.SemiBold,
-                                                        color = primaryAccent
+                                                        color = Color(0xFFF59E0B),
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
                                                     )
                                                 }
                                             }
@@ -1978,6 +2366,32 @@ fun SettingsDrawer(
             onDismiss = { showPasskeySetupDialog = false }
         )
     }
+
+    // Profile Avatar, 50 Avatars, First/Last Name & Google Naming Sheet
+    AvatarPickerSheet(
+        visible = showAvatarPicker,
+        currentAvatarChoice = profileAvatarChoice,
+        googlePhotoUrl = profilePhotoUrl,
+        firstName = profileFirstName,
+        lastName = profileLastName,
+        displayName = profileDisplayName,
+        email = profileEmail,
+        useGoogleAccountName = useGoogleAccountName,
+        isGoogleLinked = isCloudSignedIn,
+        statusGlowColor = if (isCloudSignedIn) Color(0xFF34D399) else Color(0xFFF43F5E),
+        isDark = effectiveDark,
+        isArabic = isArabic,
+        onDismiss = { showAvatarPicker = false },
+        onUpdateProfileName = onUpdateProfileName,
+        onToggleUseGoogleAccountName = onToggleUseGoogleAccountName,
+        onPickCustomPhoto = onSelectCustomPhoto,
+        onSelectPresetAvatar = { presetId ->
+            onSelectPresetAvatar(presetId)
+            showAvatarPicker = false
+        },
+        onUseGooglePhoto = onUseGooglePhoto,
+        onUseInitials = onUseInitialsAvatar
+    )
 }
 
 @Composable

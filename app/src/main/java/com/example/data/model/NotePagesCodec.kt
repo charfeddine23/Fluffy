@@ -10,8 +10,12 @@ import java.util.Locale
  * - Hard limits per single note: up to 100 pages OR total UTF-8 size <= 900 KB (921,600 bytes).
  */
 object NotePagesCodec {
+    const val MAX_FREE_NOTE_PAGES = 5
     const val MAX_NOTE_PAGES = 100
     const val MAX_NOTE_BYTES = 900L * 1024L // 921,600 bytes (900 KB)
+
+    fun maxPagesForTier(isPremium: Boolean): Int =
+        if (isPremium) MAX_NOTE_PAGES else MAX_FREE_NOTE_PAGES
 
     fun decodePages(content: String, pagesJson: String): List<String> {
         if (pagesJson.isBlank()) {

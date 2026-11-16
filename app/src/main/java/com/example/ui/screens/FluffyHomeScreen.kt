@@ -134,9 +134,11 @@ fun FluffyHomeScreen(
     val currentUser by viewModel.currentUser.collectAsState()
     val cloudSyncStatus by viewModel.cloudSyncStatus.collectAsState()
     val isGuestMode by viewModel.isGuestMode.collectAsState()
+    val isPremium by viewModel.isPremium.collectAsState()
     val profileFirstName by viewModel.profileFirstName.collectAsState()
     val profileLastName by viewModel.profileLastName.collectAsState()
     val profileAvatarChoice by viewModel.profileAvatarChoice.collectAsState()
+    val useGoogleAccountName by viewModel.useGoogleAccountName.collectAsState()
     val archivedNotes by viewModel.archivedNotes.collectAsState()
     val trashedNotes by viewModel.trashedNotes.collectAsState()
 
@@ -1008,6 +1010,8 @@ fun FluffyHomeScreen(
                     updateState is UpdateUiState.NeedsInstallPermission,
                 onCheckForUpdates = { viewModel.checkForUpdates(isManual = true) },
                 isCloudSignedIn = currentUser != null,
+                isGuestMode = isGuestMode,
+                isPremium = isPremium,
                 cloudSyncStatus = cloudSyncStatus,
                 profileDisplayName = currentUser?.displayName,
                 profileEmail = currentUser?.email,
@@ -1015,9 +1019,18 @@ fun FluffyHomeScreen(
                 profileAvatarChoice = profileAvatarChoice,
                 profileFirstName = profileFirstName,
                 profileLastName = profileLastName,
+                useGoogleAccountName = useGoogleAccountName,
                 onOpenProfile = { viewModel.openAccountScreen() },
+                onOpenPremiumUpgrade = { viewModel.openPremiumUpgradeDialog() },
+                onUpdateProfileName = { first, last -> viewModel.updateProfileName(first, last) },
+                onToggleUseGoogleAccountName = { enabled -> viewModel.setUseGoogleAccountName(enabled) },
+                onSelectCustomPhoto = { uri -> viewModel.selectCustomProfilePhoto(uri) },
+                onSelectPresetAvatar = { presetId -> viewModel.selectPresetAvatar(presetId) },
+                onUseGooglePhoto = { viewModel.useGoogleProfilePhoto() },
+                onUseInitialsAvatar = { viewModel.resetProfileAvatarToInitials() },
                 onOpenCloudAuth = { viewModel.openAuthDialog() },
                 onSyncCloudNow = { viewModel.syncCloudNow() },
+                onSignOutFirebase = { viewModel.signOutFirebase() },
                 onExportLocalBackup = { uri -> viewModel.exportFullBackupToPhoneUri(uri) },
                 onImportLocalBackup = { uri -> viewModel.restoreFullBackupFromPhoneUri(uri) },
                 initialSubPage = requestedSettingsPage,

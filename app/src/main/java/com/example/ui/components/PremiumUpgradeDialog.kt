@@ -467,6 +467,23 @@ fun PremiumUpgradeDialog(
                                     color = titleColor
                                 )
                             }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = goldBright,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = if (isArabic) "إضافة حتى 100 صفحة في المسودة الواحدة (بدل 5)" else "Add up to 100 pages per draft (instead of 5)",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = titleColor
+                                )
+                            }
                         }
 
                         // Redeem Code Input Field
