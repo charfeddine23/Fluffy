@@ -1,29 +1,28 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -31,8 +30,10 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -47,9 +48,8 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.Email
 import androidx.compose.material.icons.rounded.Language
@@ -62,10 +62,10 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
@@ -78,7 +78,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -87,33 +87,38 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.R
 import com.example.auth.rememberGoogleSignInController
 import com.example.ui.glass.BlurryScreenEdges
 import com.example.ui.glass.LocalColoredContainerBorders
 import com.example.ui.theme.LocalAppLanguage
 import com.example.ui.theme.LocalAppThemePreset
 import com.example.ui.theme.tr
-import kotlin.math.cos
-import kotlin.math.sin
+import kotlin.math.min
+
+private enum class AuthCardStage {
+    WELCOME,
+    LOGIN,
+    REGISTER
+}
 
 @Composable
 fun AuthWelcomeScreen(
@@ -143,28 +148,32 @@ fun AuthWelcomeScreen(
     val coloredBorders = LocalColoredContainerBorders.current
     val currentLanguage = LocalAppLanguage.current
 
-    // Dynamic palette derived strictly from the active theme preset, replacing pink hues with crisp aqua/indigo
+    // Automatically apply active theme colors (replacing pink defaults with crisp theme accent)
     val bgBase by animateColorAsState(activePreset.background, tween(320), label = "auth_bg")
     val cardSurface by animateColorAsState(activePreset.surface, tween(320), label = "auth_card")
-    val fieldSurface by animateColorAsState(activePreset.surfaceVariant, tween(320), label = "auth_field")
-    val rawPrimary = replacePinkInAuth(activePreset.primary, if (effectiveDark) Color(0xFF38BDF8) else Color(0xFF0284C7))
-    val rawSecondary = replacePinkInAuth(activePreset.secondary, if (effectiveDark) Color(0xFF6366F1) else Color(0xFF4F46E5))
-    val rawTertiary = replacePinkInAuth(activePreset.tertiary, if (effectiveDark) Color(0xFF2DD4BF) else Color(0xFF0D9488))
+    val fieldSurface by animateColorAsState(
+        targetValue = if (effectiveDark) activePreset.surfaceVariant else Color.White,
+        animationSpec = tween(320),
+        label = "auth_field"
+    )
+    val rawPrimary = replacePinkInAuth(
+        activePreset.primary,
+        if (effectiveDark) Color(0xFF38BDF8) else Color(0xFF2196F3)
+    )
+    val rawSecondary = replacePinkInAuth(
+        activePreset.secondary,
+        if (effectiveDark) Color(0xFF6366F1) else Color(0xFF1E88E5)
+    )
     val primaryAccent by animateColorAsState(rawPrimary, tween(320), label = "auth_primary")
     val secondaryAccent by animateColorAsState(rawSecondary, tween(320), label = "auth_secondary")
-    val tertiaryAccent by animateColorAsState(rawTertiary, tween(320), label = "auth_tertiary")
     val textPrimary by animateColorAsState(activePreset.onSurface, tween(280), label = "auth_text")
     val textSecondary by animateColorAsState(activePreset.onSurfaceVariant, tween(280), label = "auth_subtext")
 
-    val orb1Color = replacePinkInAuth(activePreset.orb1, rawPrimary)
-    val orb2Color = replacePinkInAuth(activePreset.orb2, rawSecondary)
-    val orb3Color = replacePinkInAuth(activePreset.orb3, rawTertiary)
+    val accentForeground = if (primaryAccent.luminance() > 0.58f) Color(0xFF0F172A) else Color.White
 
-    val accentAvgLum = listOf(primaryAccent, secondaryAccent, tertiaryAccent).map { it.luminance() }.average()
-    val accentForeground = if (accentAvgLum > 0.56) Color(0xFF0F172A) else Color.White
-
-    var isSignUpMode by remember { mutableStateOf(false) }
-    var username by remember { mutableStateOf("") }
+    var authStage by remember { mutableStateOf(AuthCardStage.WELCOME) }
+    var firstName by remember { mutableStateOf("") }
+    var lastName by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
@@ -175,123 +184,111 @@ fun AuthWelcomeScreen(
 
     val displayedError = localValidationError ?: authErrorMessage ?: googleController.errorMessage
 
-    val usernameRequiredError = tr(
-        "يرجى كتابة اسم المستخدم (حقل إجباري لإنشاء الحساب)",
-        "Le nom d'utilisateur est requis pour créer un compte.",
-        "Username is required. Please enter your name to create an account.",
-        "Isem n useqdac ilaq i tmerna n umiḍan."
+    BackHandler(enabled = authStage != AuthCardStage.WELCOME) {
+        localValidationError = null
+        onClearAuthMessages()
+        googleController.clearError()
+        authStage = AuthCardStage.WELCOME
+    }
+
+    val nameRequiredError = tr(
+        "يرجى كتابة الاسم الأول واسم العائلة",
+        "Veuillez saisir votre prénom et votre nom.",
+        "Please enter your first and last name.",
+        "Ttxil-k sekcem isem-ik d twacult-ik."
     )
+
+    fun switchStage(target: AuthCardStage) {
+        focusManager.clearFocus()
+        localValidationError = null
+        onClearAuthMessages()
+        googleController.clearError()
+        authStage = target
+    }
 
     fun attemptSignUp() {
         focusManager.clearFocus()
-        if (username.trim().isEmpty()) {
-            localValidationError = usernameRequiredError
+        val combinedName = listOf(firstName.trim(), lastName.trim())
+            .filter { it.isNotEmpty() }
+            .joinToString(" ")
+        if (combinedName.isEmpty()) {
+            localValidationError = nameRequiredError
             return
         }
         localValidationError = null
-        onEmailSignUp(username, email, password, confirmPassword)
+        onEmailSignUp(combinedName, email, password, confirmPassword)
     }
 
-    // Ambient floating orbs tinted with the active theme's atmospheric orbs
-    val infiniteTransition = rememberInfiniteTransition(label = "theme_glass_aura")
-    val phase1 by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 6.28318f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(20000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "aura_phase_1"
+    // Animated backdrop circle position matching the reference mockup across the 3 stages
+    val circleXFraction by animateFloatAsState(
+        targetValue = when (authStage) {
+            AuthCardStage.LOGIN -> 0.14f
+            AuthCardStage.WELCOME -> 0.50f
+            AuthCardStage.REGISTER -> 0.86f
+        },
+        animationSpec = tween(520, easing = FastOutSlowInEasing),
+        label = "backdrop_circle_x"
     )
-    val pulse by infiniteTransition.animateFloat(
-        initialValue = 0.92f,
-        targetValue = 1.08f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(4200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "aura_pulse"
+    val circleYFraction by animateFloatAsState(
+        targetValue = when (authStage) {
+            AuthCardStage.LOGIN -> 0.34f
+            AuthCardStage.WELCOME -> 0.52f
+            AuthCardStage.REGISTER -> 0.56f
+        },
+        animationSpec = tween(520, easing = FastOutSlowInEasing),
+        label = "backdrop_circle_y"
+    )
+    val circleScale by animateFloatAsState(
+        targetValue = when (authStage) {
+            AuthCardStage.WELCOME -> 0.72f
+            AuthCardStage.LOGIN -> 0.88f
+            AuthCardStage.REGISTER -> 0.94f
+        },
+        animationSpec = tween(520, easing = FastOutSlowInEasing),
+        label = "backdrop_circle_scale"
     )
 
-    val neutralEdge = textPrimary.copy(alpha = if (effectiveDark) 0.16f else 0.11f)
-    val cardBorderBrush = if (coloredBorders) {
-        Brush.linearGradient(
-            colors = listOf(
-                textPrimary.copy(alpha = if (effectiveDark) 0.22f else 0.12f),
-                primaryAccent.copy(alpha = 0.45f),
-                secondaryAccent.copy(alpha = 0.48f),
-                textPrimary.copy(alpha = 0.10f)
-            ),
-            start = Offset.Zero,
-            end = Offset(900f, 1400f)
-        )
-    } else {
-        SolidColor(neutralEdge)
-    }
-
-    Box(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
             .background(bgBase)
     ) {
-        // Luminous Theme Orbs refracted behind the glass panels
+        val outerGlowTint = if (effectiveDark) primaryAccent.copy(alpha = 0.30f) else primaryAccent.copy(alpha = 0.22f)
+
+        // Signature large solid/themed decorative circle behind the floating card
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
-            val orbStrength = if (activePreset.isGlassStyle) 1f else 0.65f
+            val baseRadius = min(w, h) * 0.44f * circleScale
+            val center = Offset(w * circleXFraction, h * circleYFraction)
 
-            val orb1Center = Offset(
-                x = w * 0.18f + cos(phase1) * (w * 0.10f),
-                y = h * 0.16f + sin(phase1) * (h * 0.06f)
-            )
+            // Soft theme aura halo around the circle
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        orb1Color.copy(alpha = 0.40f * orbStrength),
-                        primaryAccent.copy(alpha = 0.14f * orbStrength),
+                        primaryAccent.copy(alpha = if (effectiveDark) 0.24f else 0.18f),
                         Color.Transparent
                     ),
-                    center = orb1Center,
-                    radius = w * 0.72f * pulse
+                    center = center,
+                    radius = baseRadius * 1.38f
                 ),
-                center = orb1Center,
-                radius = w * 0.72f * pulse
+                center = center,
+                radius = baseRadius * 1.38f
             )
 
-            val orb2Center = Offset(
-                x = w * 0.85f - sin(phase1) * (w * 0.10f),
-                y = h * 0.34f + cos(phase1) * (h * 0.08f)
-            )
+            // Bold signature circle tinted with active theme primary color
             drawCircle(
-                brush = Brush.radialGradient(
+                brush = Brush.linearGradient(
                     colors = listOf(
-                        orb2Color.copy(alpha = 0.34f * orbStrength),
-                        secondaryAccent.copy(alpha = 0.10f * orbStrength),
-                        Color.Transparent
+                        primaryAccent,
+                        secondaryAccent.copy(alpha = 0.92f)
                     ),
-                    center = orb2Center,
-                    radius = w * 0.65f
+                    start = Offset(center.x - baseRadius, center.y - baseRadius),
+                    end = Offset(center.x + baseRadius, center.y + baseRadius)
                 ),
-                center = orb2Center,
-                radius = w * 0.65f
-            )
-
-            val orb3Center = Offset(
-                x = w * 0.42f + cos(phase1 * 0.8f) * (w * 0.12f),
-                y = h * 0.88f
-            )
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        orb3Color.copy(alpha = 0.20f * orbStrength),
-                        tertiaryAccent.copy(alpha = 0.08f * orbStrength),
-                        Color.Transparent
-                    ),
-                    center = orb3Center,
-                    radius = w * 0.62f * (2f - pulse)
-                ),
-                center = orb3Center,
-                radius = w * 0.62f * (2f - pulse)
+                center = center,
+                radius = baseRadius,
+                alpha = if (effectiveDark) 0.82f else 0.94f
             )
         }
 
@@ -302,72 +299,91 @@ fun AuthWelcomeScreen(
                 .windowInsetsPadding(WindowInsets.navigationBars)
                 .imePadding()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 12.dp),
+                .padding(horizontal = 24.dp, vertical = 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Subtle Top Action Row: Theme mode toggle + Language toggle
+            // Compact Top Controls Bar (Back / Theme Toggle / Language Pill)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .widthIn(max = 440.dp),
+                    .widthIn(max = 400.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
-                    modifier = Modifier
-                        .defaultMinSize(minWidth = 48.dp, minHeight = 40.dp)
-                        .clip(CircleShape)
-                        .background(cardSurface.copy(alpha = if (effectiveDark) 0.74f else 0.88f))
-                        .border(
-                            width = 1.dp,
-                            brush = if (coloredBorders) {
-                                Brush.horizontalGradient(
-                                    listOf(
-                                        textPrimary.copy(alpha = 0.16f),
-                                        secondaryAccent.copy(alpha = 0.36f)
-                                    )
-                                )
-                            } else {
-                                SolidColor(neutralEdge)
-                            },
-                            shape = CircleShape
-                        )
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = ripple(bounded = true),
-                            onClick = onToggleTheme
-                        )
-                        .padding(horizontal = 12.dp),
-                    contentAlignment = Alignment.Center
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(
-                        imageVector = if (effectiveDark) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
-                        contentDescription = tr("تبديل المظهر", "Changer le thème", "Switch theme", "Senfel asentel"),
-                        tint = primaryAccent,
-                        modifier = Modifier.size(18.dp)
-                    )
+                    AnimatedVisibility(visible = authStage != AuthCardStage.WELCOME) {
+                        Box(
+                            modifier = Modifier
+                                .defaultMinSize(minWidth = 44.dp, minHeight = 40.dp)
+                                .shadow(
+                                    elevation = 4.dp,
+                                    shape = CircleShape,
+                                    ambientColor = outerGlowTint,
+                                    spotColor = outerGlowTint
+                                )
+                                .clip(CircleShape)
+                                .background(cardSurface.copy(alpha = 0.95f))
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = ripple(bounded = true)
+                                ) {
+                                    switchStage(AuthCardStage.WELCOME)
+                                }
+                                .padding(horizontal = 12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                                contentDescription = tr("رجوع", "Retour", "Back", "Uɣal"),
+                                tint = textPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .defaultMinSize(minWidth = 44.dp, minHeight = 40.dp)
+                            .shadow(
+                                elevation = 4.dp,
+                                shape = CircleShape,
+                                ambientColor = outerGlowTint,
+                                spotColor = outerGlowTint
+                            )
+                            .clip(CircleShape)
+                            .background(cardSurface.copy(alpha = 0.95f))
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = ripple(bounded = true),
+                                onClick = onToggleTheme
+                            )
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (effectiveDark) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
+                            contentDescription = tr("تبديل المظهر", "Changer le thème", "Switch theme", "Senfel asentel"),
+                            tint = primaryAccent,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
 
                 Row(
                     modifier = Modifier
                         .defaultMinSize(minHeight = 40.dp)
                         .testTag("welcome_language_toggle")
-                        .clip(CircleShape)
-                        .background(cardSurface.copy(alpha = if (effectiveDark) 0.76f else 0.88f))
-                        .border(
-                            width = 1.dp,
-                            brush = if (coloredBorders) {
-                                Brush.horizontalGradient(
-                                    listOf(
-                                        textPrimary.copy(alpha = 0.18f),
-                                        primaryAccent.copy(alpha = 0.45f)
-                                    )
-                                )
-                            } else {
-                                SolidColor(neutralEdge)
-                            },
-                            shape = CircleShape
+                        .shadow(
+                            elevation = 4.dp,
+                            shape = CircleShape,
+                            ambientColor = outerGlowTint,
+                            spotColor = outerGlowTint
                         )
+                        .clip(CircleShape)
+                        .background(cardSurface.copy(alpha = 0.95f))
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = ripple(bounded = true),
@@ -392,621 +408,176 @@ fun AuthWelcomeScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(22.dp))
 
-            // Main Translucent Theme-Matched Glass Container Card
-            Box(
+            // Main Floating Card matching the reference design proportions
+            val cardBorderModifier = if (coloredBorders) {
+                Modifier.border(
+                    width = 1.dp,
+                    color = primaryAccent.copy(alpha = if (effectiveDark) 0.28f else 0.14f),
+                    shape = RoundedCornerShape(26.dp)
+                )
+            } else {
+                Modifier.border(
+                    width = 1.dp,
+                    color = textPrimary.copy(alpha = if (effectiveDark) 0.14f else 0.08f),
+                    shape = RoundedCornerShape(26.dp)
+                )
+            }
+
+            Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .widthIn(max = 440.dp)
+                    .widthIn(max = 380.dp)
+                    .heightIn(min = 520.dp)
                     .testTag("auth_welcome_card")
-                    .clip(RoundedCornerShape(28.dp))
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                cardSurface.copy(alpha = if (activePreset.isGlassStyle) 0.80f else 0.95f),
-                                cardSurface.copy(alpha = if (activePreset.isGlassStyle) 0.66f else 0.91f)
-                            )
-                        )
+                    .shadow(
+                        elevation = 22.dp,
+                        shape = RoundedCornerShape(26.dp),
+                        ambientColor = primaryAccent.copy(alpha = 0.28f),
+                        spotColor = primaryAccent.copy(alpha = 0.30f)
                     )
-                    .border(
-                        width = 1.3.dp,
-                        brush = cardBorderBrush,
-                        shape = RoundedCornerShape(28.dp)
-                    )
+                    .then(cardBorderModifier),
+                shape = RoundedCornerShape(26.dp),
+                color = cardSurface
             ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    // 1. COMPACT TOP HEADER: Branded App Icon + Concise Title & Tagline
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(
-                                RoundedCornerShape(
-                                    topStart = 28.dp,
-                                    topEnd = 28.dp,
-                                    bottomStart = 22.dp,
-                                    bottomEnd = 22.dp
-                                )
-                            )
-                            .background(
-                                Brush.linearGradient(
-                                    colors = listOf(
-                                        primaryAccent,
-                                        secondaryAccent,
-                                        tertiaryAccent
-                                    ),
-                                    start = Offset(0f, 0f),
-                                    end = Offset(920f, 360f)
-                                )
-                            )
-                            .drawBehind {
-                                drawCircle(
-                                    brush = Brush.radialGradient(
-                                        colors = listOf(
-                                            Color.White.copy(alpha = 0.20f),
-                                            Color.Transparent
-                                        ),
-                                        center = Offset(size.width * 0.14f, size.height * 0.20f),
-                                        radius = size.width * 0.48f
-                                    ),
-                                    center = Offset(size.width * 0.14f, size.height * 0.20f),
-                                    radius = size.width * 0.48f
-                                )
-                            }
-                            .border(
-                                width = 1.dp,
-                                brush = Brush.verticalGradient(
-                                    listOf(
-                                        Color.White.copy(alpha = if (coloredBorders) 0.34f else 0.18f),
-                                        Color.White.copy(alpha = 0.08f)
-                                    )
-                                ),
-                                shape = RoundedCornerShape(
-                                    topStart = 28.dp,
-                                    topEnd = 28.dp,
-                                    bottomStart = 22.dp,
-                                    bottomEnd = 22.dp
-                                )
-                            )
-                            .padding(horizontal = 18.dp, vertical = 14.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(14.dp)
-                        ) {
-                            // Fluffy App Icon Badge
-                            Box(
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .clip(RoundedCornerShape(15.dp))
-                                    .border(
-                                        width = 1.4.dp,
-                                        color = Color.White.copy(alpha = 0.45f),
-                                        shape = RoundedCornerShape(15.dp)
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Image(
-                                    painter = painterResource(id = R.drawable.ic_launcher_background),
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                                Image(
-                                    painter = painterResource(id = R.drawable.ic_launcher_foreground),
-                                    contentDescription = "Fluffy App Icon",
-                                    contentScale = ContentScale.Fit,
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .graphicsLayer {
-                                            scaleX = 1.24f
-                                            scaleY = 1.24f
-                                        }
-                                )
-                            }
-
-                            AnimatedContent(
-                                targetState = isSignUpMode,
-                                transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(180)) },
-                                modifier = Modifier.weight(1f),
-                                label = "header_title_anim"
-                            ) { signUp ->
-                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                    Text(
-                                        text = if (signUp) {
-                                            tr(
-                                                "إنشاء حساب Fluffy",
-                                                "Créer un compte Fluffy",
-                                                "Create Fluffy Account",
-                                                "Rnu amiḍan Fluffy"
-                                            )
-                                        } else {
-                                            tr(
-                                                "مرحباً بك في Fluffy",
-                                                "Bienvenue sur Fluffy",
-                                                "Sign In to Fluffy",
-                                                "Ansuf ɣer Fluffy"
-                                            )
-                                        },
-                                        style = MaterialTheme.typography.titleLarge.copy(
-                                            fontWeight = FontWeight.ExtraBold,
-                                            fontSize = 19.sp,
-                                            color = accentForeground
-                                        ),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = if (signUp) {
-                                            tr(
-                                                "احفظ وزامن جميع ملاحظاتك وخزنتك بأمان",
-                                                "Sauvegardez et synchronisez vos notes",
-                                                "Back up & sync your notes securely",
-                                                "Sekles udiɣ smezdi tira-k s tɣellist"
-                                            )
-                                        } else {
-                                            tr(
-                                                "مزامنة فورية لملاحظاتك وخزنتك السحابية",
-                                                "Synchronisation instantanée de vos notes",
-                                                "Instant cloud sync for notes & vault",
-                                                "Amtawi usrid n tira d uɣella"
-                                            )
-                                        },
-                                        style = MaterialTheme.typography.bodySmall.copy(
-                                            fontSize = 12.sp,
-                                            color = accentForeground.copy(alpha = 0.86f)
-                                        ),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // Form Body inside the Theme-Matched Glass Card
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 18.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        // Mandatory Username field displayed directly ABOVE Email when creating an account
-                        AnimatedVisibility(
-                            visible = isSignUpMode,
-                            enter = expandVertically() + fadeIn(),
-                            exit = shrinkVertically() + fadeOut()
-                        ) {
-                            Column {
-                                GlassRoundedTextField(
-                                    value = username,
-                                    onValueChange = {
-                                        username = it
-                                        localValidationError = null
-                                        onClearAuthMessages()
-                                        googleController.clearError()
-                                    },
-                                    label = tr("اسم المستخدم *", "Nom d'utilisateur *", "Username *", "Isem n useqdac *"),
-                                    placeholder = tr("أدخل اسمك", "Votre nom", "Enter your name", "Sekcem isem-ik"),
-                                    leadingIcon = Icons.Rounded.PersonOutline,
-                                    fieldSurface = fieldSurface,
-                                    primaryAccent = primaryAccent,
-                                    secondaryAccent = secondaryAccent,
-                                    textPrimary = textPrimary,
-                                    textSecondary = textSecondary,
-                                    isDark = effectiveDark,
-                                    coloredBorders = coloredBorders,
-                                    keyboardType = KeyboardType.Text,
-                                    imeAction = ImeAction.Next,
-                                    testTag = "auth_username_input"
-                                )
-                                Spacer(modifier = Modifier.height(12.dp))
-                            }
-                        }
-
-                        // 2. NEATLY ALIGNED INPUT FIELDS: Email & Password
-                        GlassRoundedTextField(
-                            value = email,
-                            onValueChange = {
-                                email = it
-                                localValidationError = null
-                                onClearAuthMessages()
-                                googleController.clearError()
-                            },
-                            label = tr("البريد الإلكتروني", "Adresse e-mail", "Email Address", "Imayl"),
-                            placeholder = "name@example.com",
-                            leadingIcon = Icons.Rounded.Email,
-                            fieldSurface = fieldSurface,
-                            primaryAccent = primaryAccent,
-                            secondaryAccent = secondaryAccent,
-                            textPrimary = textPrimary,
-                            textSecondary = textSecondary,
-                            isDark = effectiveDark,
-                            coloredBorders = coloredBorders,
-                            keyboardType = KeyboardType.Email,
-                            imeAction = ImeAction.Next,
-                            testTag = "auth_email_input"
-                        )
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        GlassRoundedTextField(
-                            value = password,
-                            onValueChange = {
-                                password = it
-                                onClearAuthMessages()
-                                googleController.clearError()
-                            },
-                            label = tr("كلمة المرور", "Mot de passe", "Password", "Awal uffir"),
-                            placeholder = "••••••••",
-                            leadingIcon = Icons.Rounded.Lock,
-                            fieldSurface = fieldSurface,
-                            primaryAccent = primaryAccent,
-                            secondaryAccent = secondaryAccent,
-                            textPrimary = textPrimary,
-                            textSecondary = textSecondary,
-                            isDark = effectiveDark,
-                            coloredBorders = coloredBorders,
-                            isPassword = true,
-                            passwordVisible = passwordVisible,
-                            onTogglePasswordVisibility = { passwordVisible = !passwordVisible },
-                            keyboardType = KeyboardType.Password,
-                            imeAction = if (isSignUpMode) ImeAction.Next else ImeAction.Done,
-                            onDone = {
-                                focusManager.clearFocus()
-                                if (!isSignUpMode && !isLoading) {
-                                    onEmailSignIn(email, password)
-                                }
-                            },
-                            testTag = "auth_password_input"
-                        )
-
-                        // Confirm Password in Sign-Up Mode
-                        AnimatedVisibility(
-                            visible = isSignUpMode,
-                            enter = expandVertically() + fadeIn(),
-                            exit = shrinkVertically() + fadeOut()
-                        ) {
-                            Column {
-                                Spacer(modifier = Modifier.height(12.dp))
-                                GlassRoundedTextField(
-                                    value = confirmPassword,
-                                    onValueChange = {
-                                        confirmPassword = it
-                                        onClearAuthMessages()
-                                    },
-                                    label = tr("تأكيد كلمة المرور", "Confirmer le mot de passe", "Confirm Password", "Sentem awal uffir"),
-                                    placeholder = "••••••••",
-                                    leadingIcon = Icons.Rounded.Lock,
-                                    fieldSurface = fieldSurface,
-                                    primaryAccent = primaryAccent,
-                                    secondaryAccent = secondaryAccent,
-                                    textPrimary = textPrimary,
-                                    textSecondary = textSecondary,
-                                    isDark = effectiveDark,
-                                    coloredBorders = coloredBorders,
-                                    isPassword = true,
-                                    passwordVisible = confirmPasswordVisible,
-                                    onTogglePasswordVisibility = { confirmPasswordVisible = !confirmPasswordVisible },
-                                    keyboardType = KeyboardType.Password,
-                                    imeAction = ImeAction.Done,
-                                    onDone = {
-                                        if (!isLoading) {
-                                            attemptSignUp()
-                                        }
-                                    },
-                                    testTag = "auth_confirm_password_input"
-                                )
-                            }
-                        }
-
-                        // Quick Link: "نسيت كلمة المرور؟"
-                        AnimatedVisibility(visible = !isSignUpMode) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 6.dp),
-                                horizontalArrangement = Arrangement.End
-                            ) {
-                                Text(
-                                    text = tr(
-                                        "نسيت كلمة المرور؟",
-                                        "Mot de passe oublié ?",
-                                        "Forgot password?",
-                                        "Tettud awal uffir?"
-                                    ),
-                                    fontSize = 12.5.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = primaryAccent,
-                                    modifier = Modifier
-                                        .testTag("auth_forgot_password_link")
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = ripple(bounded = true)
-                                        ) {
-                                            onClearAuthMessages()
-                                            showForgotPasswordDialog = true
-                                        }
-                                        .padding(horizontal = 8.dp, vertical = 6.dp)
-                                )
-                            }
-                        }
-
-                        // Inline Error / Info Banner
-                        AnimatedVisibility(
-                            visible = !displayedError.isNullOrBlank() || !authInfoMessage.isNullOrBlank()
-                        ) {
-                            val isErr = !displayedError.isNullOrBlank()
-                            val bannerColor = if (isErr) Color(0xFFF43F5E) else Color(0xFF10B981)
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 10.dp)
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .background(bannerColor.copy(alpha = 0.14f))
-                                    .border(
-                                        width = 1.dp,
-                                        color = bannerColor.copy(alpha = 0.42f),
-                                        shape = RoundedCornerShape(14.dp)
-                                    )
-                                    .padding(horizontal = 14.dp, vertical = 10.dp)
-                            ) {
-                                Text(
-                                    text = displayedError ?: authInfoMessage.orEmpty(),
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = if (isErr) {
-                                        if (effectiveDark) Color(0xFFFDA4AF) else Color(0xFFBE123C)
-                                    } else {
-                                        if (effectiveDark) Color(0xFF6EE7B7) else Color(0xFF047857)
-                                    },
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // 3. PRIMARY LOGIN BUTTON: Sleek Theme Gradient Pill
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(52.dp)
-                                .testTag("welcome_primary_login_button")
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(
-                                    Brush.horizontalGradient(
-                                        colors = listOf(
-                                            primaryAccent,
-                                            secondaryAccent,
-                                            tertiaryAccent
-                                        )
-                                    )
-                                )
-                                .border(
-                                    width = 1.1.dp,
-                                    brush = if (coloredBorders) {
-                                        Brush.horizontalGradient(
-                                            listOf(
-                                                Color.White.copy(alpha = 0.38f),
-                                                tertiaryAccent.copy(alpha = 0.50f),
-                                                Color.White.copy(alpha = 0.24f)
-                                            )
-                                        )
-                                    } else {
-                                        SolidColor(Color.White.copy(alpha = 0.22f))
-                                    },
-                                    shape = RoundedCornerShape(16.dp)
-                                )
-                                .clickable(
-                                    enabled = !isLoading,
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true, color = accentForeground)
-                                ) {
-                                    focusManager.clearFocus()
-                                    if (isSignUpMode) {
-                                        attemptSignUp()
-                                    } else {
-                                        localValidationError = null
-                                        onEmailSignIn(email, password)
-                                    }
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (isLoading) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(20.dp),
-                                        strokeWidth = 2.4.dp,
-                                        color = accentForeground
-                                    )
-                                    Text(
-                                        text = tr(
-                                            "جاري المصادقة...",
-                                            "Authentification...",
-                                            "Authenticating...",
-                                            "Asentem yetteddu..."
-                                        ),
-                                        fontSize = 14.5.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = accentForeground
-                                    )
-                                }
-                            } else {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Text(
-                                        text = if (isSignUpMode) {
-                                            tr("إنشاء حساب", "Créer un compte", "Create Account", "Rnu amiḍan")
-                                        } else {
-                                            tr("تسجيل الدخول", "Se connecter", "Sign In", "Kcem")
-                                        },
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        color = accentForeground
-                                    )
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
-                                        contentDescription = null,
-                                        tint = accentForeground,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // Divider
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            HorizontalDivider(
-                                modifier = Modifier.weight(1f),
-                                color = textPrimary.copy(alpha = 0.12f)
-                            )
-                            Text(
-                                text = tr(
-                                    "  أو المتابعة عبر  ",
-                                    "  OU CONTINUER AVEC  ",
-                                    "  OR CONTINUE WITH  ",
-                                    "  NEƔ KEMMEL S  "
-                                ),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = textSecondary
-                            )
-                            HorizontalDivider(
-                                modifier = Modifier.weight(1f),
-                                color = textPrimary.copy(alpha = 0.12f)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(14.dp))
-
-                        // 4. GOOGLE BUTTON: Clean Aligned Surface + Authentic Google Mark
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(50.dp)
-                                .testTag("welcome_google_sign_in_button")
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(fieldSurface.copy(alpha = if (effectiveDark) 0.74f else 0.92f))
-                                .border(
-                                    width = 1.1.dp,
-                                    brush = if (coloredBorders) {
-                                        Brush.horizontalGradient(
-                                            colors = listOf(
-                                                textPrimary.copy(alpha = 0.20f),
-                                                primaryAccent.copy(alpha = 0.38f),
-                                                secondaryAccent.copy(alpha = 0.42f),
-                                                textPrimary.copy(alpha = 0.14f)
-                                            )
-                                        )
-                                    } else {
-                                        SolidColor(neutralEdge)
-                                    },
-                                    shape = RoundedCornerShape(16.dp)
-                                )
-                                .clickable(
-                                    enabled = !isLoading,
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true, color = primaryAccent)
-                                ) {
+                AnimatedContent(
+                    targetState = authStage,
+                    transitionSpec = {
+                        val forward = targetState.ordinal >= initialState.ordinal
+                        val dir = if (forward) 1 else -1
+                        (slideInHorizontally(tween(300, easing = FastOutSlowInEasing)) { w -> dir * w / 4 } +
+                            fadeIn(tween(240))) togetherWith
+                            (slideOutHorizontally(tween(260)) { w -> -dir * w / 5 } +
+                                fadeOut(tween(180)))
+                    },
+                    label = "auth_stage_content"
+                ) { stage ->
+                    when (stage) {
+                        AuthCardStage.WELCOME -> {
+                            WelcomeLandingStage(
+                                primaryAccent = primaryAccent,
+                                accentForeground = accentForeground,
+                                textPrimary = textPrimary,
+                                textSecondary = textSecondary,
+                                fieldSurface = fieldSurface,
+                                isDark = effectiveDark,
+                                isLoading = isLoading,
+                                displayedError = displayedError,
+                                onRegisterNow = { switchStage(AuthCardStage.REGISTER) },
+                                onHaveAccount = { switchStage(AuthCardStage.LOGIN) },
+                                onGoogleSignIn = {
                                     onClearAuthMessages()
                                     googleController.startSignIn(isArabic = isArabic)
                                 }
-                                .padding(horizontal = 18.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(26.dp)
-                                        .clip(CircleShape)
-                                        .background(Color.White.copy(alpha = 0.96f)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    MultiColorGoogleGIcon(modifier = Modifier.size(17.dp))
+                            )
+                        }
+
+                        AuthCardStage.LOGIN -> {
+                            LoginCardStage(
+                                email = email,
+                                onEmailChange = {
+                                    email = it
+                                    localValidationError = null
+                                    onClearAuthMessages()
+                                    googleController.clearError()
+                                },
+                                password = password,
+                                onPasswordChange = {
+                                    password = it
+                                    localValidationError = null
+                                    onClearAuthMessages()
+                                    googleController.clearError()
+                                },
+                                passwordVisible = passwordVisible,
+                                onTogglePasswordVisibility = { passwordVisible = !passwordVisible },
+                                isLoading = isLoading,
+                                displayedError = displayedError,
+                                authInfoMessage = authInfoMessage,
+                                primaryAccent = primaryAccent,
+                                accentForeground = accentForeground,
+                                fieldSurface = fieldSurface,
+                                textPrimary = textPrimary,
+                                textSecondary = textSecondary,
+                                isDark = effectiveDark,
+                                coloredBorders = coloredBorders,
+                                onForgotPassword = {
+                                    onClearAuthMessages()
+                                    showForgotPasswordDialog = true
+                                },
+                                onSignIn = {
+                                    focusManager.clearFocus()
+                                    localValidationError = null
+                                    onEmailSignIn(email, password)
+                                },
+                                onSwitchToRegister = { switchStage(AuthCardStage.REGISTER) },
+                                onGoogleSignIn = {
+                                    onClearAuthMessages()
+                                    googleController.startSignIn(isArabic = isArabic)
                                 }
-                                Text(
-                                    text = tr(
-                                        "المتابعة باستخدام Google",
-                                        "Continuer avec Google",
-                                        "Continue with Google",
-                                        "Kemmel s Google"
-                                    ),
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = textPrimary
-                                )
-                            }
+                            )
+                        }
+
+                        AuthCardStage.REGISTER -> {
+                            RegisterCardStage(
+                                firstName = firstName,
+                                onFirstNameChange = {
+                                    firstName = it
+                                    localValidationError = null
+                                    onClearAuthMessages()
+                                    googleController.clearError()
+                                },
+                                lastName = lastName,
+                                onLastNameChange = {
+                                    lastName = it
+                                    localValidationError = null
+                                    onClearAuthMessages()
+                                    googleController.clearError()
+                                },
+                                email = email,
+                                onEmailChange = {
+                                    email = it
+                                    localValidationError = null
+                                    onClearAuthMessages()
+                                    googleController.clearError()
+                                },
+                                password = password,
+                                onPasswordChange = {
+                                    password = it
+                                    localValidationError = null
+                                    onClearAuthMessages()
+                                },
+                                confirmPassword = confirmPassword,
+                                onConfirmPasswordChange = {
+                                    confirmPassword = it
+                                    localValidationError = null
+                                    onClearAuthMessages()
+                                },
+                                passwordVisible = passwordVisible,
+                                onTogglePasswordVisibility = { passwordVisible = !passwordVisible },
+                                confirmPasswordVisible = confirmPasswordVisible,
+                                onToggleConfirmPasswordVisibility = {
+                                    confirmPasswordVisible = !confirmPasswordVisible
+                                },
+                                isLoading = isLoading,
+                                displayedError = displayedError,
+                                authInfoMessage = authInfoMessage,
+                                primaryAccent = primaryAccent,
+                                accentForeground = accentForeground,
+                                fieldSurface = fieldSurface,
+                                textPrimary = textPrimary,
+                                textSecondary = textSecondary,
+                                isDark = effectiveDark,
+                                coloredBorders = coloredBorders,
+                                onRegister = { attemptSignUp() },
+                                onSwitchToLogin = { switchStage(AuthCardStage.LOGIN) }
+                            )
                         }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // FOOTER QUICK LINK: "أنشئ حساباً الآن"
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .widthIn(max = 440.dp)
-                    .padding(bottom = 12.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = if (isSignUpMode) {
-                        tr("لديك حساب بالفعل؟", "Déjà inscrit ?", "Already have an account?", "Tesɛiḍ yakan amiḍan?")
-                    } else {
-                        tr("ليس لديك حساب؟", "Pas de compte ?", "Don't have an account?", "Ur tesɛiḍ ara amiḍan?")
-                    },
-                    fontSize = 13.sp,
-                    color = textSecondary
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = if (isSignUpMode) {
-                        tr("تسجيل الدخول", "Se connecter", "Sign In", "Kcem")
-                    } else {
-                        tr("أنشئ حساباً الآن", "Créer un compte", "Create an account now", "Rnu amiḍan tura")
-                    },
-                    fontSize = 13.5.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = primaryAccent,
-                    textDecoration = TextDecoration.Underline,
-                    modifier = Modifier
-                        .testTag("auth_footer_toggle_mode")
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = ripple(bounded = true)
-                        ) {
-                            localValidationError = null
-                            onClearAuthMessages()
-                            googleController.clearError()
-                            isSignUpMode = !isSignUpMode
-                        }
-                        .padding(horizontal = 8.dp, vertical = 6.dp)
-                )
-            }
+            Spacer(modifier = Modifier.height(20.dp))
         }
 
         // Password Reset Dialog styled to match the active theme
@@ -1054,15 +625,13 @@ fun AuthWelcomeScreen(
                             color = textSecondary,
                             lineHeight = 19.sp
                         )
-                        GlassRoundedTextField(
+                        MockupPillTextField(
                             value = resetEmail,
                             onValueChange = { resetEmail = it },
-                            label = tr("البريد الإلكتروني", "Adresse e-mail", "Email Address", "Imayl"),
-                            placeholder = "name@example.com",
+                            placeholder = tr("البريد الإلكتروني", "Adresse e-mail", "Email Address", "Imayl"),
                             leadingIcon = Icons.Rounded.Email,
                             fieldSurface = fieldSurface,
                             primaryAccent = primaryAccent,
-                            secondaryAccent = secondaryAccent,
                             textPrimary = textPrimary,
                             textSecondary = textSecondary,
                             isDark = effectiveDark,
@@ -1109,24 +678,715 @@ fun AuthWelcomeScreen(
     }
 }
 
-private fun replacePinkInAuth(color: Color, fallback: Color): Color {
-    val isPinkish = color.red > 0.65f &&
-        color.red > color.green + 0.22f &&
-        color.blue > 0.25f &&
-        color.red >= color.blue * 0.88f
-    return if (isPinkish) fallback else color
+@Composable
+private fun WelcomeLandingStage(
+    primaryAccent: Color,
+    accentForeground: Color,
+    textPrimary: Color,
+    textSecondary: Color,
+    fieldSurface: Color,
+    isDark: Boolean,
+    isLoading: Boolean,
+    displayedError: String?,
+    onRegisterNow: () -> Unit,
+    onHaveAccount: () -> Unit,
+    onGoogleSignIn: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 520.dp)
+    ) {
+        // Signature Top-Start Organic Cloud Blob (exact silhouette from the middle mockup card)
+        Canvas(
+            modifier = Modifier
+                .size(164.dp)
+                .align(Alignment.TopStart)
+        ) {
+            val w = size.width
+            val h = size.height
+            drawCircle(
+                color = primaryAccent,
+                radius = w * 0.48f,
+                center = Offset(w * 0.14f, h * 0.08f)
+            )
+            drawCircle(
+                color = primaryAccent,
+                radius = w * 0.30f,
+                center = Offset(w * 0.44f, h * 0.18f)
+            )
+            drawCircle(
+                color = primaryAccent,
+                radius = w * 0.32f,
+                center = Offset(w * 0.14f, h * 0.42f)
+            )
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 520.dp)
+                .padding(horizontal = 28.dp, vertical = 34.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Spacer(modifier = Modifier.height(64.dp))
+
+            Text(
+                text = tr("مرحباً بك", "Bienvenue", "Welcome", "Ansuf"),
+                fontSize = 27.sp,
+                fontWeight = FontWeight.Medium,
+                color = textPrimary,
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(2.dp))
+
+            Text(
+                text = buildAnnotatedString {
+                    withStyle(
+                        SpanStyle(
+                            color = textPrimary,
+                            fontSize = 27.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    ) {
+                        append(tr("في ", "sur ", "To ", "ɣer "))
+                    }
+                    withStyle(
+                        SpanStyle(
+                            color = primaryAccent,
+                            fontSize = 31.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontStyle = FontStyle.Italic,
+                            fontFamily = FontFamily.Cursive
+                        )
+                    ) {
+                        append("Fluffy !")
+                    }
+                },
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(40.dp))
+
+            // Primary Centered Pill: "Register now !"
+            ThemePillButton(
+                text = tr("سجّل الآن !", "S'inscrire !", "Register now !", "Jerred tura !"),
+                primaryAccent = primaryAccent,
+                accentForeground = accentForeground,
+                enabled = !isLoading,
+                onClick = onRegisterNow,
+                modifier = Modifier
+                    .widthIn(min = 196.dp)
+                    .testTag("welcome_register_now_button")
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Secondary Centered Pill: "Have an account"
+            ThemePillButton(
+                text = tr("لديّ حساب", "J'ai un compte", "Have an account", "Sɛiɣ amiḍan"),
+                primaryAccent = primaryAccent,
+                accentForeground = accentForeground,
+                enabled = !isLoading,
+                onClick = onHaveAccount,
+                modifier = Modifier
+                    .widthIn(min = 196.dp)
+                    .testTag("welcome_have_account_button")
+            )
+
+            if (!displayedError.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(18.dp))
+                InlineAuthBanner(
+                    message = displayedError,
+                    isError = true,
+                    isDark = isDark
+                )
+            }
+
+            Spacer(modifier = Modifier.height(34.dp))
+
+            // Subtle Google option at bottom of landing card
+            GooglePillButton(
+                label = tr(
+                    "المتابعة باستخدام Google",
+                    "Continuer avec Google",
+                    "Continue with Google",
+                    "Kemmel s Google"
+                ),
+                fieldSurface = fieldSurface,
+                primaryAccent = primaryAccent,
+                textPrimary = textPrimary,
+                isDark = isDark,
+                isLoading = isLoading,
+                onClick = onGoogleSignIn
+            )
+        }
+    }
 }
 
 @Composable
-private fun GlassRoundedTextField(
-    value: String,
-    onValueChange: (String) -> Unit,
+private fun LoginCardStage(
+    email: String,
+    onEmailChange: (String) -> Unit,
+    password: String,
+    onPasswordChange: (String) -> Unit,
+    passwordVisible: Boolean,
+    onTogglePasswordVisibility: () -> Unit,
+    isLoading: Boolean,
+    displayedError: String?,
+    authInfoMessage: String?,
+    primaryAccent: Color,
+    accentForeground: Color,
+    fieldSurface: Color,
+    textPrimary: Color,
+    textSecondary: Color,
+    isDark: Boolean,
+    coloredBorders: Boolean,
+    onForgotPassword: () -> Unit,
+    onSignIn: () -> Unit,
+    onSwitchToRegister: () -> Unit,
+    onGoogleSignIn: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 520.dp)
+            .padding(horizontal = 26.dp, vertical = 32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Centered Brand Wordmark ("Fluffy") in script style like "BenApp"
+        Text(
+            text = "Fluffy",
+            fontSize = 34.sp,
+            fontWeight = FontWeight.ExtraBold,
+            fontStyle = FontStyle.Italic,
+            fontFamily = FontFamily.Cursive,
+            color = primaryAccent,
+            textAlign = TextAlign.Center
+        )
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        // Left/Start-aligned Login Header
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.Start
+        ) {
+            Text(
+                text = tr("تسجيل الدخول", "Connexion", "Login", "Anekcum"),
+                fontSize = 26.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = textPrimary
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = tr(
+                    "سجّل دخولك للمتابعة",
+                    "Connectez-vous pour continuer",
+                    "Sign in to continue",
+                    "Kcem akken ad tkemmleḍ"
+                ),
+                fontSize = 13.sp,
+                color = textSecondary
+            )
+        }
+
+        Spacer(modifier = Modifier.height(26.dp))
+
+        // Pill Field 1: Email
+        MockupPillTextField(
+            value = email,
+            onValueChange = onEmailChange,
+            placeholder = tr("البريد الإلكتروني", "Adresse e-mail", "Your Email Address", "Imayl-ik"),
+            leadingIcon = Icons.Rounded.Email,
+            fieldSurface = fieldSurface,
+            primaryAccent = primaryAccent,
+            textPrimary = textPrimary,
+            textSecondary = textSecondary,
+            isDark = isDark,
+            coloredBorders = coloredBorders,
+            keyboardType = KeyboardType.Email,
+            imeAction = ImeAction.Next,
+            testTag = "auth_email_input"
+        )
+
+        Spacer(modifier = Modifier.height(18.dp))
+
+        // Pill Field 2: Password
+        MockupPillTextField(
+            value = password,
+            onValueChange = onPasswordChange,
+            placeholder = tr("كلمة المرور", "Mot de passe", "Password", "Awal uffir"),
+            leadingIcon = Icons.Rounded.Lock,
+            fieldSurface = fieldSurface,
+            primaryAccent = primaryAccent,
+            textPrimary = textPrimary,
+            textSecondary = textSecondary,
+            isDark = isDark,
+            coloredBorders = coloredBorders,
+            isPassword = true,
+            passwordVisible = passwordVisible,
+            onTogglePasswordVisibility = onTogglePasswordVisibility,
+            keyboardType = KeyboardType.Password,
+            imeAction = ImeAction.Done,
+            onDone = {
+                if (!isLoading) onSignIn()
+            },
+            testTag = "auth_password_input"
+        )
+
+        // Forgot password link neatly aligned at end
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp),
+            horizontalArrangement = Arrangement.End
+        ) {
+            Text(
+                text = tr(
+                    "نسيت كلمة المرور؟",
+                    "Mot de passe oublié ?",
+                    "Forgot password?",
+                    "Tettud awal uffir?"
+                ),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                color = textSecondary,
+                modifier = Modifier
+                    .testTag("auth_forgot_password_link")
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = ripple(bounded = true),
+                        onClick = onForgotPassword
+                    )
+                    .padding(horizontal = 6.dp, vertical = 4.dp)
+            )
+        }
+
+        if (!displayedError.isNullOrBlank() || !authInfoMessage.isNullOrBlank()) {
+            Spacer(modifier = Modifier.height(10.dp))
+            InlineAuthBanner(
+                message = displayedError ?: authInfoMessage.orEmpty(),
+                isError = !displayedError.isNullOrBlank(),
+                isDark = isDark
+            )
+        }
+
+        Spacer(modifier = Modifier.height(26.dp))
+
+        // Bottom Row matching the Login mockup: "Register" link on start + "Sign in" pill on end
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = tr("إنشاء حساب", "S'inscrire", "Register", "Jerred"),
+                fontSize = 14.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = primaryAccent,
+                modifier = Modifier
+                    .testTag("auth_footer_toggle_mode")
+                    .defaultMinSize(minHeight = 48.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = ripple(bounded = true),
+                        onClick = onSwitchToRegister
+                    )
+                    .padding(horizontal = 8.dp, vertical = 12.dp)
+            )
+
+            ThemePillButton(
+                text = if (isLoading) {
+                    tr("جاري...", "Chargement...", "Signing in...", "Yetteddu...")
+                } else {
+                    tr("تسجيل الدخول", "Connexion", "Sign in", "Kcem")
+                },
+                primaryAccent = primaryAccent,
+                accentForeground = accentForeground,
+                enabled = !isLoading,
+                isLoading = isLoading,
+                onClick = onSignIn,
+                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 10.dp),
+                modifier = Modifier.testTag("welcome_primary_login_button")
+            )
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        GooglePillButton(
+            label = tr(
+                "المتابعة باستخدام Google",
+                "Continuer avec Google",
+                "Continue with Google",
+                "Kemmel s Google"
+            ),
+            fieldSurface = fieldSurface,
+            primaryAccent = primaryAccent,
+            textPrimary = textPrimary,
+            isDark = isDark,
+            isLoading = isLoading,
+            onClick = onGoogleSignIn
+        )
+    }
+}
+
+@Composable
+private fun RegisterCardStage(
+    firstName: String,
+    onFirstNameChange: (String) -> Unit,
+    lastName: String,
+    onLastNameChange: (String) -> Unit,
+    email: String,
+    onEmailChange: (String) -> Unit,
+    password: String,
+    onPasswordChange: (String) -> Unit,
+    confirmPassword: String,
+    onConfirmPasswordChange: (String) -> Unit,
+    passwordVisible: Boolean,
+    onTogglePasswordVisibility: () -> Unit,
+    confirmPasswordVisible: Boolean,
+    onToggleConfirmPasswordVisibility: () -> Unit,
+    isLoading: Boolean,
+    displayedError: String?,
+    authInfoMessage: String?,
+    primaryAccent: Color,
+    accentForeground: Color,
+    fieldSurface: Color,
+    textPrimary: Color,
+    textSecondary: Color,
+    isDark: Boolean,
+    coloredBorders: Boolean,
+    onRegister: () -> Unit,
+    onSwitchToLogin: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 520.dp)
+            .padding(horizontal = 26.dp, vertical = 30.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Start-aligned "Register" heading matching the right card in the reference image
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.Start
+        ) {
+            Text(
+                text = tr("إنشاء حساب", "Inscription", "Register", "Ajerred"),
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Medium,
+                color = textPrimary
+            )
+        }
+
+        Spacer(modifier = Modifier.height(22.dp))
+
+        // Pill Field 1: First Name
+        MockupPillTextField(
+            value = firstName,
+            onValueChange = onFirstNameChange,
+            placeholder = tr("الاسم الأول", "Prénom", "First name", "Isem amezwaru"),
+            leadingIcon = null,
+            fieldSurface = fieldSurface,
+            primaryAccent = primaryAccent,
+            textPrimary = textPrimary,
+            textSecondary = textSecondary,
+            isDark = isDark,
+            coloredBorders = coloredBorders,
+            keyboardType = KeyboardType.Text,
+            imeAction = ImeAction.Next,
+            testTag = "auth_username_input"
+        )
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // Pill Field 2: Last Name
+        MockupPillTextField(
+            value = lastName,
+            onValueChange = onLastNameChange,
+            placeholder = tr("اسم العائلة", "Nom", "Last name", "Isem n twacult"),
+            leadingIcon = null,
+            fieldSurface = fieldSurface,
+            primaryAccent = primaryAccent,
+            textPrimary = textPrimary,
+            textSecondary = textSecondary,
+            isDark = isDark,
+            coloredBorders = coloredBorders,
+            keyboardType = KeyboardType.Text,
+            imeAction = ImeAction.Next,
+            testTag = "auth_last_name_input"
+        )
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // Pill Field 3: Email Address
+        MockupPillTextField(
+            value = email,
+            onValueChange = onEmailChange,
+            placeholder = tr("البريد الإلكتروني", "Adresse e-mail", "Email address", "Imayl"),
+            leadingIcon = null,
+            fieldSurface = fieldSurface,
+            primaryAccent = primaryAccent,
+            textPrimary = textPrimary,
+            textSecondary = textSecondary,
+            isDark = isDark,
+            coloredBorders = coloredBorders,
+            keyboardType = KeyboardType.Email,
+            imeAction = ImeAction.Next,
+            testTag = "auth_email_input"
+        )
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // Pill Field 4: Password
+        MockupPillTextField(
+            value = password,
+            onValueChange = onPasswordChange,
+            placeholder = tr("كلمة المرور", "Mot de passe", "Password", "Awal uffir"),
+            leadingIcon = null,
+            fieldSurface = fieldSurface,
+            primaryAccent = primaryAccent,
+            textPrimary = textPrimary,
+            textSecondary = textSecondary,
+            isDark = isDark,
+            coloredBorders = coloredBorders,
+            isPassword = true,
+            passwordVisible = passwordVisible,
+            onTogglePasswordVisibility = onTogglePasswordVisibility,
+            keyboardType = KeyboardType.Password,
+            imeAction = ImeAction.Next,
+            testTag = "auth_password_input"
+        )
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // Pill Field 5: Confirm Password
+        MockupPillTextField(
+            value = confirmPassword,
+            onValueChange = onConfirmPasswordChange,
+            placeholder = tr("تأكيد كلمة المرور", "Confirmer le mot de passe", "Confirm password", "Sentem awal uffir"),
+            leadingIcon = null,
+            fieldSurface = fieldSurface,
+            primaryAccent = primaryAccent,
+            textPrimary = textPrimary,
+            textSecondary = textSecondary,
+            isDark = isDark,
+            coloredBorders = coloredBorders,
+            isPassword = true,
+            passwordVisible = confirmPasswordVisible,
+            onTogglePasswordVisibility = onToggleConfirmPasswordVisibility,
+            keyboardType = KeyboardType.Password,
+            imeAction = ImeAction.Done,
+            onDone = {
+                if (!isLoading) onRegister()
+            },
+            testTag = "auth_confirm_password_input"
+        )
+
+        if (!displayedError.isNullOrBlank() || !authInfoMessage.isNullOrBlank()) {
+            Spacer(modifier = Modifier.height(12.dp))
+            InlineAuthBanner(
+                message = displayedError ?: authInfoMessage.orEmpty(),
+                isError = !displayedError.isNullOrBlank(),
+                isDark = isDark
+            )
+        }
+
+        Spacer(modifier = Modifier.height(26.dp))
+
+        // Bottom Row matching the Register mockup: "Login" link on start + "Register" pill on end
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = tr("تسجيل الدخول", "Connexion", "Login", "Anekcum"),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = primaryAccent,
+                modifier = Modifier
+                    .testTag("auth_footer_toggle_mode")
+                    .defaultMinSize(minHeight = 48.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = ripple(bounded = true),
+                        onClick = onSwitchToLogin
+                    )
+                    .padding(horizontal = 8.dp, vertical = 12.dp)
+            )
+
+            ThemePillButton(
+                text = if (isLoading) {
+                    tr("جاري...", "Création...", "Creating...", "Yetteddu...")
+                } else {
+                    tr("تسجيل", "S'inscrire", "Register", "Jerred")
+                },
+                primaryAccent = primaryAccent,
+                accentForeground = accentForeground,
+                enabled = !isLoading,
+                isLoading = isLoading,
+                onClick = onRegister,
+                contentPadding = PaddingValues(horizontal = 26.dp, vertical = 10.dp),
+                modifier = Modifier.testTag("welcome_primary_login_button")
+            )
+        }
+    }
+}
+
+@Composable
+private fun ThemePillButton(
+    text: String,
+    primaryAccent: Color,
+    accentForeground: Color,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    isLoading: Boolean = false,
+    contentPadding: PaddingValues = PaddingValues(horizontal = 24.dp, vertical = 11.dp)
+) {
+    Box(
+        modifier = modifier
+            .defaultMinSize(minHeight = 44.dp)
+            .shadow(
+                elevation = 10.dp,
+                shape = CircleShape,
+                ambientColor = primaryAccent.copy(alpha = 0.45f),
+                spotColor = primaryAccent.copy(alpha = 0.50f)
+            )
+            .clip(CircleShape)
+            .background(primaryAccent)
+            .clickable(
+                enabled = enabled,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = ripple(bounded = true, color = accentForeground),
+                onClick = onClick
+            )
+            .padding(contentPadding),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            if (isLoading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = accentForeground
+                )
+            }
+            Text(
+                text = text,
+                fontSize = 14.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = accentForeground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun GooglePillButton(
     label: String,
-    placeholder: String,
-    leadingIcon: ImageVector,
     fieldSurface: Color,
     primaryAccent: Color,
-    secondaryAccent: Color,
+    textPrimary: Color,
+    isDark: Boolean,
+    isLoading: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = 48.dp)
+            .testTag("welcome_google_sign_in_button")
+            .shadow(
+                elevation = 6.dp,
+                shape = CircleShape,
+                ambientColor = Color.Black.copy(alpha = if (isDark) 0.35f else 0.08f),
+                spotColor = Color.Black.copy(alpha = if (isDark) 0.35f else 0.10f)
+            )
+            .clip(CircleShape)
+            .background(fieldSurface)
+            .border(
+                width = 1.dp,
+                color = textPrimary.copy(alpha = if (isDark) 0.14f else 0.07f),
+                shape = CircleShape
+            )
+            .clickable(
+                enabled = !isLoading,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = ripple(bounded = true, color = primaryAccent),
+                onClick = onClick
+            )
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
+        MultiColorGoogleGIcon(modifier = Modifier.size(18.dp))
+        Spacer(modifier = Modifier.width(10.dp))
+        Text(
+            text = label,
+            fontSize = 13.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = textPrimary
+        )
+    }
+}
+
+@Composable
+private fun InlineAuthBanner(
+    message: String,
+    isError: Boolean,
+    isDark: Boolean
+) {
+    val bannerColor = if (isError) Color(0xFFF43F5E) else Color(0xFF10B981)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(bannerColor.copy(alpha = 0.13f))
+            .border(
+                width = 1.dp,
+                color = bannerColor.copy(alpha = 0.40f),
+                shape = RoundedCornerShape(14.dp)
+            )
+            .padding(horizontal = 14.dp, vertical = 9.dp)
+    ) {
+        Text(
+            text = message,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = if (isError) {
+                if (isDark) Color(0xFFFDA4AF) else Color(0xFFBE123C)
+            } else {
+                if (isDark) Color(0xFF6EE7B7) else Color(0xFF047857)
+            },
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+@Composable
+private fun MockupPillTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    leadingIcon: ImageVector?,
+    fieldSurface: Color,
+    primaryAccent: Color,
     textPrimary: Color,
     textSecondary: Color,
     isDark: Boolean,
@@ -1142,141 +1402,128 @@ private fun GlassRoundedTextField(
 ) {
     var isFocused by remember { mutableStateOf(false) }
 
-    val borderBrush = when {
-        isFocused && coloredBorders -> Brush.horizontalGradient(
-            listOf(primaryAccent, secondaryAccent, primaryAccent)
-        )
-        isFocused -> SolidColor(textPrimary.copy(alpha = 0.45f))
-        coloredBorders -> Brush.horizontalGradient(
-            listOf(
-                textPrimary.copy(alpha = if (isDark) 0.14f else 0.09f),
-                secondaryAccent.copy(alpha = 0.24f),
-                textPrimary.copy(alpha = 0.10f)
+    val borderWidth by animateDpAsState(
+        targetValue = if (isFocused) 1.4.dp else 0.8.dp,
+        animationSpec = tween(180),
+        label = "pill_field_border_w"
+    )
+    val borderColor by animateColorAsState(
+        targetValue = when {
+            isFocused && coloredBorders -> primaryAccent.copy(alpha = 0.80f)
+            isFocused -> textPrimary.copy(alpha = 0.45f)
+            else -> textPrimary.copy(alpha = if (isDark) 0.12f else 0.06f)
+        },
+        animationSpec = tween(180),
+        label = "pill_field_border_c"
+    )
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .then(if (testTag.isNotEmpty()) Modifier.testTag(testTag) else Modifier)
+            .shadow(
+                elevation = if (isFocused) 10.dp else 6.dp,
+                shape = CircleShape,
+                ambientColor = if (isFocused && coloredBorders) {
+                    primaryAccent.copy(alpha = 0.24f)
+                } else {
+                    Color.Black.copy(alpha = if (isDark) 0.35f else 0.07f)
+                },
+                spotColor = if (isFocused && coloredBorders) {
+                    primaryAccent.copy(alpha = 0.28f)
+                } else {
+                    Color.Black.copy(alpha = if (isDark) 0.35f else 0.09f)
+                }
             )
-        )
-        else -> SolidColor(textPrimary.copy(alpha = if (isDark) 0.16f else 0.11f))
-    }
-
-    Column(
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(5.dp)
+            .clip(CircleShape)
+            .background(fieldSurface)
+            .border(
+                width = borderWidth,
+                color = borderColor,
+                shape = CircleShape
+            )
+            .padding(
+                start = if (leadingIcon != null) 16.dp else 20.dp,
+                end = if (isPassword) 4.dp else 18.dp
+            ),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            text = label,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = if (isFocused) primaryAccent else textSecondary,
-            modifier = Modifier.padding(horizontal = 4.dp)
-        )
+        if (leadingIcon != null) {
+            Icon(
+                imageVector = leadingIcon,
+                contentDescription = placeholder,
+                tint = if (isFocused) primaryAccent else textSecondary.copy(alpha = 0.82f),
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+        }
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(52.dp)
-                .then(if (testTag.isNotEmpty()) Modifier.testTag(testTag) else Modifier)
-                .clip(RoundedCornerShape(16.dp))
-                .background(
-                    if (isFocused) fieldSurface.copy(alpha = 0.96f)
-                    else fieldSurface.copy(alpha = if (isDark) 0.72f else 0.88f)
-                )
-                .border(
-                    width = if (isFocused) 1.5.dp else 1.dp,
-                    brush = borderBrush,
-                    shape = RoundedCornerShape(16.dp)
-                )
-                .padding(start = 10.dp, end = if (isPassword || value.isNotEmpty()) 4.dp else 14.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Box(
+            modifier = Modifier.weight(1f),
+            contentAlignment = Alignment.CenterStart
         ) {
-            Box(
+            if (value.isEmpty()) {
+                Text(
+                    text = placeholder,
+                    fontSize = 13.5.sp,
+                    color = textSecondary.copy(alpha = 0.72f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                singleLine = true,
+                textStyle = TextStyle(
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = textPrimary
+                ),
+                cursorBrush = SolidColor(primaryAccent),
+                visualTransformation = if (isPassword && !passwordVisible) {
+                    PasswordVisualTransformation()
+                } else {
+                    VisualTransformation.None
+                },
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = keyboardType,
+                    imeAction = imeAction
+                ),
+                keyboardActions = KeyboardActions(
+                    onDone = { onDone() }
+                ),
                 modifier = Modifier
-                    .size(34.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(
-                        if (isFocused) primaryAccent.copy(alpha = 0.16f)
-                        else textPrimary.copy(alpha = if (isDark) 0.07f else 0.05f)
-                    ),
-                contentAlignment = Alignment.Center
+                    .fillMaxWidth()
+                    .onFocusChanged { isFocused = it.isFocused }
+            )
+        }
+
+        if (isPassword && onTogglePasswordVisibility != null) {
+            IconButton(
+                onClick = onTogglePasswordVisibility,
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("${testTag}_visibility_toggle")
             ) {
                 Icon(
-                    imageVector = leadingIcon,
-                    contentDescription = label,
-                    tint = if (isFocused) primaryAccent else textSecondary,
+                    imageVector = if (passwordVisible) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff,
+                    contentDescription = if (passwordVisible) "Hide password" else "Show password",
+                    tint = if (passwordVisible) primaryAccent else textSecondary.copy(alpha = 0.75f),
                     modifier = Modifier.size(18.dp)
                 )
             }
-
-            Spacer(modifier = Modifier.width(10.dp))
-
-            Box(
-                modifier = Modifier.weight(1f),
-                contentAlignment = Alignment.CenterStart
-            ) {
-                if (value.isEmpty()) {
-                    Text(
-                        text = placeholder,
-                        fontSize = 13.5.sp,
-                        color = textSecondary.copy(alpha = 0.62f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                BasicTextField(
-                    value = value,
-                    onValueChange = onValueChange,
-                    singleLine = true,
-                    textStyle = TextStyle(
-                        fontSize = 14.5.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = textPrimary
-                    ),
-                    cursorBrush = SolidColor(primaryAccent),
-                    visualTransformation = if (isPassword && !passwordVisible) {
-                        PasswordVisualTransformation()
-                    } else {
-                        VisualTransformation.None
-                    },
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = keyboardType,
-                        imeAction = imeAction
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onDone = { onDone() }
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .onFocusChanged { isFocused = it.isFocused }
-                )
-            }
-
-            if (isPassword && onTogglePasswordVisibility != null) {
-                IconButton(
-                    onClick = onTogglePasswordVisibility,
-                    modifier = Modifier
-                        .minimumInteractiveComponentSize()
-                        .testTag("${testTag}_visibility_toggle")
-                ) {
-                    Icon(
-                        imageVector = if (passwordVisible) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff,
-                        contentDescription = if (passwordVisible) "Hide password" else "Show password",
-                        tint = if (passwordVisible) primaryAccent else textSecondary,
-                        modifier = Modifier.size(19.dp)
-                    )
-                }
-            } else if (value.isNotEmpty()) {
-                IconButton(
-                    onClick = { onValueChange("") },
-                    modifier = Modifier.minimumInteractiveComponentSize()
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Close,
-                        contentDescription = "Clear",
-                        tint = textSecondary.copy(alpha = 0.72f),
-                        modifier = Modifier.size(17.dp)
-                    )
-                }
-            }
         }
     }
+}
+
+private fun replacePinkInAuth(color: Color, fallback: Color): Color {
+    val isPinkish = color.red > 0.65f &&
+        color.red > color.green + 0.22f &&
+        color.blue > 0.25f &&
+        color.red >= color.blue * 0.88f
+    return if (isPinkish) fallback else color
 }
 
 /**
