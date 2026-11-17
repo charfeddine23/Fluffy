@@ -27,23 +27,23 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.RestoreFromTrash
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sort
@@ -73,9 +73,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -126,6 +128,7 @@ fun ScannerHubScreen(
 
     var showCreateFolderDialog by remember { mutableStateOf(false) }
     var showSortMenu by remember { mutableStateOf(false) }
+    var showTagMenu by remember { mutableStateOf(false) }
     var showPdfToolsSheet by remember { mutableStateOf(false) }
 
     val galleryImportLauncher = rememberLauncherForActivityResult(
@@ -154,16 +157,20 @@ fun ScannerHubScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                    .padding(horizontal = 16.dp)
             ) {
-                // Header
+                // 1. Clean Minimal Top Bar (Back + Title + View Toggle + Trash)
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp, bottom = 12.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
                         IconButton(
                             onClick = {
                                 when {
@@ -176,315 +183,552 @@ fun ScannerHubScreen(
                                 }
                             },
                             modifier = Modifier
-                                .size(46.dp)
+                                .size(48.dp)
                                 .testTag("scanner_hub_back_btn")
                                 .scannerGlassSurface(CircleShape)
                         ) {
                             Icon(
-                                Icons.AutoMirrored.Filled.ArrowBack,
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = if (isArabic) "رجوع" else "Back",
                                 tint = ScannerGlassPalette.TextPrimary
                             )
                         }
-                        Spacer(modifier = Modifier.width(10.dp))
-                        ScannerLaserIcon(modifier = Modifier.size(30.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = when {
-                                    showTrash -> if (isArabic) "سلة المهملات (30 يوماً)" else "Recycle Bin (30 Days)"
+                                    showTrash -> if (isArabic) "سلة المهملات" else "Recycle Bin"
                                     currentFolderObj != null -> currentFolderObj.name
-                                    else -> if (isArabic) "ماسح Fluffy الاحترافي" else "Fluffy Doc Scanner"
+                                    else -> "Doc Scanner"
                                 },
                                 color = ScannerGlassPalette.TextPrimary,
                                 fontWeight = FontWeight.ExtraBold,
-                                fontSize = 17.sp,
+                                fontSize = 20.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = if (isArabic) "محلي 100% • PDF & OCR مشفّر" else "100% Offline • PDF, OCR & Vault",
-                                color = ScannerGlassPalette.CyanGlow,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium
+                                text = if (showTrash) {
+                                    if (isArabic) "تُحذف تلقائياً بعد 30 يوماً" else "Auto-deletes after 30 days"
+                                } else if (currentFolderObj != null) {
+                                    if (isArabic) "مجلد خاص • محلي 100%" else "Folder • 100% Offline"
+                                } else {
+                                    if (isArabic) "مستنداتك وملفات PDF محلياً 100%" else "100% Offline • PDF & OCR"
+                                },
+                                color = ScannerGlassPalette.TextSecondary,
+                                fontSize = 11.5.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        // PDF Tools Drawer trigger
-                        IconButton(
-                            onClick = { showPdfToolsSheet = true },
-                            modifier = Modifier
-                                .size(44.dp)
-                                .testTag("hub_pdf_tools_btn")
-                                .scannerGlassSurface(CircleShape, glowBorder = true)
-                        ) {
-                            Icon(Icons.Default.Build, contentDescription = "PDF Tools", tint = ScannerGlassPalette.CyanGlow)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (!showTrash) {
+                            IconButton(
+                                onClick = { scannerViewModel.isGridView.value = !isGridView },
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .scannerGlassSurface(CircleShape)
+                            ) {
+                                Icon(
+                                    imageVector = if (isGridView) Icons.Default.ViewAgenda else Icons.Default.GridView,
+                                    contentDescription = if (isArabic) "تغيير العرض" else "Toggle View",
+                                    tint = ScannerGlassPalette.TextPrimary
+                                )
+                            }
                         }
 
-                        // Recycle Bin toggle
                         IconButton(
                             onClick = { scannerViewModel.showTrashView.value = !showTrash },
                             modifier = Modifier
-                                .size(44.dp)
+                                .size(48.dp)
                                 .testTag("hub_trash_toggle_btn")
                                 .scannerGlassSurface(CircleShape, glowBorder = showTrash)
                         ) {
                             Icon(
-                                Icons.Default.DeleteOutline,
-                                contentDescription = "Trash",
+                                imageVector = Icons.Default.DeleteOutline,
+                                contentDescription = if (isArabic) "سلة المهملات" else "Recycle Bin",
                                 tint = if (showTrash) ScannerGlassPalette.RoseGlow else ScannerGlassPalette.TextSecondary
-                            )
-                        }
-
-                        // Grid / List Toggle
-                        IconButton(
-                            onClick = { scannerViewModel.isGridView.value = !isGridView },
-                            modifier = Modifier.size(44.dp).scannerGlassSurface(CircleShape)
-                        ) {
-                            Icon(
-                                imageVector = if (isGridView) Icons.Default.ViewAgenda else Icons.Default.GridView,
-                                contentDescription = "View Mode",
-                                tint = ScannerGlassPalette.TextPrimary
                             )
                         }
                     }
                 }
 
-                if (!showTrash) {
-                    // Smart Search Bar (Title + Tags + Extracted OCR Text) + Sort Dropdown
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                if (showTrash) {
+                    // Clean Recycle Bin View
+                    LazyColumn(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contentPadding = PaddingValues(top = 4.dp, bottom = 32.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        OutlinedTextField(
-                            value = searchQuery,
-                            onValueChange = { scannerViewModel.searchQuery.value = it },
-                            placeholder = {
-                                Text(
-                                    if (isArabic) "ابحث بالعنوان أو الوسم أو نص OCR..." else "Search title, tags, or OCR text...",
-                                    fontSize = 12.5.sp,
-                                    color = ScannerGlassPalette.TextSecondary
-                                )
-                            },
-                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = ScannerGlassPalette.CyanGlow) },
-                            singleLine = true,
-                            shape = RoundedCornerShape(18.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = ScannerGlassPalette.CyanGlow,
-                                unfocusedBorderColor = Color.White.copy(alpha = 0.20f),
-                                focusedContainerColor = ScannerGlassPalette.FrostedCardDark,
-                                unfocusedContainerColor = ScannerGlassPalette.FrostedCardDark,
-                                focusedTextColor = ScannerGlassPalette.TextPrimary,
-                                unfocusedTextColor = ScannerGlassPalette.TextPrimary
-                            ),
-                            modifier = Modifier.weight(1f)
-                        )
-
-                        Box {
-                            IconButton(
-                                onClick = { showSortMenu = true },
-                                modifier = Modifier
-                                    .size(52.dp)
-                                    .scannerGlassSurface(RoundedCornerShape(16.dp))
-                            ) {
-                                Icon(Icons.Default.Sort, contentDescription = "Sort", tint = ScannerGlassPalette.VioletGlow)
-                            }
-                            DropdownMenu(
-                                expanded = showSortMenu,
-                                onDismissRequest = { showSortMenu = false },
-                                containerColor = ScannerGlassPalette.MidnightNavy
-                            ) {
-                                SortOption.entries.forEach { opt ->
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                text = if (isArabic) opt.labelAr else opt.labelEn,
-                                                color = if (sortOption == opt) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.TextPrimary,
-                                                fontWeight = if (sortOption == opt) FontWeight.Bold else FontWeight.Normal
-                                            )
-                                        },
-                                        onClick = {
-                                            scannerViewModel.sortOption.value = opt
-                                            showSortMenu = false
-                                        }
+                        if (trashedDocs.isEmpty()) {
+                            item {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 48.dp)
+                                        .scannerGlassSurface(RoundedCornerShape(24.dp))
+                                        .padding(28.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.DeleteOutline,
+                                        contentDescription = null,
+                                        tint = ScannerGlassPalette.TextSecondary,
+                                        modifier = Modifier.size(44.dp)
                                     )
+                                    Text(
+                                        text = if (isArabic) "سلة المهملات فارغة" else "Recycle Bin is empty",
+                                        color = ScannerGlassPalette.TextPrimary,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 16.sp
+                                    )
+                                }
+                            }
+                        } else {
+                            items(trashedDocs, key = { it.id }) { doc ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .scannerGlassSurface(RoundedCornerShape(18.dp))
+                                        .padding(14.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = doc.title,
+                                            color = ScannerGlassPalette.TextPrimary,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 14.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = if (isArabic) "${doc.pageCount} صفحة • ${formatScannerBytes(doc.totalSizeBytes, true)}" else "${doc.pageCount} pages • ${formatScannerBytes(doc.totalSizeBytes, false)}",
+                                            color = ScannerGlassPalette.TextSecondary,
+                                            fontSize = 12.sp
+                                        )
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        IconButton(onClick = { scannerViewModel.restoreFromTrash(doc.id) }) {
+                                            Icon(Icons.Default.RestoreFromTrash, contentDescription = "Restore", tint = ScannerGlassPalette.EmeraldGlow)
+                                        }
+                                        IconButton(onClick = { scannerViewModel.deletePermanently(doc.id) }) {
+                                            Icon(Icons.Default.DeleteForever, contentDescription = "Delete Permanently", tint = ScannerGlassPalette.RoseGlow)
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
+                } else {
+                    // 2. Clean Search Bar (full width pill)
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { scannerViewModel.searchQuery.value = it },
+                        placeholder = {
+                            Text(
+                                text = if (isArabic) "ابحث في المستندات أو نصوص OCR..." else "Search documents or OCR text...",
+                                fontSize = 13.sp,
+                                color = ScannerGlassPalette.TextSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = null,
+                                tint = ScannerGlassPalette.CyanGlow
+                            )
+                        },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { scannerViewModel.searchQuery.value = "" }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = if (isArabic) "مسح البحث" else "Clear search",
+                                        tint = ScannerGlassPalette.TextSecondary
+                                    )
+                                }
+                            }
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(22.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = ScannerGlassPalette.CyanGlow.copy(alpha = 0.7f),
+                            unfocusedBorderColor = Color.White.copy(alpha = 0.14f),
+                            focusedContainerColor = ScannerGlassPalette.FrostedCardDark,
+                            unfocusedContainerColor = ScannerGlassPalette.FrostedCardDark,
+                            focusedTextColor = ScannerGlassPalette.TextPrimary,
+                            unfocusedTextColor = ScannerGlassPalette.TextPrimary
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
 
-                    // Filter Strip: Starred + Color-Coded Tag Pills + New Folder Button
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // 3. Structured Scrollable Content
+                    LazyColumn(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contentPadding = PaddingValues(bottom = 96.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
+                        // Quick Actions Bento Row (shown cleanly at top when not searching)
+                        if (searchQuery.isBlank() && currentFolderId == null) {
+                            item {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    HubQuickActionTile(
+                                        icon = Icons.Default.CameraAlt,
+                                        label = if (isArabic) "تصوير مستند" else "Scan",
+                                        accentColor = ScannerGlassPalette.CyanGlow,
+                                        highlighted = true,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("hub_open_camera_scanner_btn"),
+                                        onClick = { scannerViewModel.openCameraScanner(appendToDocId = null) }
+                                    )
+                                    HubQuickActionTile(
+                                        icon = Icons.Default.PhotoLibrary,
+                                        label = if (isArabic) "من المعرض" else "Import",
+                                        accentColor = ScannerGlassPalette.VioletGlow,
+                                        highlighted = false,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("hub_import_gallery_btn"),
+                                        onClick = {
+                                            galleryImportLauncher.launch(
+                                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                            )
+                                        }
+                                    )
+                                    HubQuickActionTile(
+                                        icon = Icons.Default.PictureAsPdf,
+                                        label = if (isArabic) "أدوات PDF" else "PDF Tools",
+                                        accentColor = ScannerGlassPalette.EmeraldGlow,
+                                        highlighted = false,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("hub_pdf_tools_btn"),
+                                        onClick = { showPdfToolsSheet = true }
+                                    )
+                                }
+                            }
+                        }
+
+                        // Compact Segmented Filter Bar (All / Starred / Tag Dropdown)
                         item {
                             Row(
-                                modifier = Modifier
-                                    .clip(CircleShape)
-                                    .scannerGlassSurface(CircleShape, glowBorder = onlyStarred)
-                                    .clickable { scannerViewModel.onlyStarredFilter.value = !onlyStarred }
-                                    .padding(horizontal = 12.dp, vertical = 7.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
-                                    imageVector = if (onlyStarred) Icons.Default.Star else Icons.Default.StarBorder,
-                                    contentDescription = null,
-                                    tint = ScannerGlassPalette.AmberGlow,
-                                    modifier = Modifier.size(15.dp)
-                                )
-                                Text(
-                                    text = if (isArabic) "المميزة" else "Starred",
-                                    color = if (onlyStarred) ScannerGlassPalette.AmberGlow else ScannerGlassPalette.TextPrimary,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-
-                        items(ScannerTagCatalog.presets) { preset ->
-                            val selected = selectedTag == preset.name
-                            val col = Color(preset.colorArgb.toInt())
-                            Box(
-                                modifier = Modifier
-                                    .clip(CircleShape)
-                                    .background(if (selected) col.copy(alpha = 0.28f) else ScannerGlassPalette.FrostedCardDark)
-                                    .border(1.dp, if (selected) col else Color.White.copy(alpha = 0.16f), CircleShape)
-                                    .clickable {
-                                        scannerViewModel.selectedTagFilter.value = if (selected) null else preset.name
-                                    }
-                                    .padding(horizontal = 12.dp, vertical = 7.dp)
-                            ) {
-                                Text(
-                                    text = preset.name,
-                                    color = if (selected) col else ScannerGlassPalette.TextSecondary,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-
-                        item {
-                            Row(
-                                modifier = Modifier
-                                    .clip(CircleShape)
-                                    .scannerGlassSurface(CircleShape)
-                                    .clickable { showCreateFolderDialog = true }
-                                    .padding(horizontal = 12.dp, vertical = 7.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(Icons.Default.CreateNewFolder, contentDescription = null, tint = ScannerGlassPalette.CyanGlow, modifier = Modifier.size(15.dp))
-                                Text(if (isArabic) "مجلد جديد" else "New Folder", color = ScannerGlassPalette.CyanGlow, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                            }
-                        }
-                    }
-
-                    // Subfolders Strip
-                    if (childFolders.isNotEmpty() && searchQuery.isBlank() && selectedTag == null && !onlyStarred) {
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            items(childFolders, key = { it.id }) { folder ->
-                                FolderCardPill(
-                                    folder = folder,
+                                FilterChipPill(
+                                    label = if (isArabic) "الكل" else "All",
+                                    selected = !onlyStarred && selectedTag == null,
+                                    accentColor = ScannerGlassPalette.CyanGlow,
                                     onClick = {
-                                        if (folder.isLocked && folder.id !in unlockedIds) {
-                                            onRequestProtectedAccess(folder.id) {
-                                                scannerViewModel.markProtectedUnlocked(folder.id)
-                                                scannerViewModel.currentFolderId.value = folder.id
-                                            }
-                                        } else {
-                                            scannerViewModel.currentFolderId.value = folder.id
-                                        }
-                                    },
-                                    onToggleLock = {
-                                        if (folder.isLocked && folder.id !in unlockedIds) {
-                                            onRequestProtectedAccess(folder.id) {
-                                                scannerViewModel.markProtectedUnlocked(folder.id)
-                                                scannerViewModel.toggleFolderLock(folder, false, isArabic)
-                                            }
-                                        } else {
-                                            scannerViewModel.toggleFolderLock(folder, !folder.isLocked, isArabic)
-                                        }
+                                        scannerViewModel.onlyStarredFilter.value = false
+                                        scannerViewModel.selectedTagFilter.value = null
                                     }
                                 )
+
+                                FilterChipPill(
+                                    label = if (isArabic) "المميزة" else "Starred",
+                                    icon = if (onlyStarred) Icons.Default.Star else Icons.Default.StarBorder,
+                                    selected = onlyStarred,
+                                    accentColor = ScannerGlassPalette.AmberGlow,
+                                    onClick = { scannerViewModel.onlyStarredFilter.value = !onlyStarred }
+                                )
+
+                                Box {
+                                    val activePreset = ScannerTagCatalog.presets.firstOrNull { it.name == selectedTag }
+                                    val tagAccent = activePreset?.let { Color(it.colorArgb.toInt()) } ?: ScannerGlassPalette.VioletGlow
+                                    Row(
+                                        modifier = Modifier
+                                            .minimumInteractiveComponentSize()
+                                            .clip(CircleShape)
+                                            .scannerGlassSurface(CircleShape, glowBorder = selectedTag != null)
+                                            .clickable { showTagMenu = true }
+                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                    ) {
+                                        if (activePreset != null) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(8.dp)
+                                                    .clip(CircleShape)
+                                                    .background(tagAccent)
+                                            )
+                                        }
+                                        Text(
+                                            text = selectedTag ?: if (isArabic) "الوسوم" else "Tags",
+                                            color = if (selectedTag != null) tagAccent else ScannerGlassPalette.TextSecondary,
+                                            fontSize = 12.5.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Icon(
+                                            imageVector = Icons.Default.ExpandMore,
+                                            contentDescription = null,
+                                            tint = ScannerGlassPalette.TextSecondary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+
+                                    DropdownMenu(
+                                        expanded = showTagMenu,
+                                        onDismissRequest = { showTagMenu = false },
+                                        containerColor = ScannerGlassPalette.MidnightNavy
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    text = if (isArabic) "كل الوسوم" else "All Tags",
+                                                    color = if (selectedTag == null) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.TextPrimary,
+                                                    fontWeight = if (selectedTag == null) FontWeight.Bold else FontWeight.Normal
+                                                )
+                                            },
+                                            onClick = {
+                                                scannerViewModel.selectedTagFilter.value = null
+                                                showTagMenu = false
+                                            }
+                                        )
+                                        ScannerTagCatalog.presets.forEach { preset ->
+                                            val dotColor = Color(preset.colorArgb.toInt())
+                                            val isSelected = selectedTag == preset.name
+                                            DropdownMenuItem(
+                                                leadingIcon = {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(10.dp)
+                                                            .clip(CircleShape)
+                                                            .background(dotColor)
+                                                    )
+                                                },
+                                                text = {
+                                                    Text(
+                                                        text = preset.name,
+                                                        color = if (isSelected) dotColor else ScannerGlassPalette.TextPrimary,
+                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                                    )
+                                                },
+                                                onClick = {
+                                                    scannerViewModel.selectedTagFilter.value = preset.name
+                                                    showTagMenu = false
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
-                    }
 
-                    // Documents Grid or List
-                    if (visibleDocs.isEmpty() && childFolders.isEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxWidth(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .scannerGlassSurface(RoundedCornerShape(26.dp), glowBorder = true)
-                                    .padding(24.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                        // Folders Section (Clean Header + Horizontal Cards)
+                        if (searchQuery.isBlank() && selectedTag == null && !onlyStarred) {
+                            item {
+                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = if (isArabic) "المجلدات" else "Folders",
+                                            color = ScannerGlassPalette.TextPrimary,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 15.sp
+                                        )
+                                        Row(
+                                            modifier = Modifier
+                                                .clip(CircleShape)
+                                                .clickable { showCreateFolderDialog = true }
+                                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.CreateNewFolder,
+                                                contentDescription = null,
+                                                tint = ScannerGlassPalette.CyanGlow,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Text(
+                                                text = if (isArabic) "مجلد جديد" else "New Folder",
+                                                color = ScannerGlassPalette.CyanGlow,
+                                                fontSize = 12.5.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+                                    }
+
+                                    if (childFolders.isNotEmpty()) {
+                                        LazyRow(
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            items(childFolders, key = { it.id }) { folder ->
+                                                FolderCard(
+                                                    folder = folder,
+                                                    onClick = {
+                                                        if (folder.isLocked && folder.id !in unlockedIds) {
+                                                            onRequestProtectedAccess(folder.id) {
+                                                                scannerViewModel.markProtectedUnlocked(folder.id)
+                                                                scannerViewModel.currentFolderId.value = folder.id
+                                                            }
+                                                        } else {
+                                                            scannerViewModel.currentFolderId.value = folder.id
+                                                        }
+                                                    },
+                                                    onToggleLock = {
+                                                        if (folder.isLocked && folder.id !in unlockedIds) {
+                                                            onRequestProtectedAccess(folder.id) {
+                                                                scannerViewModel.markProtectedUnlocked(folder.id)
+                                                                scannerViewModel.toggleFolderLock(folder, false, isArabic)
+                                                            }
+                                                        } else {
+                                                            scannerViewModel.toggleFolderLock(folder, !folder.isLocked, isArabic)
+                                                        }
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Documents Section Header + Sort Picker
+                        item {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                ScannerLaserIcon(modifier = Modifier.size(64.dp))
                                 Text(
-                                    text = if (isArabic) "لا توجد مستندات ممسوحة بعد" else "No Scanned Documents Yet",
+                                    text = if (isArabic) "المستندات (${visibleDocs.size})" else "Documents (${visibleDocs.size})",
                                     color = ScannerGlassPalette.TextPrimary,
-                                    fontSize = 17.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp
                                 )
-                                Text(
-                                    text = if (isArabic) {
-                                        "اضغط على زر التصوير بالأسفل لمسح الفواتير، العقود، البطاقات، أو الكتب محلياً 100%."
-                                    } else {
-                                        "Tap Scan Document below to scan receipts, ID cards, contracts, or books 100% offline."
-                                    },
-                                    color = ScannerGlassPalette.TextSecondary,
-                                    fontSize = 13.sp
-                                )
-                            }
-                        }
-                    } else if (isGridView) {
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(2),
-                            modifier = Modifier.weight(1f).fillMaxWidth(),
-                            contentPadding = PaddingValues(bottom = 100.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            items(visibleDocs, key = { it.id }) { doc ->
-                                DocumentGridCard(
-                                    doc = doc,
-                                    isArabic = isArabic,
-                                    isUnlocked = !doc.isLocked || doc.id in unlockedIds,
-                                    onClick = {
-                                        if (doc.isLocked && doc.id !in unlockedIds) {
-                                            onRequestProtectedAccess(doc.id) {
-                                                scannerViewModel.markProtectedUnlocked(doc.id)
-                                                scannerViewModel.openDocumentDetail(doc.id)
-                                            }
-                                        } else {
-                                            scannerViewModel.openDocumentDetail(doc.id)
+
+                                Box {
+                                    Row(
+                                        modifier = Modifier
+                                            .clip(CircleShape)
+                                            .scannerGlassSurface(CircleShape)
+                                            .clickable { showSortMenu = true }
+                                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Sort,
+                                            contentDescription = "Sort",
+                                            tint = ScannerGlassPalette.VioletGlow,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                        Text(
+                                            text = if (isArabic) sortOption.labelAr else sortOption.labelEn,
+                                            color = ScannerGlassPalette.TextSecondary,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
+                                    DropdownMenu(
+                                        expanded = showSortMenu,
+                                        onDismissRequest = { showSortMenu = false },
+                                        containerColor = ScannerGlassPalette.MidnightNavy
+                                    ) {
+                                        SortOption.entries.forEach { opt ->
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Text(
+                                                        text = if (isArabic) opt.labelAr else opt.labelEn,
+                                                        color = if (sortOption == opt) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.TextPrimary,
+                                                        fontWeight = if (sortOption == opt) FontWeight.Bold else FontWeight.Normal
+                                                    )
+                                                },
+                                                onClick = {
+                                                    scannerViewModel.sortOption.value = opt
+                                                    showSortMenu = false
+                                                }
+                                            )
                                         }
-                                    },
-                                    onToggleStar = { scannerViewModel.toggleStarred(doc) }
-                                )
+                                    }
+                                }
                             }
                         }
-                    } else {
-                        LazyColumn(
-                            modifier = Modifier.weight(1f).fillMaxWidth(),
-                            contentPadding = PaddingValues(bottom = 100.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
+
+                        // Documents Body: Empty State, Clean 2-Col Rows, or List Cards
+                        if (visibleDocs.isEmpty()) {
+                            item {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .scannerGlassSurface(RoundedCornerShape(24.dp))
+                                        .padding(horizontal = 24.dp, vertical = 32.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    ScannerLaserIcon(modifier = Modifier.size(56.dp))
+                                    Text(
+                                        text = if (isArabic) "لا توجد مستندات بعد" else "No Documents Yet",
+                                        color = ScannerGlassPalette.TextPrimary,
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = if (isArabic) {
+                                            "صوّر المستندات والبطاقات والكتب أو استوردها من المعرض للبدء."
+                                        } else {
+                                            "Scan receipts, ID cards, contracts, or import photos from your gallery."
+                                        },
+                                        color = ScannerGlassPalette.TextSecondary,
+                                        fontSize = 12.5.sp,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
+                        } else if (isGridView) {
+                            val rows = visibleDocs.chunked(2)
+                            items(rows, key = { chunk -> chunk.first().id }) { pair ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    pair.forEach { doc ->
+                                        DocumentGridCard(
+                                            doc = doc,
+                                            isArabic = isArabic,
+                                            isUnlocked = !doc.isLocked || doc.id in unlockedIds,
+                                            modifier = Modifier.weight(1f),
+                                            onClick = {
+                                                if (doc.isLocked && doc.id !in unlockedIds) {
+                                                    onRequestProtectedAccess(doc.id) {
+                                                        scannerViewModel.markProtectedUnlocked(doc.id)
+                                                        scannerViewModel.openDocumentDetail(doc.id)
+                                                    }
+                                                } else {
+                                                    scannerViewModel.openDocumentDetail(doc.id)
+                                                }
+                                            },
+                                            onToggleStar = { scannerViewModel.toggleStarred(doc) }
+                                        )
+                                    }
+                                    if (pair.size == 1) {
+                                        Spacer(modifier = Modifier.weight(1f))
+                                    }
+                                }
+                            }
+                        } else {
                             items(visibleDocs, key = { it.id }) { doc ->
                                 DocumentListCard(
                                     doc = doc,
@@ -505,112 +749,35 @@ fun ScannerHubScreen(
                             }
                         }
                     }
-                } else {
-                    // Recycle Bin (30-Day Retention)
-                    LazyColumn(
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                        contentPadding = PaddingValues(bottom = 100.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        if (trashedDocs.isEmpty()) {
-                            item {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .scannerGlassSurface(RoundedCornerShape(22.dp))
-                                        .padding(24.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = if (isArabic) "سلة المهملات فارغة" else "Recycle Bin is empty",
-                                        color = ScannerGlassPalette.TextSecondary
-                                    )
-                                }
-                            }
-                        } else {
-                            items(trashedDocs, key = { it.id }) { doc ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .scannerGlassSurface(RoundedCornerShape(18.dp))
-                                        .padding(12.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(doc.title, color = ScannerGlassPalette.TextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                        Text(
-                                            text = if (isArabic) "${doc.pageCount} صفحة • ${formatScannerBytes(doc.totalSizeBytes, true)}" else "${doc.pageCount} pages • ${formatScannerBytes(doc.totalSizeBytes, false)}",
-                                            color = ScannerGlassPalette.TextSecondary,
-                                            fontSize = 11.5.sp
-                                        )
-                                    }
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        IconButton(onClick = { scannerViewModel.restoreFromTrash(doc.id) }) {
-                                            Icon(Icons.Default.RestoreFromTrash, contentDescription = "Restore", tint = ScannerGlassPalette.EmeraldGlow)
-                                        }
-                                        IconButton(onClick = { scannerViewModel.deletePermanently(doc.id) }) {
-                                            Icon(Icons.Default.DeleteForever, contentDescription = "Delete Permanently", tint = ScannerGlassPalette.RoseGlow)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
                 }
             }
 
-            // Bottom Floating Action Dock (Scan Document + Gallery Import)
-            if (!showTrash) {
+            // Single Sleek Floating Scan FAB in corner when inside a subfolder or scrolling docs
+            if (!showTrash && (currentFolderId != null || visibleDocs.isNotEmpty())) {
                 Row(
                     modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(horizontal = 18.dp, vertical = 14.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .align(Alignment.BottomEnd)
+                        .padding(horizontal = 18.dp, vertical = 16.dp)
+                        .height(54.dp)
+                        .minimumInteractiveComponentSize()
+                        .clip(CircleShape)
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(ScannerGlassPalette.CyanGlow, ScannerGlassPalette.VioletGlow)
+                            )
+                        )
+                        .clickable { scannerViewModel.openCameraScanner(appendToDocId = null) }
+                        .padding(horizontal = 20.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    IconButton(
-                        onClick = {
-                            galleryImportLauncher.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                            )
-                        },
-                        modifier = Modifier
-                            .size(56.dp)
-                            .testTag("hub_import_gallery_btn")
-                            .scannerGlassSurface(CircleShape, glowBorder = true)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PhotoLibrary,
-                            contentDescription = if (isArabic) "استيراد صورة" else "Import Photo",
-                            tint = ScannerGlassPalette.VioletGlow
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier
-                            .height(58.dp)
-                            .minimumInteractiveComponentSize()
-                            .testTag("hub_open_camera_scanner_btn")
-                            .clip(CircleShape)
-                            .background(
-                                Brush.horizontalGradient(
-                                    listOf(ScannerGlassPalette.CyanGlow, ScannerGlassPalette.VioletGlow)
-                                )
-                            )
-                            .clickable { scannerViewModel.openCameraScanner(appendToDocId = null) }
-                            .padding(horizontal = 24.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(Icons.Default.CameraAlt, contentDescription = null, tint = Color(0xFF04101B))
-                        Text(
-                            text = if (isArabic) "تصوير مستند" else "Scan Document",
-                            color = Color(0xFF04101B),
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 15.sp
-                        )
-                    }
+                    Icon(Icons.Default.CameraAlt, contentDescription = null, tint = Color(0xFF04101B))
+                    Text(
+                        text = if (isArabic) "مسح" else "Scan",
+                        color = Color(0xFF04101B),
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 14.sp
+                    )
                 }
             }
         }
@@ -628,7 +795,12 @@ fun ScannerHubScreen(
                     .padding(18.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(if (isArabic) "إنشاء مجلد جديد" else "Create New Folder", color = ScannerGlassPalette.TextPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Text(
+                    text = if (isArabic) "إنشاء مجلد جديد" else "Create New Folder",
+                    color = ScannerGlassPalette.TextPrimary,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp
+                )
                 OutlinedTextField(
                     value = folderName,
                     onValueChange = { folderName = it },
@@ -673,7 +845,7 @@ fun ScannerHubScreen(
         }
     }
 
-    // PDF Utility Tools Sheet (Merge, Split, Compress, Password-Protect)
+    // PDF Utility Tools Sheet
     PdfToolsSheet(
         visible = showPdfToolsSheet,
         isArabic = isArabic,
@@ -686,7 +858,92 @@ fun ScannerHubScreen(
 }
 
 @Composable
-private fun FolderCardPill(
+private fun HubQuickActionTile(
+    icon: ImageVector,
+    label: String,
+    accentColor: Color,
+    highlighted: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = modifier
+            .height(84.dp)
+            .minimumInteractiveComponentSize()
+            .scannerGlassSurface(RoundedCornerShape(20.dp), glowBorder = highlighted)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(accentColor.copy(alpha = 0.16f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = accentColor,
+                modifier = Modifier.size(19.dp)
+            )
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = label,
+            color = ScannerGlassPalette.TextPrimary,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun FilterChipPill(
+    label: String,
+    selected: Boolean,
+    accentColor: Color,
+    icon: ImageVector? = null,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .minimumInteractiveComponentSize()
+            .clip(CircleShape)
+            .background(if (selected) accentColor.copy(alpha = 0.18f) else ScannerGlassPalette.FrostedCardDark)
+            .border(
+                width = 1.dp,
+                color = if (selected) accentColor.copy(alpha = 0.70f) else Color.White.copy(alpha = 0.12f),
+                shape = CircleShape
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (selected) accentColor else ScannerGlassPalette.TextSecondary,
+                modifier = Modifier.size(15.dp)
+            )
+        }
+        Text(
+            text = label,
+            color = if (selected) accentColor else ScannerGlassPalette.TextSecondary,
+            fontSize = 12.5.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+        )
+    }
+}
+
+@Composable
+private fun FolderCard(
     folder: ScannerFolderEntity,
     onClick: () -> Unit,
     onToggleLock: () -> Unit
@@ -694,23 +951,40 @@ private fun FolderCardPill(
     val color = Color(folder.colorHex.toInt())
     Row(
         modifier = Modifier
+            .width(156.dp)
             .minimumInteractiveComponentSize()
-            .scannerGlassSurface(RoundedCornerShape(16.dp), glowBorder = folder.isLocked)
+            .scannerGlassSurface(RoundedCornerShape(18.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Icon(Icons.Default.Folder, contentDescription = null, tint = color, modifier = Modifier.size(22.dp))
-        Text(folder.name, color = ScannerGlassPalette.TextPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-        Icon(
-            imageVector = Icons.Default.Lock,
-            contentDescription = "Lock folder",
-            tint = if (folder.isLocked) ScannerGlassPalette.EmeraldGlow else ScannerGlassPalette.TextSecondary.copy(alpha = 0.5f),
-            modifier = Modifier
-                .size(16.dp)
-                .clickable(onClick = onToggleLock)
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.weight(1f)
+        ) {
+            Icon(Icons.Default.Folder, contentDescription = null, tint = color, modifier = Modifier.size(22.dp))
+            Text(
+                text = folder.name,
+                color = ScannerGlassPalette.TextPrimary,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        IconButton(
+            onClick = onToggleLock,
+            modifier = Modifier.size(28.dp)
+        ) {
+            Icon(
+                imageVector = if (folder.isLocked) Icons.Default.Lock else Icons.Default.LockOpen,
+                contentDescription = "Lock folder",
+                tint = if (folder.isLocked) ScannerGlassPalette.EmeraldGlow else ScannerGlassPalette.TextSecondary.copy(alpha = 0.5f),
+                modifier = Modifier.size(15.dp)
+            )
+        }
     }
 }
 
@@ -719,13 +993,13 @@ private fun DocumentGridCard(
     doc: ScannedDocumentEntity,
     isArabic: Boolean,
     isUnlocked: Boolean,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
     onToggleStar: () -> Unit
 ) {
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .scannerGlassSurface(RoundedCornerShape(20.dp), glowBorder = doc.isStarred || doc.isLocked)
+        modifier = modifier
+            .scannerGlassSurface(RoundedCornerShape(20.dp))
             .clickable(onClick = onClick)
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -733,13 +1007,13 @@ private fun DocumentGridCard(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(132.dp)
+                .height(136.dp)
                 .clip(RoundedCornerShape(14.dp))
                 .background(Color(0xFF0A1224)),
             contentAlignment = Alignment.Center
         ) {
             if (!isUnlocked) {
-                Icon(Icons.Default.Lock, contentDescription = "Locked", tint = ScannerGlassPalette.EmeraldGlow, modifier = Modifier.size(38.dp))
+                Icon(Icons.Default.Lock, contentDescription = "Locked", tint = ScannerGlassPalette.EmeraldGlow, modifier = Modifier.size(36.dp))
             } else if (doc.coverThumbnailPath.isNotBlank() && File(doc.coverThumbnailPath).exists()) {
                 Image(
                     painter = rememberAsyncImagePainter(File(doc.coverThumbnailPath)),
@@ -748,7 +1022,7 @@ private fun DocumentGridCard(
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
-                ScannerLaserIcon(modifier = Modifier.size(44.dp))
+                ScannerLaserIcon(modifier = Modifier.size(40.dp))
             }
 
             Box(
@@ -757,7 +1031,7 @@ private fun DocumentGridCard(
                     .padding(6.dp)
                     .clip(CircleShape)
                     .background(Color.Black.copy(alpha = 0.65f))
-                    .padding(horizontal = 7.dp, vertical = 2.dp)
+                    .padding(horizontal = 8.dp, vertical = 2.dp)
             ) {
                 Text("${doc.pageCount}p", color = ScannerGlassPalette.CyanGlow, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             }
@@ -769,10 +1043,21 @@ private fun DocumentGridCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(doc.title, color = ScannerGlassPalette.TextPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(formatScannerBytes(doc.totalSizeBytes, isArabic), color = ScannerGlassPalette.TextSecondary, fontSize = 11.sp)
+                Text(
+                    text = doc.title,
+                    color = ScannerGlassPalette.TextPrimary,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = formatScannerBytes(doc.totalSizeBytes, isArabic),
+                    color = ScannerGlassPalette.TextSecondary,
+                    fontSize = 11.sp
+                )
             }
-            IconButton(onClick = onToggleStar, modifier = Modifier.size(30.dp)) {
+            IconButton(onClick = onToggleStar, modifier = Modifier.size(32.dp)) {
                 Icon(
                     imageVector = if (doc.isStarred) Icons.Default.Star else Icons.Default.StarBorder,
                     contentDescription = "Star",
@@ -795,7 +1080,7 @@ private fun DocumentListCard(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .scannerGlassSurface(RoundedCornerShape(18.dp), glowBorder = doc.isStarred || doc.isLocked)
+            .scannerGlassSurface(RoundedCornerShape(18.dp))
             .clickable(onClick = onClick)
             .padding(10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -823,14 +1108,27 @@ private fun DocumentListCard(
         }
 
         Column(modifier = Modifier.weight(1f)) {
-            Text(doc.title, color = ScannerGlassPalette.TextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                text = doc.title,
+                color = ScannerGlassPalette.TextPrimary,
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
             Text(
                 text = if (isArabic) "${doc.pageCount} صفحات • ${formatScannerBytes(doc.totalSizeBytes, true)}" else "${doc.pageCount} pages • ${formatScannerBytes(doc.totalSizeBytes, false)}",
                 color = ScannerGlassPalette.TextSecondary,
                 fontSize = 11.5.sp
             )
             if (doc.tagsCsv.isNotBlank()) {
-                Text(doc.tagsCsv.replace(",", " • "), color = ScannerGlassPalette.CyanGlow, fontSize = 10.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    text = doc.tagsCsv.replace(",", " • "),
+                    color = ScannerGlassPalette.CyanGlow,
+                    fontSize = 10.5.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
 

@@ -49,9 +49,9 @@ object ScannerGlassPalette {
 
     val SubtleGlassBorder = Brush.linearGradient(
         colors = listOf(
-            Color.White.copy(alpha = 0.28f),
-            CyanGlow.copy(alpha = 0.22f),
-            VioletGlow.copy(alpha = 0.24f)
+            Color.White.copy(alpha = 0.16f),
+            Color.White.copy(alpha = 0.06f),
+            CyanGlow.copy(alpha = 0.12f)
         )
     )
 }
@@ -74,26 +74,26 @@ fun ScannerDarkLiquidBackdrop(
                 )
             )
     ) {
-        // Soft ambient cyan & violet liquid glow orbs
+        // Subtle ambient cyan & violet liquid glow orbs
         Canvas(modifier = Modifier.fillMaxSize()) {
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        ScannerGlassPalette.CyanGlow.copy(alpha = 0.14f),
+                        ScannerGlassPalette.CyanGlow.copy(alpha = 0.09f),
                         Color.Transparent
                     ),
-                    center = Offset(size.width * 0.15f, size.height * 0.12f),
-                    radius = size.width * 0.65f
+                    center = Offset(size.width * 0.15f, size.height * 0.10f),
+                    radius = size.width * 0.60f
                 )
             )
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        ScannerGlassPalette.VioletGlow.copy(alpha = 0.14f),
+                        ScannerGlassPalette.VioletGlow.copy(alpha = 0.09f),
                         Color.Transparent
                     ),
-                    center = Offset(size.width * 0.88f, size.height * 0.78f),
-                    radius = size.width * 0.72f
+                    center = Offset(size.width * 0.88f, size.height * 0.80f),
+                    radius = size.width * 0.65f
                 )
             )
         }
@@ -103,16 +103,16 @@ fun ScannerDarkLiquidBackdrop(
 
 fun Modifier.scannerGlassSurface(
     shape: Shape = RoundedCornerShape(22.dp),
-    borderWidth: Dp = 1.dp,
+    borderWidth: Dp = 0.9.dp,
     glowBorder: Boolean = false,
-    fillAlpha: Float = 0.74f
+    fillAlpha: Float = 0.72f
 ): Modifier = this
     .clip(shape)
     .background(
         brush = Brush.linearGradient(
             colors = listOf(
-                Color(0xFF131D36).copy(alpha = fillAlpha),
-                Color(0xFF090F1F).copy(alpha = (fillAlpha + 0.08f).coerceAtMost(0.95f))
+                Color(0xFF111A30).copy(alpha = fillAlpha),
+                Color(0xFF080E1C).copy(alpha = (fillAlpha + 0.10f).coerceAtMost(0.96f))
             )
         ),
         shape = shape

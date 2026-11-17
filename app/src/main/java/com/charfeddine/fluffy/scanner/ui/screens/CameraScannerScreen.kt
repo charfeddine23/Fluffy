@@ -531,128 +531,107 @@ fun CameraScannerScreen(
                     .padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
-                // Top Glass HUD
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                // Single Sleek Top Glass HUD Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(
+                        onClick = onBack,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .scannerGlassSurface(CircleShape)
                     ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = if (isArabic) "رجوع" else "Back",
+                            tint = ScannerGlassPalette.TextPrimary
+                        )
+                    }
+
+                    // Compact Leveler / Countdown Status Pill
+                    Row(
+                        modifier = Modifier
+                            .scannerGlassSurface(CircleShape, glowBorder = isLevelSteady || autoCountdownSec > 0)
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (isLevelSteady) ScannerGlassPalette.EmeraldGlow
+                                    else ScannerGlassPalette.AmberGlow
+                                )
+                        )
+                        Text(
+                            text = when {
+                                autoCountdownSec > 0 ->
+                                    if (isArabic) "تلقائي $autoCountdownSec..." else "Auto $autoCountdownSec..."
+                                activeMode == ScanMode.ID_CARD && idCardFrontPath == null ->
+                                    if (isArabic) "وجه البطاقة الأمامي" else "Front of ID"
+                                activeMode == ScanMode.ID_CARD && idCardFrontPath != null ->
+                                    if (isArabic) "وجه البطاقة الخلفي" else "Back of ID"
+                                isLevelSteady ->
+                                    if (isArabic) "متوازن" else "Level"
+                                else ->
+                                    if (isArabic) "ثبّت الهاتف" else "Steady"
+                            },
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = ScannerGlassPalette.TextPrimary,
+                            maxLines = 1
+                        )
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         IconButton(
-                            onClick = onBack,
+                            onClick = { autoCaptureEnabled = !autoCaptureEnabled },
+                            modifier = Modifier
+                                .size(48.dp)
+                                .scannerGlassSurface(CircleShape, glowBorder = autoCaptureEnabled)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = if (isArabic) "التقاط تلقائي" else "Auto Capture",
+                                tint = if (autoCaptureEnabled) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.TextSecondary
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                flashMode = when (flashMode) {
+                                    FLASH_MODE_OFF -> FLASH_MODE_ON
+                                    FLASH_MODE_ON -> FLASH_MODE_AUTO
+                                    else -> FLASH_MODE_OFF
+                                }
+                            },
+                            modifier = Modifier
+                                .size(48.dp)
+                                .scannerGlassSurface(CircleShape, glowBorder = flashMode != FLASH_MODE_OFF)
+                        ) {
+                            Icon(
+                                imageVector = when (flashMode) {
+                                    FLASH_MODE_ON -> Icons.Default.FlashOn
+                                    FLASH_MODE_AUTO -> Icons.Default.FlashAuto
+                                    else -> Icons.Default.FlashOff
+                                },
+                                contentDescription = if (isArabic) "الفلاش" else "Flash",
+                                tint = if (flashMode == FLASH_MODE_OFF) ScannerGlassPalette.TextPrimary else ScannerGlassPalette.AmberGlow
+                            )
+                        }
+                        IconButton(
+                            onClick = { showGrid = !showGrid },
                             modifier = Modifier
                                 .size(48.dp)
                                 .scannerGlassSurface(CircleShape)
                         ) {
                             Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = if (isArabic) "رجوع" else "Back",
-                                tint = ScannerGlassPalette.TextPrimary
-                            )
-                        }
-
-                        // Leveler / Tilt + Auto-Capture Indicator Pill
-                        Row(
-                            modifier = Modifier
-                                .scannerGlassSurface(CircleShape, glowBorder = isLevelSteady)
-                                .padding(horizontal = 12.dp, vertical = 7.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(9.dp)
-                                    .clip(CircleShape)
-                                    .background(
-                                        if (isLevelSteady) ScannerGlassPalette.EmeraldGlow
-                                        else ScannerGlassPalette.AmberGlow
-                                    )
-                            )
-                            Text(
-                                text = when {
-                                    autoCountdownSec > 0 ->
-                                        if (isArabic) "التقاط تلقائي $autoCountdownSec..." else "Auto-Capture $autoCountdownSec..."
-                                    activeMode == ScanMode.ID_CARD && idCardFrontPath == null ->
-                                        if (isArabic) "صوّر الوجه الأمامي للبطاقة" else "Capture Front of ID"
-                                    activeMode == ScanMode.ID_CARD && idCardFrontPath != null ->
-                                        if (isArabic) "صوّر الوجه الخلفي للبطاقة" else "Capture Back of ID"
-                                    isLevelSteady ->
-                                        if (isArabic) "متوازن ✓" else "Level ✓"
-                                    else ->
-                                        if (isArabic) "ثبّت الهاتف" else "Hold Steady"
-                                },
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = ScannerGlassPalette.TextPrimary
-                            )
-                        }
-
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            IconButton(
-                                onClick = {
-                                    flashMode = when (flashMode) {
-                                        FLASH_MODE_OFF -> FLASH_MODE_ON
-                                        FLASH_MODE_ON -> FLASH_MODE_AUTO
-                                        else -> FLASH_MODE_OFF
-                                    }
-                                },
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .scannerGlassSurface(CircleShape, glowBorder = flashMode != FLASH_MODE_OFF)
-                            ) {
-                                Icon(
-                                    imageVector = when (flashMode) {
-                                        FLASH_MODE_ON -> Icons.Default.FlashOn
-                                        FLASH_MODE_AUTO -> Icons.Default.FlashAuto
-                                        else -> Icons.Default.FlashOff
-                                    },
-                                    contentDescription = if (isArabic) "الفلاش" else "Flash",
-                                    tint = if (flashMode == FLASH_MODE_OFF) ScannerGlassPalette.TextPrimary else ScannerGlassPalette.AmberGlow
-                                )
-                            }
-                            IconButton(
-                                onClick = { showGrid = !showGrid },
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .scannerGlassSurface(CircleShape)
-                            ) {
-                                Icon(
-                                    imageVector = if (showGrid) Icons.Default.GridOn else Icons.Default.GridOff,
-                                    contentDescription = if (isArabic) "الشبكة" else "Grid",
-                                    tint = if (showGrid) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.TextSecondary
-                                )
-                            }
-                        }
-                    }
-
-                    // Auto-capture quick toggle pill
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .scannerGlassSurface(CircleShape, glowBorder = autoCaptureEnabled)
-                                .clickable { autoCaptureEnabled = !autoCaptureEnabled }
-                                .padding(horizontal = 12.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(5.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.AutoAwesome,
-                                contentDescription = null,
-                                tint = if (autoCaptureEnabled) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.TextSecondary,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Text(
-                                text = if (isArabic) {
-                                    if (autoCaptureEnabled) "التقاط تلقائي: مفعّل" else "التقاط تلقائي: يدوي"
-                                } else {
-                                    if (autoCaptureEnabled) "Auto-Capture: ON" else "Auto-Capture: OFF"
-                                },
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = ScannerGlassPalette.TextPrimary
+                                imageVector = if (showGrid) Icons.Default.GridOn else Icons.Default.GridOff,
+                                contentDescription = if (isArabic) "الشبكة" else "Grid",
+                                tint = if (showGrid) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.TextSecondary
                             )
                         }
                     }
@@ -740,10 +719,10 @@ fun CameraScannerScreen(
 
                 // Bottom Camera Mode Switcher + Batch Thumbnails + Shutter Bar
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    // Mode Switcher Strip
+                    // Centered Mode Switcher Strip
                     LazyRow(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
                     ) {
                         items(ScanMode.entries) { mode ->
                             val selected = activeMode == mode

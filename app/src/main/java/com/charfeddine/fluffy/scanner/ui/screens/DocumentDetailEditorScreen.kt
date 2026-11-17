@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Draw
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Highlight
+import androidx.compose.material.icons.filled.Label
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Output
@@ -61,6 +62,8 @@ import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -282,26 +285,87 @@ fun DocumentDetailEditorScreen(
                 }
             }
 
-            // Document Tags quick bar
+            // Compact Active Tags + "+ Tag" Dropdown Selector
+            var showTagsDropdown by remember { mutableStateOf(false) }
+            val activeTags = remember(doc.tagsCsv) {
+                doc.tagsCsv.split(",").map { it.trim() }.filter { it.isNotBlank() }
+            }
             LazyRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                val activeTags = doc.tagsCsv.split(",").map { it.trim() }.filter { it.isNotBlank() }.toSet()
-                itemsIndexed(ScannerTagCatalog.presets) { _, preset ->
-                    val selected = preset.name in activeTags
-                    val tagColor = Color(preset.colorArgb.toInt())
+                item {
+                    Box {
+                        Row(
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .scannerGlassSurface(CircleShape)
+                                .clickable { showTagsDropdown = true }
+                                .padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Label,
+                                contentDescription = null,
+                                tint = ScannerGlassPalette.CyanGlow,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Text(
+                                text = if (isArabic) "الوسوم" else "Tags",
+                                color = ScannerGlassPalette.TextSecondary,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showTagsDropdown,
+                            onDismissRequest = { showTagsDropdown = false },
+                            containerColor = ScannerGlassPalette.MidnightNavy
+                        ) {
+                            ScannerTagCatalog.presets.forEach { preset ->
+                                val tagColor = Color(preset.colorArgb.toInt())
+                                val selected = preset.name in activeTags
+                                DropdownMenuItem(
+                                    leadingIcon = {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(10.dp)
+                                                .clip(CircleShape)
+                                                .background(tagColor)
+                                        )
+                                    },
+                                    text = {
+                                        Text(
+                                            text = if (selected) "${preset.name} ✓" else preset.name,
+                                            color = if (selected) tagColor else ScannerGlassPalette.TextPrimary,
+                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    },
+                                    onClick = {
+                                        scannerViewModel.toggleTagOnDocument(doc, preset.name)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                itemsIndexed(activeTags) { _, tagName ->
+                    val preset = ScannerTagCatalog.presets.firstOrNull { it.name == tagName }
+                    val tagColor = preset?.let { Color(it.colorArgb.toInt()) } ?: ScannerGlassPalette.CyanGlow
                     Box(
                         modifier = Modifier
                             .clip(CircleShape)
-                            .background(if (selected) tagColor.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.06f))
-                            .border(1.dp, if (selected) tagColor else Color.White.copy(alpha = 0.14f), CircleShape)
-                            .clickable { scannerViewModel.toggleTagOnDocument(doc, preset.name) }
+                            .background(tagColor.copy(alpha = 0.20f))
+                            .border(1.dp, tagColor.copy(alpha = 0.65f), CircleShape)
+                            .clickable { scannerViewModel.toggleTagOnDocument(doc, tagName) }
                             .padding(horizontal = 10.dp, vertical = 4.dp)
                     ) {
                         Text(
-                            text = preset.name,
-                            color = if (selected) tagColor else ScannerGlassPalette.TextSecondary,
+                            text = "$tagName ×",
+                            color = tagColor,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold
                         )
