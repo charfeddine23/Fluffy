@@ -146,7 +146,10 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
         statusMessage.value = msg
     }
 
-    fun openCameraScanner(appendToDocId: String? = null) {
+    fun openCameraScanner(appendToDocId: String? = null, initialMode: ScanMode? = null) {
+        if (initialMode != null) {
+            activeScanMode.value = initialMode
+        }
         batchFrames.value = emptyList()
         idCardFrontRawPath.value = null
         activeCropIndex.value = 0
@@ -221,10 +224,10 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
             try {
                 val mode = activeScanMode.value
                 val framesToAdd = withContext(Dispatchers.IO) {
-                    val rawBmp = DocumentImageProcessor.decodeSampledBitmap(file, 2200)
+                    val rawBmp = DocumentImageProcessor.decodeSampledBitmap(file, 3600)
                         ?: return@withContext emptyList()
                     // Normalize raw saved file orientation on disk so Crop & Preview align cleanly
-                    DocumentImageProcessor.saveBitmapAsJpeg(rawBmp, file, 94)
+                    DocumentImageProcessor.saveBitmapAsJpeg(rawBmp, file, 95)
 
                     when (mode) {
                         ScanMode.ID_CARD -> {
@@ -295,10 +298,19 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                         }
 
                         else -> {
-                            val quad = capturedQuad ?: DocumentImageProcessor.detectQuadFromBitmap(rawBmp)
-                            val warpedPreview = DocumentImageProcessor.warpPerspective(rawBmp, quad, 2000)
+                            val detectedOnFullPhoto = withContext(Dispatchers.Default) {
+                                DocumentImageProcessor.detectQuadFromBitmap(rawBmp)
+                            }
+                            val quad = if (detectedOnFullPhoto != DocumentQuad.SAFE_DEFAULT_MARGIN) {
+                                detectedOnFullPhoto
+                            } else {
+                                capturedQuad ?: DocumentQuad.SAFE_DEFAULT_MARGIN
+                            }
+                            val warpedPreview = withContext(Dispatchers.Default) {
+                                DocumentImageProcessor.warpPerspective(rawBmp, quad, 3600)
+                            }
                             val warpedFile = File(repository.docsRootDir, "warp_${UUID.randomUUID()}.jpg")
-                            DocumentImageProcessor.saveBitmapAsJpeg(warpedPreview, warpedFile, 92)
+                            DocumentImageProcessor.saveBitmapAsJpeg(warpedPreview, warpedFile, 94)
                             if (warpedPreview !== rawBmp) warpedPreview.recycle()
                             rawBmp.recycle()
                             listOf(
@@ -347,19 +359,23 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                     val resolver = getApplication<Application>().contentResolver
                     uris.mapNotNull { uri ->
                         runCatching {
-                            resolver.openInputStream(uri)?.use { input ->
-                                val bmp = BitmapFactory.decodeStream(input) ?: return@mapNotNull null
-                                val rawFile = File(repository.docsRootDir, "imp_${UUID.randomUUID()}.jpg")
-                                DocumentImageProcessor.saveBitmapAsJpeg(bmp, rawFile, 92)
-                                val quad = DocumentImageProcessor.detectQuadFromBitmap(bmp)
-                                bmp.recycle()
-                                BatchCapturedFrame(
-                                    rawImagePath = rawFile.absolutePath,
-                                    processedImagePath = rawFile.absolutePath,
-                                    detectedQuad = quad,
-                                    filter = ScannerFilterType.MAGIC_COLOR
-                                )
+                            val bmp = DocumentImageProcessor.decodeOrientedBitmapFromUri(
+                                contentResolver = resolver,
+                                uri = uri,
+                                maxSide = 4096
+                            ) ?: return@mapNotNull null
+                            val rawFile = File(repository.docsRootDir, "imp_${UUID.randomUUID()}.jpg")
+                            DocumentImageProcessor.saveBitmapAsJpeg(bmp, rawFile, 95)
+                            val quad = withContext(Dispatchers.Default) {
+                                DocumentImageProcessor.detectQuadFromBitmap(bmp)
                             }
+                            bmp.recycle()
+                            BatchCapturedFrame(
+                                rawImagePath = rawFile.absolutePath,
+                                processedImagePath = rawFile.absolutePath,
+                                detectedQuad = quad,
+                                filter = ScannerFilterType.MAGIC_COLOR
+                            )
                         }.getOrNull()
                     }
                 }
@@ -548,19 +564,23 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                     val pdfInputs = mutableListOf<PdfRenderedPageInput>()
 
                     frames.forEach { frame ->
-                        val rawBmp = DocumentImageProcessor.decodeSampledBitmap(File(frame.rawImagePath), 2048)
+                        val rawBmp = DocumentImageProcessor.decodeSampledBitmap(File(frame.rawImagePath), 4096)
                             ?: return@forEach
-                        val warped = DocumentImageProcessor.warpPerspective(rawBmp, frame.detectedQuad, 2000)
-                        val enhanced = DocumentImageProcessor.applyEnhancements(
-                            source = warped,
-                            filter = frame.filter,
-                            brightness = frame.brightness,
-                            contrast = frame.contrast,
-                            sharpness = frame.sharpness,
-                            rotationDeg = frame.rotationDeg
-                        )
+                        val warped = withContext(Dispatchers.Default) {
+                            DocumentImageProcessor.warpPerspective(rawBmp, frame.detectedQuad, 4096)
+                        }
+                        val enhanced = withContext(Dispatchers.Default) {
+                            DocumentImageProcessor.applyEnhancements(
+                                source = warped,
+                                filter = frame.filter,
+                                brightness = frame.brightness,
+                                contrast = frame.contrast,
+                                sharpness = frame.sharpness,
+                                rotationDeg = frame.rotationDeg
+                            )
+                        }
                         val outFile = File(repository.docsRootDir, "page_${UUID.randomUUID()}.jpg")
-                        DocumentImageProcessor.saveBitmapAsJpeg(enhanced, outFile, 90)
+                        DocumentImageProcessor.saveBitmapAsJpeg(enhanced, outFile, 93)
                         val ocrRes = OfflineOcrAndBarcodeEngine.extractTextOffline(enhanced)
 
                         createdPages.add(

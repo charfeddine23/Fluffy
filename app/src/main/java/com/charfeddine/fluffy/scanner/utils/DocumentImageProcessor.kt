@@ -1,5 +1,6 @@
 package com.charfeddine.fluffy.scanner.utils
 
+import android.content.ContentResolver
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -12,6 +13,7 @@ import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.media.ExifInterface
+import android.net.Uri
 import androidx.camera.core.ImageProxy
 import com.charfeddine.fluffy.scanner.data.model.DocumentQuad
 import com.charfeddine.fluffy.scanner.data.model.PageAnnotations
@@ -44,7 +46,7 @@ object DocumentImageProcessor {
      * Perspective warp transformation using Matrix.setPolyToPoly (homography warp)
      * to flatten skewed pages into an upright rectangular document bitmap.
      */
-    fun warpPerspective(source: Bitmap, quad: DocumentQuad, maxSidePx: Int = 2200): Bitmap {
+    fun warpPerspective(source: Bitmap, quad: DocumentQuad, maxSidePx: Int = 4096): Bitmap {
         val w = source.width.toFloat()
         val h = source.height.toFloat()
         val tlX = quad.topLeft.x * w
@@ -531,7 +533,54 @@ object DocumentImageProcessor {
         return destFile
     }
 
-    fun decodeSampledBitmap(file: File, maxSide: Int = 2048): Bitmap? {
+    /**
+     * Decodes an image from a Gallery/PhotoPicker [Uri], reads its [ExifInterface] orientation,
+     * and rotates/flips the [Bitmap] upright BEFORE any edge detection runs.
+     */
+    fun decodeOrientedBitmapFromUri(
+        contentResolver: ContentResolver,
+        uri: Uri,
+        maxSide: Int = 4096
+    ): Bitmap? {
+        val orientation = runCatching {
+            contentResolver.openInputStream(uri)?.use { exifStream ->
+                ExifInterface(exifStream).getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_NORMAL
+                )
+            }
+        }.getOrNull() ?: ExifInterface.ORIENTATION_NORMAL
+
+        val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        runCatching {
+            contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, boundsOpts)
+            }
+        }
+
+        var inSampleSize = 1
+        if (boundsOpts.outWidth > 0 && boundsOpts.outHeight > 0) {
+            while ((boundsOpts.outWidth / inSampleSize) > maxSide ||
+                (boundsOpts.outHeight / inSampleSize) > maxSide
+            ) {
+                inSampleSize *= 2
+            }
+        }
+
+        val decodeOpts = BitmapFactory.Options().apply {
+            this.inSampleSize = inSampleSize
+            this.inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        val decoded = runCatching {
+            contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, decodeOpts)
+            }
+        }.getOrNull() ?: return null
+
+        return applyExifOrientation(decoded, orientation)
+    }
+
+    fun decodeSampledBitmap(file: File, maxSide: Int = 4096): Bitmap? {
         if (!file.exists()) return null
         val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.absolutePath, opts)
@@ -541,7 +590,10 @@ object DocumentImageProcessor {
         }
         val decoded = BitmapFactory.decodeFile(
             file.absolutePath,
-            BitmapFactory.Options().apply { this.inSampleSize = inSampleSize }
+            BitmapFactory.Options().apply {
+                this.inSampleSize = inSampleSize
+                this.inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
         ) ?: return null
 
         val orientation = runCatching {
@@ -551,17 +603,33 @@ object DocumentImageProcessor {
             )
         }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
 
-        val rotateDeg = when (orientation) {
-            ExifInterface.ORIENTATION_ROTATE_90 -> 90f
-            ExifInterface.ORIENTATION_ROTATE_180 -> 180f
-            ExifInterface.ORIENTATION_ROTATE_270 -> 270f
-            else -> 0f
-        }
-        if (rotateDeg == 0f) return decoded
+        return applyExifOrientation(decoded, orientation)
+    }
 
-        val matrix = Matrix().apply { postRotate(rotateDeg) }
-        val rotated = Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
-        if (rotated !== decoded) decoded.recycle()
-        return rotated
+    fun applyExifOrientation(bitmap: Bitmap, orientation: Int): Bitmap {
+        val matrix = Matrix()
+        when (orientation) {
+            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.setScale(-1f, 1f)
+            ExifInterface.ORIENTATION_ROTATE_180 -> matrix.setRotate(180f)
+            ExifInterface.ORIENTATION_FLIP_VERTICAL -> {
+                matrix.setRotate(180f)
+                matrix.postScale(-1f, 1f)
+            }
+            ExifInterface.ORIENTATION_TRANSPOSE -> {
+                matrix.setRotate(90f)
+                matrix.postScale(-1f, 1f)
+            }
+            ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f)
+            ExifInterface.ORIENTATION_TRANSVERSE -> {
+                matrix.setRotate(270f)
+                matrix.postScale(-1f, 1f)
+            }
+            ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(270f)
+            else -> return bitmap
+        }
+
+        val oriented = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        if (oriented !== bitmap) bitmap.recycle()
+        return oriented
     }
 }

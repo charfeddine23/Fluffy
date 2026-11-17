@@ -20,6 +20,7 @@ import androidx.annotation.OptIn
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ExperimentalGetImage
+import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCapture.FLASH_MODE_AUTO
@@ -45,6 +46,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -104,6 +106,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -114,6 +117,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -131,6 +135,7 @@ import com.charfeddine.fluffy.scanner.data.model.ScanMode
 import com.charfeddine.fluffy.scanner.domain.ScannerViewModel
 import com.charfeddine.fluffy.scanner.ui.theme.ScannerDarkLiquidBackdrop
 import com.charfeddine.fluffy.scanner.ui.theme.ScannerGlassPalette
+import com.charfeddine.fluffy.scanner.ui.theme.iosLiquidGlass
 import com.charfeddine.fluffy.scanner.ui.theme.scannerGlassSurface
 import com.charfeddine.fluffy.scanner.utils.CornerStabilityTracker
 import com.charfeddine.fluffy.scanner.utils.DocumentImageProcessor
@@ -143,7 +148,9 @@ import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.delay
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 import kotlin.math.abs
+import kotlin.math.hypot
 import kotlin.math.max
 
 @OptIn(ExperimentalGetImage::class)
@@ -231,8 +238,10 @@ fun CameraScannerScreen(
     val cameraExecutor = remember { Dispatchers.IO.limitedParallelism(1).asExecutor() }
     var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
     var boundCamera by remember { mutableStateOf<Camera?>(null) }
+    var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
     var cameraProviderRef by remember { mutableStateOf<ProcessCameraProvider?>(null) }
     var lastAnalysisMs by remember { mutableLongStateOf(0L) }
+    var focusTapOffset by remember { mutableStateOf<Offset?>(null) }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -244,6 +253,13 @@ fun CameraScannerScreen(
     LaunchedEffect(flashMode, boundCamera) {
         imageCapture?.flashMode = flashMode
         boundCamera?.cameraControl?.enableTorch(flashMode == FLASH_MODE_ON)
+    }
+
+    LaunchedEffect(focusTapOffset) {
+        if (focusTapOffset != null) {
+            delay(950L)
+            focusTapOffset = null
+        }
     }
 
     LaunchedEffect(showCapturedBanner) {
@@ -426,6 +442,23 @@ fun CameraScannerScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
+            .pointerInput(Unit) {
+                detectTapGestures { tapOffset ->
+                    focusTapOffset = tapOffset
+                    val pv = previewViewRef
+                    val cam = boundCamera
+                    if (pv != null && cam != null) {
+                        runCatching {
+                            val pt = pv.meteringPointFactory.createPoint(tapOffset.x, tapOffset.y)
+                            val action = FocusMeteringAction.Builder(
+                                pt,
+                                FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE
+                            ).setAutoCancelDuration(3, TimeUnit.SECONDS).build()
+                            cam.cameraControl.startFocusAndMetering(action)
+                        }
+                    }
+                }
+            }
     ) {
         // 1. Live Full-Screen CameraX Viewfinder
         AndroidView(
@@ -434,6 +467,7 @@ fun CameraScannerScreen(
                     implementationMode = PreviewView.ImplementationMode.PERFORMANCE
                     scaleType = PreviewView.ScaleType.FILL_CENTER
                 }
+                previewViewRef = previewView
                 val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
                 cameraProviderFuture.addListener({
                     val provider = cameraProviderFuture.get()
@@ -730,6 +764,76 @@ fun CameraScannerScreen(
                     }
                 }
             }
+
+            // Overhead Top-Down Horizon Bubble Leveler (visible in Document & Book modes)
+            if (activeMode == ScanMode.SINGLE || activeMode == ScanMode.BOOK) {
+                val center = Offset(w * 0.5f, h * 0.46f)
+                val ringRadius = 18.dp.toPx()
+                val maxBubbleShift = 15.dp.toPx()
+                val rawShiftX = (tiltRollDeg * 0.55f).dp.toPx()
+                val rawShiftY = (tiltPitchDeg * 0.55f).dp.toPx()
+                val shiftMag = hypot(rawShiftX, rawShiftY)
+                val clampedShiftX = if (shiftMag > maxBubbleShift && shiftMag > 0.01f) {
+                    rawShiftX * (maxBubbleShift / shiftMag)
+                } else {
+                    rawShiftX
+                }
+                val clampedShiftY = if (shiftMag > maxBubbleShift && shiftMag > 0.01f) {
+                    rawShiftY * (maxBubbleShift / shiftMag)
+                } else {
+                    rawShiftY
+                }
+                val isOverheadAligned = abs(tiltRollDeg) < 6.5f && abs(tiltPitchDeg) < 6.5f
+                val levelColor = if (isOverheadAligned) {
+                    ScannerGlassPalette.EdgeOverlayCyan
+                } else {
+                    Color.White.copy(alpha = 0.48f)
+                }
+
+                drawCircle(
+                    color = levelColor.copy(alpha = if (isOverheadAligned) 0.70f else 0.25f),
+                    radius = ringRadius,
+                    center = center,
+                    style = Stroke(width = 1.25.dp.toPx())
+                )
+                drawLine(
+                    color = levelColor.copy(alpha = 0.40f),
+                    start = Offset(center.x - 5.dp.toPx(), center.y),
+                    end = Offset(center.x + 5.dp.toPx(), center.y),
+                    strokeWidth = 1.dp.toPx()
+                )
+                drawLine(
+                    color = levelColor.copy(alpha = 0.40f),
+                    start = Offset(center.x, center.y - 5.dp.toPx()),
+                    end = Offset(center.x, center.y + 5.dp.toPx()),
+                    strokeWidth = 1.dp.toPx()
+                )
+                drawCircle(
+                    color = levelColor.copy(alpha = if (isOverheadAligned) 0.90f else 0.65f),
+                    radius = 4.2.dp.toPx(),
+                    center = Offset(center.x + clampedShiftX, center.y + clampedShiftY)
+                )
+            }
+
+            // Tap-to-Focus glowing reticle
+            focusTapOffset?.let { pt ->
+                drawCircle(
+                    color = ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.25f),
+                    radius = 28.dp.toPx(),
+                    center = pt
+                )
+                drawCircle(
+                    color = ScannerGlassPalette.EdgeOverlayCyan,
+                    radius = 28.dp.toPx(),
+                    center = pt,
+                    style = Stroke(width = 1.8.dp.toPx())
+                )
+                drawCircle(
+                    color = Color.White,
+                    radius = 3.dp.toPx(),
+                    center = pt
+                )
+            }
         }
 
         // 4. Visual Shutter Flash Feedback
@@ -765,12 +869,13 @@ fun CameraScannerScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Clean Frosted Back Button
+                    // Clean Frosted iOS Liquid Glass Back Button
                     IconButton(
                         onClick = onBack,
                         modifier = Modifier
                             .size(48.dp)
-                            .scannerGlassSurface(CircleShape, fillAlpha = 0.65f)
+                            .shadow(12.dp, CircleShape)
+                            .iosLiquidGlass(CircleShape, fillAlpha = 0.70f)
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
@@ -779,10 +884,11 @@ fun CameraScannerScreen(
                         )
                     }
 
-                    // Unified Frosted Glass Utility Capsule (Auto-Capture, Flash, Grid)
+                    // Unified Frosted Liquid Glass Utility Capsule (Auto-Capture, Flash, Grid)
                     Row(
                         modifier = Modifier
-                            .scannerGlassSurface(CircleShape, fillAlpha = 0.65f)
+                            .shadow(12.dp, CircleShape)
+                            .iosLiquidGlass(CircleShape, fillAlpha = 0.70f)
                             .padding(horizontal = 4.dp, vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(2.dp)
@@ -854,10 +960,11 @@ fun CameraScannerScreen(
                     (activeMode == ScanMode.SINGLE || activeMode == ScanMode.BOOK)
                 Row(
                     modifier = Modifier
-                        .scannerGlassSurface(
+                        .shadow(10.dp, CircleShape)
+                        .iosLiquidGlass(
                             shape = CircleShape,
-                            glowBorder = isHoldingSteady || showCapturedBanner,
-                            fillAlpha = 0.68f
+                            glowAccent = isHoldingSteady || showCapturedBanner,
+                            fillAlpha = 0.72f
                         )
                         .padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1011,10 +1118,11 @@ fun CameraScannerScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Unified Segmented Frosted Mode Pill Track
+                // Unified Segmented Frosted Liquid Glass Mode Pill Track
                 Box(
                     modifier = Modifier
-                        .scannerGlassSurface(CircleShape, fillAlpha = 0.68f)
+                        .shadow(14.dp, CircleShape)
+                        .iosLiquidGlass(CircleShape, fillAlpha = 0.72f)
                         .padding(horizontal = 4.dp, vertical = 4.dp)
                 ) {
                     LazyRow(
@@ -1087,8 +1195,9 @@ fun CameraScannerScreen(
                             },
                             modifier = Modifier
                                 .size(52.dp)
+                                .shadow(12.dp, CircleShape)
                                 .testTag("camera_gallery_import_btn")
-                                .scannerGlassSurface(CircleShape, fillAlpha = 0.70f)
+                                .iosLiquidGlass(CircleShape, fillAlpha = 0.72f)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.PhotoLibrary,
@@ -1187,8 +1296,9 @@ fun CameraScannerScreen(
                             Box(
                                 modifier = Modifier
                                     .minimumInteractiveComponentSize()
+                                    .shadow(14.dp, RoundedCornerShape(18.dp))
                                     .testTag("camera_batch_done_btn")
-                                    .scannerGlassSurface(RoundedCornerShape(18.dp), glowBorder = true, fillAlpha = 0.78f)
+                                    .iosLiquidGlass(RoundedCornerShape(18.dp), glowAccent = true, fillAlpha = 0.78f)
                                     .clickable { scannerViewModel.proceedToCropReview(appendToDocId) }
                                     .padding(horizontal = 8.dp, vertical = 6.dp),
                                 contentAlignment = Alignment.Center

@@ -78,6 +78,13 @@ data class DocumentQuad(
     }.toString()
 
     companion object {
+        val SAFE_DEFAULT_MARGIN = DocumentQuad(
+            PointNorm(0.08f, 0.08f),
+            PointNorm(0.92f, 0.08f),
+            PointNorm(0.92f, 0.92f),
+            PointNorm(0.08f, 0.92f)
+        )
+
         val FULL_FRAME = DocumentQuad(
             PointNorm(0.05f, 0.05f),
             PointNorm(0.95f, 0.05f),

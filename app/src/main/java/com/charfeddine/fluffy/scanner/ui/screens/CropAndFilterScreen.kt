@@ -2,6 +2,10 @@ package com.charfeddine.fluffy.scanner.ui.screens
 
 import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.animateOffsetAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -65,6 +69,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -87,6 +92,7 @@ import com.charfeddine.fluffy.scanner.data.model.ScannerFilterType
 import com.charfeddine.fluffy.scanner.domain.ScannerViewModel
 import com.charfeddine.fluffy.scanner.ui.theme.ScannerDarkLiquidBackdrop
 import com.charfeddine.fluffy.scanner.ui.theme.ScannerGlassPalette
+import com.charfeddine.fluffy.scanner.ui.theme.iosLiquidGlass
 import com.charfeddine.fluffy.scanner.ui.theme.scannerGlassSurface
 import com.charfeddine.fluffy.scanner.utils.DocumentImageProcessor
 import kotlinx.coroutines.Dispatchers
@@ -123,6 +129,7 @@ fun CropAndFilterScreen(
     var isCropPhase by remember(frame.id) { mutableStateOf(true) }
     var docTitle by remember { mutableStateOf("") }
     var showAdjustSliders by remember { mutableStateOf(false) }
+    var isAutoFitting by remember(frame.id) { mutableStateOf(false) }
 
     var rawBitmap by remember(frame.id) { mutableStateOf<Bitmap?>(null) }
     var warpedBitmap by remember(frame.id) { mutableStateOf<Bitmap?>(null) }
@@ -323,42 +330,80 @@ fun CropAndFilterScreen(
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .height(48.dp)
-                            .scannerGlassSurface(RoundedCornerShape(14.dp))
-                            .clickable {
+                            .height(50.dp)
+                            .testTag("crop_auto_fit_btn")
+                            .iosLiquidGlass(
+                                shape = RoundedCornerShape(16.dp),
+                                glowAccent = true,
+                                fillAlpha = 0.72f
+                            )
+                            .clickable(enabled = !isAutoFitting) {
                                 val bmp = rawBitmap ?: return@clickable
+                                isAutoFitting = true
                                 uiScope.launch {
-                                    val auto = withContext(Dispatchers.Default) {
-                                        DocumentImageProcessor.detectQuadFromBitmap(bmp)
+                                    try {
+                                        val auto = withContext(Dispatchers.Default) {
+                                            DocumentImageProcessor.detectQuadFromBitmap(bmp)
+                                        }
+                                        scannerViewModel.updateFrameQuad(activeIdx, auto)
+                                    } finally {
+                                        isAutoFitting = false
                                     }
-                                    scannerViewModel.updateFrameQuad(activeIdx, auto)
                                 }
                             },
                         contentAlignment = Alignment.Center
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                            Icon(Icons.Default.Crop, contentDescription = null, tint = ScannerGlassPalette.CyanGlow, modifier = Modifier.size(18.dp))
-                            Text(if (isArabic) "تحديد تلقائي" else "Auto-Fit", color = ScannerGlassPalette.TextPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            if (isAutoFitting) {
+                                CircularProgressIndicator(
+                                    color = ScannerGlassPalette.CyanGlow,
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Crop,
+                                    contentDescription = if (isArabic) "تحديد تلقائي" else "Auto-Fit",
+                                    tint = ScannerGlassPalette.CyanGlow,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Text(
+                                text = if (isArabic) "تحديد تلقائي" else "Auto-Fit",
+                                color = ScannerGlassPalette.TextPrimary,
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
 
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .height(48.dp)
-                            .scannerGlassSurface(RoundedCornerShape(14.dp))
+                            .height(50.dp)
+                            .testTag("crop_full_frame_btn")
+                            .iosLiquidGlass(RoundedCornerShape(16.dp), fillAlpha = 0.62f)
                             .clickable { scannerViewModel.updateFrameQuad(activeIdx, DocumentQuad.FULL_FRAME) },
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(if (isArabic) "كامل الإطار" else "Full Frame", color = ScannerGlassPalette.TextPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = if (isArabic) "كامل الإطار" else "Full Frame",
+                            color = ScannerGlassPalette.TextPrimary,
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
 
                     Button(
                         onClick = { isCropPhase = false },
                         colors = ButtonDefaults.buttonColors(containerColor = ScannerGlassPalette.CyanGlow),
+                        shape = RoundedCornerShape(16.dp),
                         modifier = Modifier
                             .weight(1.3f)
-                            .height(48.dp)
+                            .height(50.dp)
                             .testTag("crop_apply_next_btn")
                     ) {
                         Text(
@@ -594,6 +639,24 @@ private fun InteractiveCropWithMagnifier(
             localQuad = quad
         }
     }
+
+    // Smoothly animate 4 corners when Auto-Fit / Full Frame runs, while snapping with 0 lag during drag
+    val cornerAnimSpec: AnimationSpec<Offset> = if (activeHandle != null) {
+        snap()
+    } else {
+        spring(dampingRatio = 0.78f, stiffness = 360f)
+    }
+    val animTl by animateOffsetAsState(Offset(localQuad.topLeft.x, localQuad.topLeft.y), cornerAnimSpec, label = "tl")
+    val animTr by animateOffsetAsState(Offset(localQuad.topRight.x, localQuad.topRight.y), cornerAnimSpec, label = "tr")
+    val animBr by animateOffsetAsState(Offset(localQuad.bottomRight.x, localQuad.bottomRight.y), cornerAnimSpec, label = "br")
+    val animBl by animateOffsetAsState(Offset(localQuad.bottomLeft.x, localQuad.bottomLeft.y), cornerAnimSpec, label = "bl")
+
+    val displayedQuad = DocumentQuad(
+        topLeft = PointNorm(animTl.x, animTl.y),
+        topRight = PointNorm(animTr.x, animTr.y),
+        bottomRight = PointNorm(animBr.x, animBr.y),
+        bottomLeft = PointNorm(animBl.x, animBl.y)
+    )
 
     val latestOnQuadCommit by rememberUpdatedState(onQuadChange)
     val latestLocalQuad by rememberUpdatedState(localQuad)
@@ -850,10 +913,10 @@ private fun InteractiveCropWithMagnifier(
                     }
                 }
         ) {
-            val tl = normToScreen(localQuad.topLeft)
-            val tr = normToScreen(localQuad.topRight)
-            val br = normToScreen(localQuad.bottomRight)
-            val bl = normToScreen(localQuad.bottomLeft)
+            val tl = normToScreen(displayedQuad.topLeft)
+            val tr = normToScreen(displayedQuad.topRight)
+            val br = normToScreen(displayedQuad.bottomRight)
+            val bl = normToScreen(displayedQuad.bottomLeft)
 
             val path = Path().apply {
                 moveTo(tl.x, tl.y)
@@ -909,20 +972,31 @@ private fun InteractiveCropWithMagnifier(
             }
         }
 
-        // Zero-Allocation GPU Real-Time Zoom Magnifier Loupe
+        // Zero-Allocation Precision Magnifier Loupe (tracks all 4 corners + 4 edge mid-handles)
         val activePos = activeAnchorScreenPos
         if (activeHandle != null && activePos != null && boxSize.width > 0 && boxSize.height > 0) {
             val norm = screenToNorm(activePos)
-            val loupePx = with(density) { 104.dp.toPx() }
-            val cropRegionSize = (minOf(bitmap.width, bitmap.height) * 0.16f).roundToInt().coerceIn(60, 260)
-            val cx = (norm.x * bitmap.width).roundToInt()
-            val cy = (norm.y * bitmap.height).roundToInt()
-            val srcLeft = (cx - cropRegionSize / 2).coerceIn(0, (bitmap.width - cropRegionSize).coerceAtLeast(0))
-            val srcTop = (cy - cropRegionSize / 2).coerceIn(0, (bitmap.height - cropRegionSize).coerceAtLeast(0))
-            val safeW = minOf(cropRegionSize, bitmap.width - srcLeft).coerceAtLeast(1)
-            val safeH = minOf(cropRegionSize, bitmap.height - srcTop).coerceAtLeast(1)
+            val loupeSizeDp = 112.dp
+            val loupePx = with(density) { loupeSizeDp.toPx() }
+            val cropRegionSize = (minOf(bitmap.width, bitmap.height) * 0.14f)
+                .roundToInt()
+                .coerceIn(56, 260)
+                .toFloat()
+            val halfCrop = cropRegionSize * 0.5f
 
-            val gapAbove = with(density) { 42.dp.toPx() }
+            val cx = norm.x * bitmap.width
+            val cy = norm.y * bitmap.height
+            val desiredLeft = cx - halfCrop
+            val desiredTop = cy - halfCrop
+
+            val srcLeft = desiredLeft.roundToInt().coerceIn(0, (bitmap.width - 1).coerceAtLeast(0))
+            val srcTop = desiredTop.roundToInt().coerceIn(0, (bitmap.height - 1).coerceAtLeast(0))
+            val srcRight = (cx + halfCrop).roundToInt().coerceIn(srcLeft + 1, bitmap.width)
+            val srcBottom = (cy + halfCrop).roundToInt().coerceIn(srcTop + 1, bitmap.height)
+            val srcW = (srcRight - srcLeft).coerceAtLeast(1)
+            val srcH = (srcBottom - srcTop).coerceAtLeast(1)
+
+            val gapAbove = with(density) { 44.dp.toPx() }
             val preferAboveY = activePos.y - loupePx - gapAbove
             val loupeY = if (preferAboveY >= 8f) {
                 preferAboveY
@@ -934,35 +1008,71 @@ private fun InteractiveCropWithMagnifier(
             Box(
                 modifier = Modifier
                     .offset { IntOffset(loupeX.roundToInt(), loupeY.roundToInt()) }
-                    .size(104.dp)
+                    .size(loupeSizeDp)
+                    .shadow(16.dp, CircleShape, ambientColor = ScannerGlassPalette.CyanGlow, spotColor = ScannerGlassPalette.VioletGlow)
                     .clip(CircleShape)
-                    .background(Color.Black)
-                    .border(2.5.dp, ScannerGlassPalette.EdgeOverlayCyan, CircleShape)
+                    .background(Color(0xFF060A14))
+                    .border(
+                        width = 2.5.dp,
+                        brush = Brush.linearGradient(
+                            listOf(ScannerGlassPalette.EdgeOverlayCyan, ScannerGlassPalette.EdgeOverlayPurple)
+                        ),
+                        shape = CircleShape
+                    )
             ) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
+                    val zoomScaleX = size.width / cropRegionSize
+                    val zoomScaleY = size.height / cropRegionSize
+                    val dstLeft = ((srcLeft - desiredLeft) * zoomScaleX).roundToInt()
+                    val dstTop = ((srcTop - desiredTop) * zoomScaleY).roundToInt()
+                    val dstW = (srcW * zoomScaleX).roundToInt().coerceAtLeast(1)
+                    val dstH = (srcH * zoomScaleY).roundToInt().coerceAtLeast(1)
+
                     drawImage(
                         image = imageBitmap,
                         srcOffset = IntOffset(srcLeft, srcTop),
-                        srcSize = IntSize(safeW, safeH),
-                        dstOffset = IntOffset.Zero,
-                        dstSize = IntSize(size.width.roundToInt().coerceAtLeast(1), size.height.roundToInt().coerceAtLeast(1))
+                        srcSize = IntSize(srcW, srcH),
+                        dstOffset = IntOffset(dstLeft, dstTop),
+                        dstSize = IntSize(dstW, dstH)
                     )
                     drawLine(
-                        ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.80f),
+                        ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.85f),
                         Offset(size.width / 2f, 0f),
                         Offset(size.width / 2f, size.height),
                         strokeWidth = 1.dp.toPx()
                     )
                     drawLine(
-                        ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.80f),
+                        ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.85f),
                         Offset(0f, size.height / 2f),
                         Offset(size.width, size.height / 2f),
                         strokeWidth = 1.dp.toPx()
                     )
                     drawCircle(
+                        color = Color.White,
+                        radius = 4.5.dp.toPx(),
+                        center = Offset(size.width / 2f, size.height / 2f),
+                        style = Stroke(width = 1.5.dp.toPx())
+                    )
+                    drawCircle(
                         color = ScannerGlassPalette.EdgeOverlayCyan,
-                        radius = 3.5.dp.toPx(),
+                        radius = 2.5.dp.toPx(),
                         center = Offset(size.width / 2f, size.height / 2f)
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 6.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.65f))
+                        .padding(horizontal = 7.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = "2.5x",
+                        color = ScannerGlassPalette.EdgeOverlayCyan,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }
