@@ -431,8 +431,8 @@ fun NoteCard(
                     ) {
                         Icon(
                             imageVector = if (note.isArchived) Icons.Default.Unarchive else Icons.Default.Archive,
-                            contentDescription = if (isArabic) "أرشفة الملاحظة" else "Archive Note",
-                            tint = metaColor.copy(alpha = 0.7f),
+                            contentDescription = if (note.isArchived) "Unarchive" else "Archive",
+                            tint = if (note.isArchived) Color(0xFF38BDF8) else metaColor.copy(alpha = 0.6f),
                             modifier = Modifier.size(16.dp)
                         )
                     }
@@ -451,8 +451,8 @@ fun NoteCard(
                     ) {
                         Icon(
                             imageVector = Icons.Default.DeleteOutline,
-                            contentDescription = "Delete Note",
-                            tint = metaColor.copy(alpha = 0.6f),
+                            contentDescription = "Delete",
+                            tint = Color(0xFFEF4444).copy(alpha = 0.78f),
                             modifier = Modifier.size(16.dp)
                         )
                     }
@@ -693,14 +693,14 @@ fun GalleryNoteCard(
                         )
                         CompactCardIcon(
                             icon = if (note.isArchived) Icons.Default.Unarchive else Icons.Default.Archive,
-                            contentDescription = "Archive",
-                            tint = metaColor.copy(alpha = 0.72f),
+                            contentDescription = if (note.isArchived) "Unarchive" else "Archive",
+                            tint = if (note.isArchived) Color(0xFF38BDF8) else metaColor.copy(alpha = 0.72f),
                             onClick = onArchive
                         )
                         CompactCardIcon(
                             icon = Icons.Default.DeleteOutline,
                             contentDescription = "Delete",
-                            tint = metaColor.copy(alpha = 0.72f),
+                            tint = Color(0xFFEF4444).copy(alpha = 0.85f),
                             onClick = onDelete
                         )
                     }
@@ -894,14 +894,14 @@ fun MagazineNoteCard(
                             )
                             CompactCardIcon(
                                 icon = if (note.isArchived) Icons.Default.Unarchive else Icons.Default.Archive,
-                                contentDescription = "Archive",
-                                tint = metaColor.copy(alpha = 0.7f),
+                                contentDescription = if (note.isArchived) "Unarchive" else "Archive",
+                                tint = if (note.isArchived) Color(0xFF38BDF8) else metaColor.copy(alpha = 0.65f),
                                 onClick = onArchive
                             )
                             CompactCardIcon(
                                 icon = Icons.Default.DeleteOutline,
                                 contentDescription = "Delete",
-                                tint = metaColor.copy(alpha = 0.65f),
+                                tint = Color(0xFFEF4444).copy(alpha = 0.82f),
                                 onClick = onDelete
                             )
                         }
@@ -1064,14 +1064,14 @@ fun MagazineNoteCard(
                             )
                             CompactCardIcon(
                                 icon = if (note.isArchived) Icons.Default.Unarchive else Icons.Default.Archive,
-                                contentDescription = "Archive",
-                                tint = metaColor.copy(alpha = 0.7f),
+                                contentDescription = if (note.isArchived) "Unarchive" else "Archive",
+                                tint = if (note.isArchived) Color(0xFF38BDF8) else metaColor.copy(alpha = 0.65f),
                                 onClick = onArchive
                             )
                             CompactCardIcon(
                                 icon = Icons.Default.DeleteOutline,
                                 contentDescription = "Delete",
-                                tint = metaColor.copy(alpha = 0.65f),
+                                tint = Color(0xFFEF4444).copy(alpha = 0.82f),
                                 onClick = onDelete
                             )
                         }

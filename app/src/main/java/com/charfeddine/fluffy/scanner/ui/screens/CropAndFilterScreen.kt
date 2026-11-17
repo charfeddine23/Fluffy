@@ -2,10 +2,16 @@ package com.charfeddine.fluffy.scanner.ui.screens
 
 import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.animateOffsetAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -14,15 +20,18 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -43,23 +52,26 @@ import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -69,6 +81,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -76,14 +89,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.charfeddine.fluffy.scanner.data.model.DocumentQuad
@@ -93,14 +110,15 @@ import com.charfeddine.fluffy.scanner.domain.ScannerViewModel
 import com.charfeddine.fluffy.scanner.ui.theme.ScannerDarkLiquidBackdrop
 import com.charfeddine.fluffy.scanner.ui.theme.ScannerGlassPalette
 import com.charfeddine.fluffy.scanner.ui.theme.iosLiquidGlass
-import com.charfeddine.fluffy.scanner.ui.theme.scannerGlassSurface
 import com.charfeddine.fluffy.scanner.utils.DocumentImageProcessor
+import java.io.File
+import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.hypot
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
-import kotlin.math.hypot
-import kotlin.math.roundToInt
 
 private enum class DragHandleTarget {
     TL, TR, BR, BL, TOP_MID, RIGHT_MID, BOTTOM_MID, LEFT_MID
@@ -129,18 +147,48 @@ fun CropAndFilterScreen(
     var isCropPhase by remember(frame.id) { mutableStateOf(true) }
     var docTitle by remember { mutableStateOf("") }
     var showAdjustSliders by remember { mutableStateOf(false) }
+    var activeToneMetric by remember { mutableIntStateOf(0) } // 0=Brightness, 1=Contrast, 2=Sharpness
+    var showSplitCompare by remember { mutableStateOf(true) }
     var isAutoFitting by remember(frame.id) { mutableStateOf(false) }
 
     var rawBitmap by remember(frame.id) { mutableStateOf<Bitmap?>(null) }
     var warpedBitmap by remember(frame.id) { mutableStateOf<Bitmap?>(null) }
     var enhancedBitmap by remember(frame.id) { mutableStateOf<Bitmap?>(null) }
+    var filterThumbnails by remember(frame.id) { mutableStateOf<Map<ScannerFilterType, Bitmap>>(emptyMap()) }
+    var isRenderingPreview by remember(frame.id) { mutableStateOf(false) }
 
     // Before/After split comparison fraction (0.0 .. 1.0)
-    var splitComparisonX by remember { mutableFloatStateOf(0.55f) }
+    var splitComparisonX by remember { mutableFloatStateOf(0.54f) }
 
     LaunchedEffect(frame.id, frame.rawImagePath) {
         rawBitmap = withContext(Dispatchers.IO) {
             DocumentImageProcessor.decodeSampledBitmap(File(frame.rawImagePath), 1400)
+        }
+    }
+
+    // Generate crisp miniature previews for all 5 filters once per warp/rotation
+    LaunchedEffect(isCropPhase, rawBitmap, frame.detectedQuad, frame.rotationDeg) {
+        val raw = rawBitmap ?: return@LaunchedEffect
+        if (!isCropPhase) {
+            val thumbs = withContext(Dispatchers.Default) {
+                val miniWarped = DocumentImageProcessor.warpPerspective(raw, frame.detectedQuad, 150)
+                val miniRotated = if (frame.rotationDeg % 360 != 0) {
+                    DocumentImageProcessor.rotateBitmap(miniWarped, frame.rotationDeg.toFloat())
+                } else {
+                    miniWarped
+                }
+                ScannerFilterType.entries.associateWith { filter ->
+                    DocumentImageProcessor.applyEnhancements(
+                        source = miniRotated,
+                        filter = filter,
+                        brightness = 0f,
+                        contrast = 1f,
+                        sharpness = 0f,
+                        rotationDeg = 0
+                    )
+                }
+            }
+            filterThumbnails = thumbs
         }
     }
 
@@ -157,104 +205,152 @@ fun CropAndFilterScreen(
     ) {
         val raw = rawBitmap ?: return@LaunchedEffect
         if (!isCropPhase) {
-            withContext(Dispatchers.Default) {
-                val warped = DocumentImageProcessor.warpPerspective(raw, frame.detectedQuad, 1200)
-                val enhanced = DocumentImageProcessor.applyEnhancements(
-                    source = warped,
-                    filter = frame.filter,
-                    brightness = frame.brightness,
-                    contrast = frame.contrast,
-                    sharpness = frame.sharpness,
-                    rotationDeg = frame.rotationDeg
-                )
-                val rotatedBefore = if (frame.rotationDeg % 360 != 0) {
-                    DocumentImageProcessor.rotateBitmap(warped, frame.rotationDeg.toFloat())
-                } else {
-                    warped
+            isRenderingPreview = true
+            try {
+                withContext(Dispatchers.Default) {
+                    val warped = DocumentImageProcessor.warpPerspective(raw, frame.detectedQuad, 1200)
+                    val enhanced = DocumentImageProcessor.applyEnhancements(
+                        source = warped,
+                        filter = frame.filter,
+                        brightness = frame.brightness,
+                        contrast = frame.contrast,
+                        sharpness = frame.sharpness,
+                        rotationDeg = frame.rotationDeg
+                    )
+                    val rotatedBefore = if (frame.rotationDeg % 360 != 0) {
+                        DocumentImageProcessor.rotateBitmap(warped, frame.rotationDeg.toFloat())
+                    } else {
+                        warped
+                    }
+                    withContext(Dispatchers.Main) {
+                        warpedBitmap = rotatedBefore
+                        enhancedBitmap = enhanced
+                    }
                 }
-                withContext(Dispatchers.Main) {
-                    warpedBitmap = rotatedBefore
-                    enhancedBitmap = enhanced
-                }
+            } finally {
+                isRenderingPreview = false
             }
         }
     }
 
     ScannerDarkLiquidBackdrop {
+        // Subtle ambient cyan & violet glow accents tuned for dark liquid glass depth
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        (if (isCropPhase) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.VioletGlow).copy(alpha = 0.14f),
+                        Color.Transparent
+                    ),
+                    center = Offset(size.width * 0.85f, size.height * 0.14f),
+                    radius = size.width * 0.72f
+                )
+            )
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.statusBars)
                 .windowInsetsPadding(WindowInsets.navigationBars)
-                .padding(horizontal = 14.dp, vertical = 8.dp),
+                .imePadding()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Top Bar
+            // 1. iOS 27 Floating Liquid Glass Top Header + Phase Switcher
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(
-                    onClick = onBackToCamera,
+                Box(
                     modifier = Modifier
-                        .size(48.dp)
-                        .scannerGlassSurface(CircleShape)
+                        .size(46.dp)
+                        .minimumInteractiveComponentSize()
+                        .iosLiquidGlass(shape = CircleShape, glowAccent = false, fillAlpha = 0.78f)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = ripple(bounded = true)
+                        ) { onBackToCamera() },
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = if (isArabic) "رجوع" else "Back",
-                        tint = ScannerGlassPalette.TextPrimary
+                        tint = ScannerGlassPalette.TextPrimary,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
 
-                // Crop <-> Filters phase switcher pill
+                // Segmented iOS 27 Glass Phase Switcher
                 Row(
                     modifier = Modifier
-                        .scannerGlassSurface(CircleShape, glowBorder = true)
+                        .iosLiquidGlass(shape = CircleShape, glowAccent = true, fillAlpha = 0.78f)
                         .padding(4.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Box(
                         modifier = Modifier
                             .clip(CircleShape)
-                            .background(if (isCropPhase) ScannerGlassPalette.CyanGlow else Color.Transparent)
+                            .background(
+                                if (isCropPhase) {
+                                    Brush.horizontalGradient(
+                                        listOf(ScannerGlassPalette.EdgeOverlayCyan, ScannerGlassPalette.CyanGlow)
+                                    )
+                                } else {
+                                    Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
+                                }
+                            )
                             .clickable { isCropPhase = true }
-                            .padding(horizontal = 14.dp, vertical = 7.dp)
+                            .padding(horizontal = 14.dp, vertical = 8.dp)
                     ) {
                         Text(
-                            text = if (isArabic) "1. القص والمنظور" else "1. Crop",
+                            text = if (isArabic) "1. القص" else "1. Crop",
                             color = if (isCropPhase) Color(0xFF04101B) else ScannerGlassPalette.TextSecondary,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.ExtraBold,
                             fontSize = 12.sp
                         )
                     }
                     Box(
                         modifier = Modifier
                             .clip(CircleShape)
-                            .background(if (!isCropPhase) ScannerGlassPalette.CyanGlow else Color.Transparent)
+                            .background(
+                                if (!isCropPhase) {
+                                    Brush.horizontalGradient(
+                                        listOf(ScannerGlassPalette.EdgeOverlayCyan, ScannerGlassPalette.CyanGlow)
+                                    )
+                                } else {
+                                    Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
+                                }
+                            )
                             .clickable { isCropPhase = false }
-                            .padding(horizontal = 14.dp, vertical = 7.dp)
+                            .padding(horizontal = 14.dp, vertical = 8.dp)
                     ) {
                         Text(
-                            text = if (isArabic) "2. الفلاتر والضبط" else "2. Enhance",
+                            text = if (isArabic) "2. التحسين" else "2. Enhance",
                             color = if (!isCropPhase) Color(0xFF04101B) else ScannerGlassPalette.TextSecondary,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.ExtraBold,
                             fontSize = 12.sp
                         )
                     }
                 }
 
-                IconButton(
-                    onClick = { scannerViewModel.removeBatchFrame(activeIdx) },
+                Box(
                     modifier = Modifier
-                        .size(48.dp)
-                        .scannerGlassSurface(CircleShape)
+                        .size(46.dp)
+                        .minimumInteractiveComponentSize()
+                        .iosLiquidGlass(shape = CircleShape, glowAccent = false, fillAlpha = 0.78f)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = ripple(bounded = true)
+                        ) { scannerViewModel.removeBatchFrame(activeIdx) },
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.DeleteOutline,
                         contentDescription = if (isArabic) "حذف الصفحة" else "Remove Page",
-                        tint = ScannerGlassPalette.RoseGlow
+                        tint = ScannerGlassPalette.RoseGlow,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
@@ -270,9 +366,9 @@ fun CropAndFilterScreen(
                         Box(
                             modifier = Modifier
                                 .clip(CircleShape)
-                                .scannerGlassSurface(CircleShape, glowBorder = selected)
+                                .iosLiquidGlass(CircleShape, glowAccent = selected, fillAlpha = if (selected) 0.86f else 0.56f)
                                 .clickable { scannerViewModel.activeCropIndex.value = idx }
-                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                                .padding(horizontal = 13.dp, vertical = 7.dp)
                         ) {
                             Text(
                                 text = if (isArabic) "صفحة ${idx + 1}" else "Page ${idx + 1}",
@@ -285,12 +381,12 @@ fun CropAndFilterScreen(
                 }
             }
 
-            // Main Interactive Canvas Viewport
+            // 2. Main Interactive Document Stage
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .scannerGlassSurface(RoundedCornerShape(22.dp), glowBorder = true)
+                    .iosLiquidGlass(RoundedCornerShape(26.dp), glowAccent = true, fillAlpha = 0.66f)
                     .clipToBounds()
                     .padding(10.dp),
                 contentAlignment = Alignment.Center
@@ -314,14 +410,17 @@ fun CropAndFilterScreen(
                             beforeBitmap = beforeBmp,
                             afterBitmap = afterBmp,
                             splitFraction = splitComparisonX,
+                            showSplitCompare = showSplitCompare,
+                            isRenderingPreview = isRenderingPreview,
                             isArabic = isArabic,
+                            onToggleCompareMode = { showSplitCompare = !showSplitCompare },
                             onSplitFractionChange = { splitComparisonX = it }
                         )
                     }
                 }
             }
 
-            // Bottom Controls Panel depending on Crop vs Enhance Phase
+            // 3. Bottom Studio Controls depending on Crop vs Enhance Phase
             if (isCropPhase) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -415,76 +514,180 @@ fun CropAndFilterScreen(
                     }
                 }
             } else {
-                // Enhance & Filter Controls
+                // Redesigned iOS 27 Dark Liquid Glass Enhance Studio Controls
+                val hasToneModifications = abs(frame.brightness) > 0.5f ||
+                    abs(frame.contrast - 1f) > 0.02f ||
+                    frame.sharpness > 0.05f ||
+                    frame.rotationDeg % 360 != 0
+
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .scannerGlassSurface(RoundedCornerShape(22.dp), glowBorder = true)
-                        .padding(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // Filter Preset Pills
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // A. Live Thumbnail Filter Strip
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(9.dp),
+                        contentPadding = PaddingValues(horizontal = 2.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         items(ScannerFilterType.entries) { filter ->
                             val selected = frame.filter == filter
-                            Box(
+                            val thumb = filterThumbnails[filter]
+                            val thumbImg = remember(thumb) { thumb?.asImageBitmap() }
+
+                            Column(
                                 modifier = Modifier
+                                    .width(74.dp)
                                     .minimumInteractiveComponentSize()
                                     .testTag("filter_chip_${filter.id}")
-                                    .scannerGlassSurface(
-                                        RoundedCornerShape(14.dp),
-                                        glowBorder = selected,
-                                        fillAlpha = if (selected) 0.92f else 0.50f
+                                    .iosLiquidGlass(
+                                        shape = RoundedCornerShape(18.dp),
+                                        glowAccent = selected,
+                                        fillAlpha = if (selected) 0.88f else 0.56f
                                     )
-                                    .clickable {
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = ripple(bounded = true)
+                                    ) {
                                         scannerViewModel.updateFrameEnhancement(
-                                            activeIdx, filter, frame.brightness, frame.contrast, frame.sharpness, frame.rotationDeg
+                                            activeIdx,
+                                            filter,
+                                            frame.brightness,
+                                            frame.contrast,
+                                            frame.sharpness,
+                                            frame.rotationDeg
                                         )
                                     }
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                                contentAlignment = Alignment.Center
+                                    .padding(6.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(Color(0xFF0A1226))
+                                        .border(
+                                            width = if (selected) 1.3.dp else 0.7.dp,
+                                            color = if (selected) ScannerGlassPalette.CyanGlow else Color.White.copy(alpha = 0.14f),
+                                            shape = RoundedCornerShape(12.dp)
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (thumbImg != null) {
+                                        Image(
+                                            bitmap = thumbImg,
+                                            contentDescription = if (isArabic) filter.labelAr else filter.labelEn,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(16.dp)
+                                                .clip(CircleShape)
+                                                .background(
+                                                    if (selected) ScannerGlassPalette.CyanGlow.copy(alpha = 0.45f)
+                                                    else Color.White.copy(alpha = 0.14f)
+                                                )
+                                        )
+                                    }
+
+                                    if (selected) {
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .padding(4.dp)
+                                                .size(16.dp)
+                                                .clip(CircleShape)
+                                                .background(ScannerGlassPalette.CyanGlow),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = null,
+                                                tint = Color(0xFF04101B),
+                                                modifier = Modifier.size(11.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
                                 Text(
                                     text = if (isArabic) filter.labelAr else filter.labelEn,
                                     color = if (selected) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.TextPrimary,
-                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                    fontSize = 12.sp
+                                    fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
+                                    fontSize = 10.5.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
                     }
 
-                    // Rotate 90 L/R, Auto-Deskew & Sliders toggle
+                    // B. Sleek Quick Action Liquid Glass Pill Row (Rotate, Deskew, Tune, Reset)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            IconButton(
-                                onClick = {
-                                    scannerViewModel.updateFrameEnhancement(
-                                        activeIdx, frame.filter, frame.brightness, frame.contrast, frame.sharpness, (frame.rotationDeg - 90) % 360
-                                    )
-                                },
-                                modifier = Modifier.size(44.dp).scannerGlassSurface(CircleShape)
+                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .minimumInteractiveComponentSize()
+                                    .iosLiquidGlass(CircleShape, fillAlpha = 0.72f)
+                                    .clickable {
+                                        scannerViewModel.updateFrameEnhancement(
+                                            activeIdx,
+                                            frame.filter,
+                                            frame.brightness,
+                                            frame.contrast,
+                                            frame.sharpness,
+                                            (frame.rotationDeg - 90) % 360
+                                        )
+                                    },
+                                contentAlignment = Alignment.Center
                             ) {
-                                Icon(Icons.AutoMirrored.Filled.RotateLeft, contentDescription = "Rotate Left", tint = ScannerGlassPalette.TextPrimary)
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.RotateLeft,
+                                    contentDescription = if (isArabic) "تدوير يسار" else "Rotate Left",
+                                    tint = ScannerGlassPalette.TextPrimary,
+                                    modifier = Modifier.size(19.dp)
+                                )
                             }
-                            IconButton(
-                                onClick = {
-                                    scannerViewModel.updateFrameEnhancement(
-                                        activeIdx, frame.filter, frame.brightness, frame.contrast, frame.sharpness, (frame.rotationDeg + 90) % 360
-                                    )
-                                },
-                                modifier = Modifier.size(44.dp).scannerGlassSurface(CircleShape)
+
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .minimumInteractiveComponentSize()
+                                    .iosLiquidGlass(CircleShape, fillAlpha = 0.72f)
+                                    .clickable {
+                                        scannerViewModel.updateFrameEnhancement(
+                                            activeIdx,
+                                            frame.filter,
+                                            frame.brightness,
+                                            frame.contrast,
+                                            frame.sharpness,
+                                            (frame.rotationDeg + 90) % 360
+                                        )
+                                    },
+                                contentAlignment = Alignment.Center
                             ) {
-                                Icon(Icons.AutoMirrored.Filled.RotateRight, contentDescription = "Rotate Right", tint = ScannerGlassPalette.TextPrimary)
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.RotateRight,
+                                    contentDescription = if (isArabic) "تدوير يمين" else "Rotate Right",
+                                    tint = ScannerGlassPalette.TextPrimary,
+                                    modifier = Modifier.size(19.dp)
+                                )
                             }
+
                             Box(
                                 modifier = Modifier
                                     .height(44.dp)
-                                    .scannerGlassSurface(CircleShape)
+                                    .minimumInteractiveComponentSize()
+                                    .iosLiquidGlass(CircleShape, fillAlpha = 0.72f)
                                     .clickable {
                                         warpedBitmap?.let { wb ->
                                             val angle = DocumentImageProcessor.estimateAutoDeskewAngle(wb)
@@ -498,76 +701,222 @@ fun CropAndFilterScreen(
                                             )
                                         }
                                     }
-                                    .padding(horizontal = 12.dp),
+                                    .padding(horizontal = 13.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Icon(Icons.Default.AutoFixHigh, contentDescription = null, tint = ScannerGlassPalette.VioletGlow, modifier = Modifier.size(16.dp))
-                                    Text(if (isArabic) "استقامة" else "Deskew", color = ScannerGlassPalette.TextPrimary, fontSize = 11.5.sp)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.AutoFixHigh,
+                                        contentDescription = null,
+                                        tint = ScannerGlassPalette.VioletGlow,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        text = if (isArabic) "استقامة" else "Deskew",
+                                        color = ScannerGlassPalette.TextPrimary,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 12.sp
+                                    )
                                 }
                             }
                         }
 
-                        Box(
-                            modifier = Modifier
-                                .height(44.dp)
-                                .scannerGlassSurface(CircleShape, glowBorder = showAdjustSliders)
-                                .clickable { showAdjustSliders = !showAdjustSliders }
-                                .padding(horizontal = 12.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Icon(Icons.Default.Tune, contentDescription = null, tint = ScannerGlassPalette.CyanGlow, modifier = Modifier.size(16.dp))
-                                Text(if (isArabic) "السطوع والتباين" else "Adjust", color = ScannerGlassPalette.TextPrimary, fontSize = 11.5.sp)
+                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                            AnimatedVisibility(visible = hasToneModifications) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(44.dp)
+                                        .minimumInteractiveComponentSize()
+                                        .iosLiquidGlass(CircleShape, fillAlpha = 0.72f)
+                                        .clickable {
+                                            scannerViewModel.updateFrameEnhancement(
+                                                activeIdx,
+                                                frame.filter,
+                                                0f,
+                                                1f,
+                                                0f,
+                                                0
+                                            )
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = if (isArabic) "إعادة الضبط" else "Reset Adjustments",
+                                        tint = ScannerGlassPalette.AmberGlow,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .height(44.dp)
+                                    .minimumInteractiveComponentSize()
+                                    .iosLiquidGlass(
+                                        shape = CircleShape,
+                                        glowAccent = showAdjustSliders,
+                                        fillAlpha = if (showAdjustSliders) 0.88f else 0.72f
+                                    )
+                                    .clickable { showAdjustSliders = !showAdjustSliders }
+                                    .padding(horizontal = 14.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Tune,
+                                        contentDescription = null,
+                                        tint = ScannerGlassPalette.CyanGlow,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        text = if (isArabic) "الضبط" else "Adjust",
+                                        color = if (showAdjustSliders) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.TextPrimary,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp
+                                    )
+                                }
                             }
                         }
                     }
 
-                    if (showAdjustSliders) {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(
-                                text = if (isArabic) "السطوع: ${frame.brightness.toInt()}" else "Brightness: ${frame.brightness.toInt()}",
-                                color = ScannerGlassPalette.TextSecondary, fontSize = 11.sp
-                            )
-                            Slider(
-                                value = frame.brightness,
-                                onValueChange = {
-                                    scannerViewModel.updateFrameEnhancement(activeIdx, frame.filter, it, frame.contrast, frame.sharpness, frame.rotationDeg)
-                                },
-                                valueRange = -60f..60f,
-                                colors = SliderDefaults.colors(thumbColor = ScannerGlassPalette.CyanGlow, activeTrackColor = ScannerGlassPalette.CyanGlow)
-                            )
-                            Text(
-                                text = if (isArabic) "التباين: ${String.format("%.2f", frame.contrast)} • الحدة: ${(frame.sharpness * 100).toInt()}%" else "Contrast: ${String.format("%.2f", frame.contrast)} • Sharpness: ${(frame.sharpness * 100).toInt()}%",
-                                color = ScannerGlassPalette.TextSecondary, fontSize = 11.sp
-                            )
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Slider(
+                    // C. Single-Metric Tabbed iOS 27 Liquid Glass Tuner Card
+                    AnimatedVisibility(
+                        visible = showAdjustSliders,
+                        enter = fadeIn(tween(180)) + expandVertically(tween(220)),
+                        exit = fadeOut(tween(150)) + shrinkVertically(tween(180))
+                    ) {
+                        val activeAccent = when (activeToneMetric) {
+                            0 -> ScannerGlassPalette.CyanGlow
+                            1 -> ScannerGlassPalette.VioletGlow
+                            else -> ScannerGlassPalette.EmeraldGlow
+                        }
+                        val metricValueLabel = when (activeToneMetric) {
+                            0 -> {
+                                val v = frame.brightness.roundToInt()
+                                if (v > 0) "+$v" else "$v"
+                            }
+                            1 -> String.format(Locale.US, "%.2fx", frame.contrast)
+                            else -> "${(frame.sharpness * 100).roundToInt()}%"
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .iosLiquidGlass(RoundedCornerShape(22.dp), glowAccent = true, fillAlpha = 0.82f)
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    val metricTabs = listOf(
+                                        Triple(0, if (isArabic) "السطوع" else "Brightness", ScannerGlassPalette.CyanGlow),
+                                        Triple(1, if (isArabic) "التباين" else "Contrast", ScannerGlassPalette.VioletGlow),
+                                        Triple(2, if (isArabic) "الحدة" else "Sharpness", ScannerGlassPalette.EmeraldGlow)
+                                    )
+                                    metricTabs.forEach { (idx, label, accent) ->
+                                        val isSel = activeToneMetric == idx
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(CircleShape)
+                                                .background(if (isSel) accent.copy(alpha = 0.22f) else Color.Transparent)
+                                                .border(
+                                                    width = if (isSel) 0.9.dp else 0.dp,
+                                                    color = if (isSel) accent.copy(alpha = 0.65f) else Color.Transparent,
+                                                    shape = CircleShape
+                                                )
+                                                .clickable { activeToneMetric = idx }
+                                                .padding(horizontal = 11.dp, vertical = 5.dp)
+                                        ) {
+                                            Text(
+                                                text = label,
+                                                color = if (isSel) accent else ScannerGlassPalette.TextSecondary,
+                                                fontSize = 11.5.sp,
+                                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Box(
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .background(activeAccent.copy(alpha = 0.16f))
+                                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        text = metricValueLabel,
+                                        color = activeAccent,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                }
+                            }
+
+                            when (activeToneMetric) {
+                                0 -> Slider(
+                                    value = frame.brightness,
+                                    onValueChange = {
+                                        scannerViewModel.updateFrameEnhancement(
+                                            activeIdx, frame.filter, it, frame.contrast, frame.sharpness, frame.rotationDeg
+                                        )
+                                    },
+                                    valueRange = -60f..60f,
+                                    colors = SliderDefaults.colors(
+                                        thumbColor = ScannerGlassPalette.CyanGlow,
+                                        activeTrackColor = ScannerGlassPalette.CyanGlow,
+                                        inactiveTrackColor = Color.White.copy(alpha = 0.14f)
+                                    )
+                                )
+                                1 -> Slider(
                                     value = frame.contrast,
                                     onValueChange = {
-                                        scannerViewModel.updateFrameEnhancement(activeIdx, frame.filter, frame.brightness, it, frame.sharpness, frame.rotationDeg)
+                                        scannerViewModel.updateFrameEnhancement(
+                                            activeIdx, frame.filter, frame.brightness, it, frame.sharpness, frame.rotationDeg
+                                        )
                                     },
                                     valueRange = 0.6f..1.8f,
-                                    modifier = Modifier.weight(1f),
-                                    colors = SliderDefaults.colors(thumbColor = ScannerGlassPalette.VioletGlow, activeTrackColor = ScannerGlassPalette.VioletGlow)
+                                    colors = SliderDefaults.colors(
+                                        thumbColor = ScannerGlassPalette.VioletGlow,
+                                        activeTrackColor = ScannerGlassPalette.VioletGlow,
+                                        inactiveTrackColor = Color.White.copy(alpha = 0.14f)
+                                    )
                                 )
-                                Slider(
+                                else -> Slider(
                                     value = frame.sharpness,
                                     onValueChange = {
-                                        scannerViewModel.updateFrameEnhancement(activeIdx, frame.filter, frame.brightness, frame.contrast, it, frame.rotationDeg)
+                                        scannerViewModel.updateFrameEnhancement(
+                                            activeIdx, frame.filter, frame.brightness, frame.contrast, it, frame.rotationDeg
+                                        )
                                     },
                                     valueRange = 0f..1f,
-                                    modifier = Modifier.weight(1f),
-                                    colors = SliderDefaults.colors(thumbColor = ScannerGlassPalette.EmeraldGlow, activeTrackColor = ScannerGlassPalette.EmeraldGlow)
+                                    colors = SliderDefaults.colors(
+                                        thumbColor = ScannerGlassPalette.EmeraldGlow,
+                                        activeTrackColor = ScannerGlassPalette.EmeraldGlow,
+                                        inactiveTrackColor = Color.White.copy(alpha = 0.14f)
+                                    )
                                 )
                             }
                         }
                     }
 
-                    // Document Title + Save Document CTA
+                    // D. Docked Frosted Liquid Glass Document Title & Save Bar
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .iosLiquidGlass(RoundedCornerShape(22.dp), glowAccent = true, fillAlpha = 0.84f)
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         if (appendToDocId == null) {
@@ -582,21 +931,32 @@ fun CropAndFilterScreen(
                                     )
                                 },
                                 singleLine = true,
+                                shape = RoundedCornerShape(16.dp),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = ScannerGlassPalette.CyanGlow,
-                                    unfocusedBorderColor = Color.White.copy(alpha = 0.22f),
+                                    unfocusedBorderColor = Color.White.copy(alpha = 0.18f),
+                                    focusedContainerColor = Color(0xFF0A1122).copy(alpha = 0.60f),
+                                    unfocusedContainerColor = Color(0xFF0A1122).copy(alpha = 0.42f),
                                     focusedTextColor = ScannerGlassPalette.TextPrimary,
-                                    unfocusedTextColor = ScannerGlassPalette.TextPrimary
+                                    unfocusedTextColor = ScannerGlassPalette.TextPrimary,
+                                    cursorColor = ScannerGlassPalette.CyanGlow
                                 ),
                                 modifier = Modifier.weight(1f)
                             )
                         } else {
-                            Spacer(modifier = Modifier.weight(1f))
+                            Text(
+                                text = if (isArabic) "إضافة إلى المستند الحالي" else "Append to current doc",
+                                color = ScannerGlassPalette.TextSecondary,
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.weight(1f)
+                            )
                         }
 
                         Button(
                             onClick = { scannerViewModel.commitBatchToDocument(docTitle, appendToDocId, isArabic) },
                             enabled = !isBusy,
+                            shape = RoundedCornerShape(16.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = ScannerGlassPalette.CyanGlow),
                             modifier = Modifier
                                 .height(52.dp)
@@ -1085,86 +1445,193 @@ private fun BeforeAfterComparisonViewport(
     beforeBitmap: Bitmap,
     afterBitmap: Bitmap,
     splitFraction: Float,
+    showSplitCompare: Boolean,
+    isRenderingPreview: Boolean,
     isArabic: Boolean,
+    onToggleCompareMode: () -> Unit,
     onSplitFractionChange: (Float) -> Unit
 ) {
     var viewportSize by remember { mutableStateOf(IntSize.Zero) }
-    val density = LocalDensity.current
     val beforeImg = remember(beforeBitmap) { beforeBitmap.asImageBitmap() }
     val afterImg = remember(afterBitmap) { afterBitmap.asImageBitmap() }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .onSizeChanged { viewportSize = it }
-            .pointerInput(viewportSize) {
-                detectDragGestures { change, _ ->
-                    change.consume()
-                    val w = viewportSize.width.coerceAtLeast(1).toFloat()
-                    onSplitFractionChange((change.position.x / w).coerceIn(0.08f, 0.92f))
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Force physical LTR coordinate space for the Before/After wipe so splitFraction works identically in Arabic RTL
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(18.dp))
+                    .onSizeChanged { viewportSize = it }
+                    .then(
+                        if (showSplitCompare) {
+                            Modifier.pointerInput(viewportSize) {
+                                detectDragGestures { change, _ ->
+                                    change.consume()
+                                    val w = viewportSize.width.coerceAtLeast(1).toFloat()
+                                    onSplitFractionChange((change.position.x / w).coerceIn(0.08f, 0.92f))
+                                }
+                            }
+                        } else {
+                            Modifier
+                        }
+                    )
+            ) {
+                // Full Enhanced (After) Layer
+                Image(
+                    bitmap = afterImg,
+                    contentDescription = "Enhanced preview",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                if (showSplitCompare) {
+                    // Clipped Original (Before) Layer on the physical Left side
+                    Image(
+                        bitmap = beforeImg,
+                        contentDescription = "Original preview",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .drawWithContent {
+                                clipRect(
+                                    left = 0f,
+                                    top = 0f,
+                                    right = size.width * splitFraction,
+                                    bottom = size.height
+                                ) {
+                                    this@drawWithContent.drawContent()
+                                }
+                            }
+                    )
+
+                    // Glowing Cyan-to-Purple Split Divider Beam & Frosted Handle
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val splitX = size.width * splitFraction
+                        drawLine(
+                            brush = Brush.verticalGradient(
+                                colors = listOf(
+                                    ScannerGlassPalette.EdgeOverlayCyan,
+                                    ScannerGlassPalette.EdgeOverlayPurple,
+                                    ScannerGlassPalette.EdgeOverlayCyan
+                                )
+                            ),
+                            start = Offset(splitX, 0f),
+                            end = Offset(splitX, size.height),
+                            strokeWidth = 2.2.dp.toPx()
+                        )
+                        val cy = size.height / 2f
+                        drawCircle(
+                            color = Color(0xFF0A1224).copy(alpha = 0.88f),
+                            radius = 17.dp.toPx(),
+                            center = Offset(splitX, cy)
+                        )
+                        drawCircle(
+                            brush = Brush.linearGradient(
+                                listOf(ScannerGlassPalette.EdgeOverlayCyan, ScannerGlassPalette.EdgeOverlayPurple)
+                            ),
+                            radius = 17.dp.toPx(),
+                            center = Offset(splitX, cy),
+                            style = Stroke(width = 1.8.dp.toPx())
+                        )
+                        // Mini left/right grip bars inside handle
+                        val barHalfH = 5.dp.toPx()
+                        val gap = 3.5.dp.toPx()
+                        drawLine(
+                            color = ScannerGlassPalette.EdgeOverlayCyan,
+                            start = Offset(splitX - gap, cy - barHalfH),
+                            end = Offset(splitX - gap, cy + barHalfH),
+                            strokeWidth = 1.6.dp.toPx()
+                        )
+                        drawLine(
+                            color = ScannerGlassPalette.EdgeOverlayCyan,
+                            start = Offset(splitX + gap, cy - barHalfH),
+                            end = Offset(splitX + gap, cy + barHalfH),
+                            strokeWidth = 1.6.dp.toPx()
+                        )
+                    }
+
+                    // Before / After Liquid Glass Badges
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.BottomCenter)
+                            .padding(10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .iosLiquidGlass(CircleShape, fillAlpha = 0.80f)
+                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = if (isArabic) "قبل" else "Before",
+                                color = ScannerGlassPalette.TextPrimary,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(ScannerGlassPalette.CyanGlow.copy(alpha = 0.90f))
+                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = if (isArabic) "بعد" else "After",
+                                color = Color(0xFF04101B),
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+                    }
                 }
             }
-    ) {
-        // Right side: Enhanced (After)
-        Image(
-            bitmap = afterImg,
-            contentDescription = "Enhanced preview",
-            contentScale = ContentScale.Fit,
-            modifier = Modifier.fillMaxSize()
-        )
-
-        // Left clipped region: Original (Before)
-        val clipWidthDp = with(density) { (viewportSize.width * splitFraction).toDp() }
-        Box(
-            modifier = Modifier
-                .width(clipWidthDp)
-                .fillMaxSize()
-                .clipToBounds()
-        ) {
-            Image(
-                bitmap = beforeImg,
-                contentDescription = "Original preview",
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .width(with(density) { viewportSize.width.toDp() })
-                    .fillMaxSize()
-            )
         }
 
-        // Split Divider Line + Before/After labels
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val splitX = size.width * splitFraction
-            drawLine(
-                color = ScannerGlassPalette.CyanGlow,
-                start = Offset(splitX, 0f),
-                end = Offset(splitX, size.height),
-                strokeWidth = 2.dp.toPx()
-            )
-            drawCircle(ScannerGlassPalette.CyanGlow, radius = 14.dp.toPx(), center = Offset(splitX, size.height / 2f))
-            drawCircle(Color(0xFF04101B), radius = 6.dp.toPx(), center = Offset(splitX, size.height / 2f))
-        }
-
+        // Floating Top Compare / Full View Mode Pill
         Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween
+                .align(Alignment.TopCenter)
+                .padding(top = 8.dp)
+                .iosLiquidGlass(CircleShape, glowAccent = showSplitCompare, fillAlpha = 0.82f)
+                .clickable { onToggleCompareMode() }
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Box(
                 modifier = Modifier
+                    .size(7.dp)
                     .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.55f))
-                    .padding(horizontal = 8.dp, vertical = 3.dp)
-            ) {
-                Text(if (isArabic) "قبل" else "Before", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            }
+                    .background(if (showSplitCompare) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.EmeraldGlow)
+            )
+            Text(
+                text = if (showSplitCompare) {
+                    if (isArabic) "مقارنة قبل / بعد • اضغط للمعاينة الكاملة" else "Split Compare • Tap for Full"
+                } else {
+                    if (isArabic) "معاينة كاملة • اضغط للمقارنة" else "Full Preview • Tap to Compare"
+                },
+                color = ScannerGlassPalette.TextPrimary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+
+        if (isRenderingPreview) {
             Box(
                 modifier = Modifier
-                    .clip(CircleShape)
-                    .background(ScannerGlassPalette.CyanGlow.copy(alpha = 0.85f))
-                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                    .align(Alignment.TopEnd)
+                    .padding(10.dp)
+                    .size(28.dp)
+                    .iosLiquidGlass(CircleShape, fillAlpha = 0.82f),
+                contentAlignment = Alignment.Center
             ) {
-                Text(if (isArabic) "بعد" else "After", color = Color(0xFF04101B), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                CircularProgressIndicator(
+                    color = ScannerGlassPalette.CyanGlow,
+                    modifier = Modifier.size(15.dp),
+                    strokeWidth = 2.dp
+                )
             }
         }
     }

@@ -479,7 +479,7 @@ fun NoteEditorScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -529,14 +529,13 @@ fun NoteEditorScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // One-Tap Copy Current Page Content Button (Read / View-Only Mode) beside Background Button
+                    // One-Tap Copy Current Page Button in Read / View-Only Mode
                     if (!isEditMode) {
                         val currentReadPageIdx = pagerState.currentPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
                         val copyAccent = Color(0xFF10B981)
                         Box(
                             modifier = Modifier
                                 .size(44.dp)
-                                .minimumInteractiveComponentSize()
                                 .testTag("editor_copy_page_button")
                                 .liquidGlass(
                                     isDark = effectiveDark,
@@ -675,7 +674,7 @@ fun NoteEditorScreen(
                                 imageVector = Icons.Default.Check,
                                 contentDescription = if (isArabic) "حفظ" else "Save",
                                 tint = textColor,
-                                modifier = Modifier.size(21.dp)
+                                modifier = Modifier.size(22.dp)
                             )
                         }
                     } else {
@@ -1646,6 +1645,7 @@ fun NoteEditorScreen(
                                         },
                                         onClick = {
                                             showMoreMenu = false
+                                            playbackController.stop()
                                             onToggleArchive()
                                         }
                                     )
@@ -1666,6 +1666,7 @@ fun NoteEditorScreen(
                                         },
                                         onClick = {
                                             showMoreMenu = false
+                                            playbackController.stop()
                                             onDelete()
                                         }
                                     )
