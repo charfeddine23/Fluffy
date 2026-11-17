@@ -801,7 +801,7 @@ object DocumentEdgeDetector {
  */
 class CornerStabilityTracker(
     private val windowSize: Int = 5,
-    private val steadyDurationMs: Long = 1200L,
+    private val steadyDurationMs: Long = 1000L,
     private val jitterThresholdNorm: Float = 0.022f
 ) {
     private val buffer = ArrayDeque<DocumentQuad>(windowSize)

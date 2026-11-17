@@ -7,6 +7,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -54,9 +56,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -87,6 +90,7 @@ import com.charfeddine.fluffy.scanner.ui.theme.ScannerGlassPalette
 import com.charfeddine.fluffy.scanner.ui.theme.scannerGlassSurface
 import com.charfeddine.fluffy.scanner.utils.DocumentImageProcessor
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.hypot
@@ -115,6 +119,7 @@ fun CropAndFilterScreen(
         return
     }
 
+    val uiScope = rememberCoroutineScope()
     var isCropPhase by remember(frame.id) { mutableStateOf(true) }
     var docTitle by remember { mutableStateOf("") }
     var showAdjustSliders by remember { mutableStateOf(false) }
@@ -321,8 +326,11 @@ fun CropAndFilterScreen(
                             .height(48.dp)
                             .scannerGlassSurface(RoundedCornerShape(14.dp))
                             .clickable {
-                                rawBitmap?.let {
-                                    val auto = DocumentImageProcessor.detectQuadFromBitmap(it)
+                                val bmp = rawBitmap ?: return@clickable
+                                uiScope.launch {
+                                    val auto = withContext(Dispatchers.Default) {
+                                        DocumentImageProcessor.detectQuadFromBitmap(bmp)
+                                    }
                                     scannerViewModel.updateFrameQuad(activeIdx, auto)
                                 }
                             },
@@ -576,110 +584,276 @@ private fun InteractiveCropWithMagnifier(
 ) {
     var boxSize by remember { mutableStateOf(IntSize.Zero) }
     var activeHandle by remember { mutableStateOf<DragHandleTarget?>(null) }
-    var fingerOverlayPos by remember { mutableStateOf<Offset?>(null) }
+    var activeAnchorScreenPos by remember { mutableStateOf<Offset?>(null) }
+    var localQuad by remember(bitmap) { mutableStateOf(quad) }
     val density = LocalDensity.current
+
+    // Sync external quad updates (e.g., Auto-Fit or Full Frame) only when not actively dragging
+    LaunchedEffect(quad) {
+        if (activeHandle == null) {
+            localQuad = quad
+        }
+    }
+
+    val latestOnQuadCommit by rememberUpdatedState(onQuadChange)
+    val latestLocalQuad by rememberUpdatedState(localQuad)
+    val imageBitmap = remember(bitmap) { bitmap.asImageBitmap() }
+
+    val edgePadPx = with(density) { 14.dp.toPx() }
+    val bw = bitmap.width.toFloat().coerceAtLeast(1f)
+    val bh = bitmap.height.toFloat().coerceAtLeast(1f)
+    val cw = boxSize.width.toFloat().coerceAtLeast(1f)
+    val ch = boxSize.height.toFloat().coerceAtLeast(1f)
+    val availW = (cw - edgePadPx * 2f).coerceAtLeast(1f)
+    val availH = (ch - edgePadPx * 2f).coerceAtLeast(1f)
+    val scale = minOf(availW / bw, availH / bh)
+    val drawW = bw * scale
+    val drawH = bh * scale
+    val offsetX = (cw - drawW) / 2f
+    val offsetY = (ch - drawH) / 2f
+
+    fun normToScreen(p: PointNorm): Offset = Offset(
+        x = offsetX + p.x * drawW,
+        y = offsetY + p.y * drawH
+    )
+
+    fun screenToNorm(off: Offset): PointNorm = PointNorm(
+        x = ((off.x - offsetX) / drawW).coerceIn(0f, 1f),
+        y = ((off.y - offsetY) / drawH).coerceIn(0f, 1f)
+    )
+
+    fun screenToNormUnclamped(off: Offset): PointNorm = PointNorm(
+        x = (off.x - offsetX) / drawW,
+        y = (off.y - offsetY) / drawH
+    )
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .onSizeChanged { boxSize = it }
     ) {
-        val bw = bitmap.width.toFloat().coerceAtLeast(1f)
-        val bh = bitmap.height.toFloat().coerceAtLeast(1f)
-        val cw = boxSize.width.toFloat().coerceAtLeast(1f)
-        val ch = boxSize.height.toFloat().coerceAtLeast(1f)
-        val scale = minOf(cw / bw, ch / bh)
-        val drawW = bw * scale
-        val drawH = bh * scale
-        val offsetX = (cw - drawW) / 2f
-        val offsetY = (ch - drawH) / 2f
-
-        fun normToScreen(p: PointNorm) = Offset(offsetX + p.x * drawW, offsetY + p.y * drawH)
-        fun screenToNorm(off: Offset) = PointNorm(
-            x = ((off.x - offsetX) / drawW).coerceIn(0.02f, 0.98f),
-            y = ((off.y - offsetY) / drawH).coerceIn(0.02f, 0.98f)
-        )
-
         Image(
-            bitmap = bitmap.asImageBitmap(),
+            bitmap = imageBitmap,
             contentDescription = "Crop preview",
             contentScale = ContentScale.Fit,
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(14.dp)
         )
 
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(quad, boxSize) {
-                    detectDragGestures(
-                        onDragStart = { start ->
-                            val tl = normToScreen(quad.topLeft)
-                            val tr = normToScreen(quad.topRight)
-                            val br = normToScreen(quad.bottomRight)
-                            val bl = normToScreen(quad.bottomLeft)
-                            val handles = listOf(
-                                DragHandleTarget.TL to tl,
-                                DragHandleTarget.TR to tr,
-                                DragHandleTarget.BR to br,
-                                DragHandleTarget.BL to bl,
-                                DragHandleTarget.TOP_MID to Offset((tl.x + tr.x) / 2f, (tl.y + tr.y) / 2f),
-                                DragHandleTarget.RIGHT_MID to Offset((tr.x + br.x) / 2f, (tr.y + br.y) / 2f),
-                                DragHandleTarget.BOTTOM_MID to Offset((bl.x + br.x) / 2f, (bl.y + br.y) / 2f),
-                                DragHandleTarget.LEFT_MID to Offset((tl.x + bl.x) / 2f, (tl.y + bl.y) / 2f)
-                            )
-                            val hitRadius = with(density) { 40.dp.toPx() }
-                            val nearest = handles.minByOrNull { hypot((it.second.x - start.x).toDouble(), (it.second.y - start.y).toDouble()) }
-                            if (nearest != null && hypot((nearest.second.x - start.x).toDouble(), (nearest.second.y - start.y).toDouble()) <= hitRadius) {
-                                activeHandle = nearest.first
-                                fingerOverlayPos = start
-                            }
-                        },
-                        onDrag = { change, dragAmount ->
-                            val target = activeHandle ?: return@detectDragGestures
-                            change.consume()
-                            val pt = screenToNorm(change.position)
-                            val dx = dragAmount.x / drawW
-                            val dy = dragAmount.y / drawH
-                            fingerOverlayPos = change.position
-                            val updated = when (target) {
-                                DragHandleTarget.TL -> quad.copy(topLeft = pt)
-                                DragHandleTarget.TR -> quad.copy(topRight = pt)
-                                DragHandleTarget.BR -> quad.copy(bottomRight = pt)
-                                DragHandleTarget.BL -> quad.copy(bottomLeft = pt)
-                                DragHandleTarget.TOP_MID -> quad.copy(
-                                    topLeft = quad.topLeft.copy(y = (quad.topLeft.y + dy).coerceIn(0.02f, 0.90f)),
-                                    topRight = quad.topRight.copy(y = (quad.topRight.y + dy).coerceIn(0.02f, 0.90f))
-                                )
-                                DragHandleTarget.BOTTOM_MID -> quad.copy(
-                                    bottomLeft = quad.bottomLeft.copy(y = (quad.bottomLeft.y + dy).coerceIn(0.10f, 0.98f)),
-                                    bottomRight = quad.bottomRight.copy(y = (quad.bottomRight.y + dy).coerceIn(0.10f, 0.98f))
-                                )
-                                DragHandleTarget.LEFT_MID -> quad.copy(
-                                    topLeft = quad.topLeft.copy(x = (quad.topLeft.x + dx).coerceIn(0.02f, 0.90f)),
-                                    bottomLeft = quad.bottomLeft.copy(x = (quad.bottomLeft.x + dx).coerceIn(0.02f, 0.90f))
-                                )
-                                DragHandleTarget.RIGHT_MID -> quad.copy(
-                                    topRight = quad.topRight.copy(x = (quad.topRight.x + dx).coerceIn(0.10f, 0.98f)),
-                                    bottomRight = quad.bottomRight.copy(x = (quad.bottomRight.x + dx).coerceIn(0.10f, 0.98f))
-                                )
-                            }
-                            onQuadChange(updated)
-                        },
-                        onDragEnd = {
-                            activeHandle = null
-                            fingerOverlayPos = null
-                        },
-                        onDragCancel = {
-                            activeHandle = null
-                            fingerOverlayPos = null
+                .pointerInput(bitmap, boxSize) {
+                    if (boxSize.width <= 0 || boxSize.height <= 0) return@pointerInput
+                    val cornerHitRadius = with(density) { 52.dp.toPx() }
+                    val midHitRadius = with(density) { 44.dp.toPx() }
+                    val minGap = 0.04f
+
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val q0 = latestLocalQuad
+                        val tl0 = normToScreen(q0.topLeft)
+                        val tr0 = normToScreen(q0.topRight)
+                        val br0 = normToScreen(q0.bottomRight)
+                        val bl0 = normToScreen(q0.bottomLeft)
+
+                        val cornerHandles = listOf(
+                            DragHandleTarget.TL to tl0,
+                            DragHandleTarget.TR to tr0,
+                            DragHandleTarget.BR to br0,
+                            DragHandleTarget.BL to bl0
+                        )
+                        val midHandles = listOf(
+                            DragHandleTarget.TOP_MID to Offset((tl0.x + tr0.x) / 2f, (tl0.y + tr0.y) / 2f),
+                            DragHandleTarget.RIGHT_MID to Offset((tr0.x + br0.x) / 2f, (tr0.y + br0.y) / 2f),
+                            DragHandleTarget.BOTTOM_MID to Offset((bl0.x + br0.x) / 2f, (bl0.y + br0.y) / 2f),
+                            DragHandleTarget.LEFT_MID to Offset((tl0.x + bl0.x) / 2f, (tl0.y + bl0.y) / 2f)
+                        )
+
+                        val bestCorner = cornerHandles.minByOrNull { (_, p) ->
+                            hypot((p.x - down.position.x).toDouble(), (p.y - down.position.y).toDouble())
                         }
-                    )
+                        val bestCornerDist = bestCorner?.second?.let { p ->
+                            hypot((p.x - down.position.x).toDouble(), (p.y - down.position.y).toDouble())
+                        } ?: Double.MAX_VALUE
+
+                        val bestMid = midHandles.minByOrNull { (_, p) ->
+                            hypot((p.x - down.position.x).toDouble(), (p.y - down.position.y).toDouble())
+                        }
+                        val bestMidDist = bestMid?.second?.let { p ->
+                            hypot((p.x - down.position.x).toDouble(), (p.y - down.position.y).toDouble())
+                        } ?: Double.MAX_VALUE
+
+                        // Pick midpoint if directly targeted; otherwise prioritize corners
+                        val picked: Pair<DragHandleTarget, Offset> = when {
+                            bestMid != null && bestMidDist <= midHitRadius && bestMidDist < bestCornerDist * 0.65 -> bestMid
+                            bestCorner != null && bestCornerDist <= cornerHitRadius -> bestCorner
+                            bestMid != null && bestMidDist <= midHitRadius -> bestMid
+                            else -> return@awaitEachGesture
+                        }
+
+                        down.consume()
+                        val target = picked.first
+                        val grabOffset = picked.second - down.position
+                        val startNorm = screenToNormUnclamped(down.position)
+
+                        activeHandle = target
+                        activeAnchorScreenPos = picked.second
+
+                        try {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id }
+                                    ?: event.changes.firstOrNull()
+                                    ?: break
+
+                                if (!change.pressed) {
+                                    change.consume()
+                                    break
+                                }
+
+                                change.consume()
+                                val movedPos = change.position + grabOffset
+                                val targetNorm = screenToNorm(movedPos)
+                                val currUnclamped = screenToNormUnclamped(change.position)
+                                val totalDx = currUnclamped.x - startNorm.x
+                                val totalDy = currUnclamped.y - startNorm.y
+
+                                val updated = when (target) {
+                                    DragHandleTarget.TL -> {
+                                        val maxX = (q0.topRight.x - minGap).coerceAtLeast(0f)
+                                        val maxY = (q0.bottomLeft.y - minGap).coerceAtLeast(0f)
+                                        val pt = PointNorm(
+                                            x = targetNorm.x.coerceIn(0f, maxX),
+                                            y = targetNorm.y.coerceIn(0f, maxY)
+                                        )
+                                        q0.copy(topLeft = pt)
+                                    }
+
+                                    DragHandleTarget.TR -> {
+                                        val minX = (q0.topLeft.x + minGap).coerceAtMost(1f)
+                                        val maxY = (q0.bottomRight.y - minGap).coerceAtLeast(0f)
+                                        val pt = PointNorm(
+                                            x = targetNorm.x.coerceIn(minX, 1f),
+                                            y = targetNorm.y.coerceIn(0f, maxY)
+                                        )
+                                        q0.copy(topRight = pt)
+                                    }
+
+                                    DragHandleTarget.BR -> {
+                                        val minX = (q0.bottomLeft.x + minGap).coerceAtMost(1f)
+                                        val minY = (q0.topRight.y + minGap).coerceAtMost(1f)
+                                        val pt = PointNorm(
+                                            x = targetNorm.x.coerceIn(minX, 1f),
+                                            y = targetNorm.y.coerceIn(minY, 1f)
+                                        )
+                                        q0.copy(bottomRight = pt)
+                                    }
+
+                                    DragHandleTarget.BL -> {
+                                        val maxX = (q0.bottomRight.x - minGap).coerceAtLeast(0f)
+                                        val minY = (q0.topLeft.y + minGap).coerceAtMost(1f)
+                                        val pt = PointNorm(
+                                            x = targetNorm.x.coerceIn(0f, maxX),
+                                            y = targetNorm.y.coerceIn(minY, 1f)
+                                        )
+                                        q0.copy(bottomLeft = pt)
+                                    }
+
+                                    DragHandleTarget.TOP_MID -> {
+                                        val minDy = maxOf(-q0.topLeft.y, -q0.topRight.y)
+                                        val maxDy = minOf(
+                                            q0.bottomLeft.y - minGap - q0.topLeft.y,
+                                            q0.bottomRight.y - minGap - q0.topRight.y
+                                        )
+                                        val dy = totalDy.coerceIn(minOf(minDy, maxDy), maxOf(minDy, maxDy))
+                                        q0.copy(
+                                            topLeft = q0.topLeft.copy(y = (q0.topLeft.y + dy).coerceIn(0f, 1f)),
+                                            topRight = q0.topRight.copy(y = (q0.topRight.y + dy).coerceIn(0f, 1f))
+                                        )
+                                    }
+
+                                    DragHandleTarget.BOTTOM_MID -> {
+                                        val minDy = maxOf(
+                                            q0.topLeft.y + minGap - q0.bottomLeft.y,
+                                            q0.topRight.y + minGap - q0.bottomRight.y
+                                        )
+                                        val maxDy = minOf(1f - q0.bottomLeft.y, 1f - q0.bottomRight.y)
+                                        val dy = totalDy.coerceIn(minOf(minDy, maxDy), maxOf(minDy, maxDy))
+                                        q0.copy(
+                                            bottomLeft = q0.bottomLeft.copy(y = (q0.bottomLeft.y + dy).coerceIn(0f, 1f)),
+                                            bottomRight = q0.bottomRight.copy(y = (q0.bottomRight.y + dy).coerceIn(0f, 1f))
+                                        )
+                                    }
+
+                                    DragHandleTarget.LEFT_MID -> {
+                                        val minDx = maxOf(-q0.topLeft.x, -q0.bottomLeft.x)
+                                        val maxDx = minOf(
+                                            q0.topRight.x - minGap - q0.topLeft.x,
+                                            q0.bottomRight.x - minGap - q0.bottomLeft.x
+                                        )
+                                        val dx = totalDx.coerceIn(minOf(minDx, maxDx), maxOf(minDx, maxDx))
+                                        q0.copy(
+                                            topLeft = q0.topLeft.copy(x = (q0.topLeft.x + dx).coerceIn(0f, 1f)),
+                                            bottomLeft = q0.bottomLeft.copy(x = (q0.bottomLeft.x + dx).coerceIn(0f, 1f))
+                                        )
+                                    }
+
+                                    DragHandleTarget.RIGHT_MID -> {
+                                        val minDx = maxOf(
+                                            q0.topLeft.x + minGap - q0.topRight.x,
+                                            q0.bottomLeft.x + minGap - q0.bottomRight.x
+                                        )
+                                        val maxDx = minOf(1f - q0.topRight.x, 1f - q0.bottomRight.x)
+                                        val dx = totalDx.coerceIn(minOf(minDx, maxDx), maxOf(minDx, maxDx))
+                                        q0.copy(
+                                            topRight = q0.topRight.copy(x = (q0.topRight.x + dx).coerceIn(0f, 1f)),
+                                            bottomRight = q0.bottomRight.copy(x = (q0.bottomRight.x + dx).coerceIn(0f, 1f))
+                                        )
+                                    }
+                                }
+
+                                localQuad = updated
+                                activeAnchorScreenPos = when (target) {
+                                    DragHandleTarget.TL -> normToScreen(updated.topLeft)
+                                    DragHandleTarget.TR -> normToScreen(updated.topRight)
+                                    DragHandleTarget.BR -> normToScreen(updated.bottomRight)
+                                    DragHandleTarget.BL -> normToScreen(updated.bottomLeft)
+                                    DragHandleTarget.TOP_MID -> {
+                                        val a = normToScreen(updated.topLeft)
+                                        val b = normToScreen(updated.topRight)
+                                        Offset((a.x + b.x) / 2f, (a.y + b.y) / 2f)
+                                    }
+                                    DragHandleTarget.RIGHT_MID -> {
+                                        val a = normToScreen(updated.topRight)
+                                        val b = normToScreen(updated.bottomRight)
+                                        Offset((a.x + b.x) / 2f, (a.y + b.y) / 2f)
+                                    }
+                                    DragHandleTarget.BOTTOM_MID -> {
+                                        val a = normToScreen(updated.bottomLeft)
+                                        val b = normToScreen(updated.bottomRight)
+                                        Offset((a.x + b.x) / 2f, (a.y + b.y) / 2f)
+                                    }
+                                    DragHandleTarget.LEFT_MID -> {
+                                        val a = normToScreen(updated.topLeft)
+                                        val b = normToScreen(updated.bottomLeft)
+                                        Offset((a.x + b.x) / 2f, (a.y + b.y) / 2f)
+                                    }
+                                }
+                            }
+                        } finally {
+                            activeHandle = null
+                            activeAnchorScreenPos = null
+                            latestOnQuadCommit(latestLocalQuad)
+                        }
+                    }
                 }
         ) {
-            val tl = normToScreen(quad.topLeft)
-            val tr = normToScreen(quad.topRight)
-            val br = normToScreen(quad.bottomRight)
-            val bl = normToScreen(quad.bottomLeft)
+            val tl = normToScreen(localQuad.topLeft)
+            val tr = normToScreen(localQuad.topRight)
+            val br = normToScreen(localQuad.bottomRight)
+            val bl = normToScreen(localQuad.bottomLeft)
 
             val path = Path().apply {
                 moveTo(tl.x, tl.y)
@@ -697,27 +871,47 @@ private fun InteractiveCropWithMagnifier(
                 style = Stroke(width = 2.6.dp.toPx())
             )
 
-            // Corner handles
-            listOf(tl, tr, br, bl).forEach { pt ->
-                drawCircle(ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.35f), radius = 14.dp.toPx(), center = pt)
-                drawCircle(ScannerGlassPalette.EdgeOverlayCyan, radius = 9.5.dp.toPx(), center = pt)
-                drawCircle(Color.White, radius = 4.5.dp.toPx(), center = pt)
+            // Corner handles with expanded active glow
+            listOf(
+                DragHandleTarget.TL to tl,
+                DragHandleTarget.TR to tr,
+                DragHandleTarget.BR to br,
+                DragHandleTarget.BL to bl
+            ).forEach { (hTarget, pt) ->
+                val isSelected = activeHandle == hTarget
+                drawCircle(
+                    color = ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = if (isSelected) 0.55f else 0.30f),
+                    radius = (if (isSelected) 20.dp else 14.dp).toPx(),
+                    center = pt
+                )
+                drawCircle(
+                    color = ScannerGlassPalette.EdgeOverlayCyan,
+                    radius = (if (isSelected) 12.dp else 9.5.dp).toPx(),
+                    center = pt
+                )
+                drawCircle(Color.White, radius = (if (isSelected) 5.5.dp else 4.5.dp).toPx(), center = pt)
             }
+
             // Edge mid-point handles
             listOf(
-                Offset((tl.x + tr.x) / 2f, (tl.y + tr.y) / 2f),
-                Offset((tr.x + br.x) / 2f, (tr.y + br.y) / 2f),
-                Offset((bl.x + br.x) / 2f, (bl.y + br.y) / 2f),
-                Offset((tl.x + bl.x) / 2f, (tl.y + bl.y) / 2f)
-            ).forEach { mid ->
-                drawCircle(ScannerGlassPalette.EdgeOverlayPurple, radius = 7.dp.toPx(), center = mid)
-                drawCircle(Color.White, radius = 3.dp.toPx(), center = mid)
+                DragHandleTarget.TOP_MID to Offset((tl.x + tr.x) / 2f, (tl.y + tr.y) / 2f),
+                DragHandleTarget.RIGHT_MID to Offset((tr.x + br.x) / 2f, (tr.y + br.y) / 2f),
+                DragHandleTarget.BOTTOM_MID to Offset((bl.x + br.x) / 2f, (bl.y + br.y) / 2f),
+                DragHandleTarget.LEFT_MID to Offset((tl.x + bl.x) / 2f, (tl.y + bl.y) / 2f)
+            ).forEach { (hTarget, mid) ->
+                val isSelected = activeHandle == hTarget
+                drawCircle(
+                    color = ScannerGlassPalette.EdgeOverlayPurple,
+                    radius = (if (isSelected) 9.5.dp else 7.dp).toPx(),
+                    center = mid
+                )
+                drawCircle(Color.White, radius = (if (isSelected) 4.dp else 3.dp).toPx(), center = mid)
             }
         }
 
-        // Real-Time Zoom Magnifier Loupe above user's finger during drag
-        val activePos = fingerOverlayPos
-        if (activeHandle != null && activePos != null) {
+        // Zero-Allocation GPU Real-Time Zoom Magnifier Loupe
+        val activePos = activeAnchorScreenPos
+        if (activeHandle != null && activePos != null && boxSize.width > 0 && boxSize.height > 0) {
             val norm = screenToNorm(activePos)
             val loupePx = with(density) { 104.dp.toPx() }
             val cropRegionSize = (minOf(bitmap.width, bitmap.height) * 0.16f).roundToInt().coerceIn(60, 260)
@@ -728,37 +922,47 @@ private fun InteractiveCropWithMagnifier(
             val safeW = minOf(cropRegionSize, bitmap.width - srcLeft).coerceAtLeast(1)
             val safeH = minOf(cropRegionSize, bitmap.height - srcTop).coerceAtLeast(1)
 
-            val loupeBmp = remember(srcLeft, srcTop, safeW, safeH, bitmap) {
-                Bitmap.createBitmap(bitmap, srcLeft, srcTop, safeW, safeH)
+            val gapAbove = with(density) { 42.dp.toPx() }
+            val preferAboveY = activePos.y - loupePx - gapAbove
+            val loupeY = if (preferAboveY >= 8f) {
+                preferAboveY
+            } else {
+                (activePos.y + gapAbove).coerceAtMost((boxSize.height - loupePx - 8f).coerceAtLeast(8f))
             }
             val loupeX = (activePos.x - loupePx / 2f).coerceIn(8f, (boxSize.width - loupePx - 8f).coerceAtLeast(8f))
-            val loupeY = (activePos.y - loupePx - with(density) { 36.dp.toPx() }).coerceAtLeast(8f)
 
             Box(
                 modifier = Modifier
                     .offset { IntOffset(loupeX.roundToInt(), loupeY.roundToInt()) }
                     .size(104.dp)
                     .clip(CircleShape)
-                    .border(2.5.dp, ScannerGlassPalette.CyanGlow, CircleShape)
+                    .background(Color.Black)
+                    .border(2.5.dp, ScannerGlassPalette.EdgeOverlayCyan, CircleShape)
             ) {
-                Image(
-                    bitmap = loupeBmp.asImageBitmap(),
-                    contentDescription = "Zoom Loupe",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
                 Canvas(modifier = Modifier.fillMaxSize()) {
+                    drawImage(
+                        image = imageBitmap,
+                        srcOffset = IntOffset(srcLeft, srcTop),
+                        srcSize = IntSize(safeW, safeH),
+                        dstOffset = IntOffset.Zero,
+                        dstSize = IntSize(size.width.roundToInt().coerceAtLeast(1), size.height.roundToInt().coerceAtLeast(1))
+                    )
                     drawLine(
-                        ScannerGlassPalette.CyanGlow.copy(alpha = 0.75f),
+                        ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.80f),
                         Offset(size.width / 2f, 0f),
                         Offset(size.width / 2f, size.height),
                         strokeWidth = 1.dp.toPx()
                     )
                     drawLine(
-                        ScannerGlassPalette.CyanGlow.copy(alpha = 0.75f),
+                        ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.80f),
                         Offset(0f, size.height / 2f),
                         Offset(size.width, size.height / 2f),
                         strokeWidth = 1.dp.toPx()
+                    )
+                    drawCircle(
+                        color = ScannerGlassPalette.EdgeOverlayCyan,
+                        radius = 3.5.dp.toPx(),
+                        center = Offset(size.width / 2f, size.height / 2f)
                     )
                 }
             }
@@ -776,6 +980,8 @@ private fun BeforeAfterComparisonViewport(
 ) {
     var viewportSize by remember { mutableStateOf(IntSize.Zero) }
     val density = LocalDensity.current
+    val beforeImg = remember(beforeBitmap) { beforeBitmap.asImageBitmap() }
+    val afterImg = remember(afterBitmap) { afterBitmap.asImageBitmap() }
 
     Box(
         modifier = Modifier
@@ -791,7 +997,7 @@ private fun BeforeAfterComparisonViewport(
     ) {
         // Right side: Enhanced (After)
         Image(
-            bitmap = afterBitmap.asImageBitmap(),
+            bitmap = afterImg,
             contentDescription = "Enhanced preview",
             contentScale = ContentScale.Fit,
             modifier = Modifier.fillMaxSize()
@@ -806,7 +1012,7 @@ private fun BeforeAfterComparisonViewport(
                 .clipToBounds()
         ) {
             Image(
-                bitmap = beforeBitmap.asImageBitmap(),
+                bitmap = beforeImg,
                 contentDescription = "Original preview",
                 contentScale = ContentScale.Fit,
                 modifier = Modifier

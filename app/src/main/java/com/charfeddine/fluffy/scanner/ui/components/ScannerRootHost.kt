@@ -1,5 +1,8 @@
 package com.charfeddine.fluffy.scanner.ui.components
 
+import android.app.Activity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -22,6 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -34,6 +38,7 @@ import com.charfeddine.fluffy.scanner.ui.screens.DocumentDetailEditorScreen
 import com.charfeddine.fluffy.scanner.ui.screens.ScannerHubScreen
 import com.charfeddine.fluffy.scanner.ui.theme.ScannerGlassPalette
 import com.charfeddine.fluffy.scanner.ui.theme.scannerGlassSurface
+import com.charfeddine.fluffy.scanner.utils.MlKitDocumentScannerHelper
 
 @Composable
 fun ScannerRootHost(
@@ -43,12 +48,43 @@ fun ScannerRootHost(
     onExitScanner: () -> Unit,
     scannerViewModel: ScannerViewModel = viewModel()
 ) {
+    val context = LocalContext.current
     val route by scannerViewModel.currentRoute.collectAsState()
     val statusMsg by scannerViewModel.statusMessage.collectAsState()
     val hasPin by scannerViewModel.hasPinConfigured.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
     var pendingUnlockTarget by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
+    var mlKitAppendDocId by remember { mutableStateOf<String?>(null) }
+
+    val mlKitScannerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val payload = MlKitDocumentScannerHelper.parseResult(result.data)
+            if (payload != null) {
+                scannerViewModel.importMlKitScanResult(
+                    pageUris = payload.pageImageUris,
+                    pdfUri = payload.pdfUri,
+                    appendToDocId = mlKitAppendDocId,
+                    isArabic = isArabic
+                )
+            }
+        }
+        mlKitAppendDocId = null
+    }
+
+    fun launchPrimaryScanner(appendToDocId: String?) {
+        mlKitAppendDocId = appendToDocId
+        MlKitDocumentScannerHelper.launch(
+            context = context,
+            launcher = mlKitScannerLauncher,
+            onFallbackToCustomCamera = {
+                mlKitAppendDocId = null
+                scannerViewModel.openCameraScanner(appendToDocId = appendToDocId)
+            }
+        )
+    }
 
     LaunchedEffect(statusMsg) {
         statusMsg?.let {
@@ -71,6 +107,7 @@ fun ScannerRootHost(
                     ScannerHubScreen(
                         scannerViewModel = scannerViewModel,
                         isArabic = isArabic,
+                        onLaunchSmartScan = { launchPrimaryScanner(appendToDocId = null) },
                         onRequestProtectedAccess = { targetId, onUnlocked ->
                             pendingUnlockTarget = targetId to onUnlocked
                         },
@@ -111,7 +148,7 @@ fun ScannerRootHost(
                         documentId = current.documentId,
                         isArabic = isArabic,
                         onAddMorePages = {
-                            scannerViewModel.openCameraScanner(appendToDocId = current.documentId)
+                            launchPrimaryScanner(appendToDocId = current.documentId)
                         },
                         onBackToHub = { scannerViewModel.navigateBackToHub() }
                     )

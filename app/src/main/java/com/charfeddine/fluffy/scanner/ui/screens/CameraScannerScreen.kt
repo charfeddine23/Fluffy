@@ -126,10 +126,12 @@ import com.charfeddine.fluffy.scanner.utils.DocumentImageProcessor
 import com.charfeddine.fluffy.scanner.utils.OfflineOcrAndBarcodeEngine
 import com.charfeddine.fluffy.scanner.utils.TrackedEdgeState
 import com.google.mlkit.vision.common.InputImage
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.delay
 import java.io.File
 import java.util.UUID
-import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.max
 
@@ -187,7 +189,7 @@ fun CameraScannerScreen(
     var barcodeResult by remember { mutableStateOf<BarcodeScanResult?>(null) }
     var showCapturedBanner by remember { mutableStateOf(false) }
     var showCaptureFlash by remember { mutableStateOf(false) }
-    val stabilityTracker = remember { CornerStabilityTracker(windowSize = 5, steadyDurationMs = 1200L) }
+    val stabilityTracker = remember { CornerStabilityTracker(windowSize = 5, steadyDurationMs = 1000L) }
 
     // Tilt / Leveler accelerometer state
     var tiltRollDeg by remember { mutableFloatStateOf(0f) }
@@ -213,8 +215,9 @@ fun CameraScannerScreen(
 
     val isLevelSteady = abs(tiltRollDeg) < 12f && (abs(tiltPitchDeg) < 16f || abs(tiltPitchDeg - 45f) < 35f)
 
-    // CameraX handles
-    val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
+    // CameraX handles (serialized Dispatchers.IO executor avoids UI jank and thread leaks)
+    @kotlin.OptIn(ExperimentalCoroutinesApi::class)
+    val cameraExecutor = remember { Dispatchers.IO.limitedParallelism(1).asExecutor() }
     var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
     var boundCamera by remember { mutableStateOf<Camera?>(null) }
     var cameraProviderRef by remember { mutableStateOf<ProcessCameraProvider?>(null) }
@@ -223,7 +226,7 @@ fun CameraScannerScreen(
     DisposableEffect(Unit) {
         onDispose {
             runCatching { cameraProviderRef?.unbindAll() }
-            cameraExecutor.shutdown()
+            stabilityTracker.reset()
         }
     }
 

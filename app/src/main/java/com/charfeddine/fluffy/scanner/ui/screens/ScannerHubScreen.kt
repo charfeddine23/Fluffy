@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.RestoreFromTrash
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sort
@@ -100,6 +101,7 @@ import java.io.File
 fun ScannerHubScreen(
     scannerViewModel: ScannerViewModel,
     isArabic: Boolean,
+    onLaunchSmartScan: () -> Unit = { scannerViewModel.openCameraScanner(appendToDocId = null) },
     onRequestProtectedAccess: (targetId: String, onUnlocked: () -> Unit) -> Unit,
     onExitEcosystem: () -> Unit
 ) {
@@ -225,6 +227,20 @@ fun ScannerHubScreen(
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (!showTrash) {
+                            IconButton(
+                                onClick = { scannerViewModel.openCameraScanner(appendToDocId = null) },
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .testTag("hub_pro_camera_btn")
+                                    .scannerGlassSurface(CircleShape)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.QrCodeScanner,
+                                    contentDescription = if (isArabic) "كاميرا Pro / QR / بطاقة" else "Pro Camera / QR / ID",
+                                    tint = ScannerGlassPalette.CyanGlow
+                                )
+                            }
+
                             IconButton(
                                 onClick = { scannerViewModel.isGridView.value = !isGridView },
                                 modifier = Modifier
@@ -393,7 +409,7 @@ fun ScannerHubScreen(
                                         modifier = Modifier
                                             .weight(1f)
                                             .testTag("hub_open_camera_scanner_btn"),
-                                        onClick = { scannerViewModel.openCameraScanner(appendToDocId = null) }
+                                        onClick = onLaunchSmartScan
                                     )
                                     HubQuickActionTile(
                                         icon = Icons.Default.PhotoLibrary,
@@ -766,7 +782,7 @@ fun ScannerHubScreen(
                                 listOf(ScannerGlassPalette.CyanGlow, ScannerGlassPalette.VioletGlow)
                             )
                         )
-                        .clickable { scannerViewModel.openCameraScanner(appendToDocId = null) }
+                        .clickable { onLaunchSmartScan() }
                         .padding(horizontal = 20.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)

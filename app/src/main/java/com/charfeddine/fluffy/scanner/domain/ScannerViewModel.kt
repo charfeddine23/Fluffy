@@ -376,6 +376,107 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun importMlKitScanResult(
+        pageUris: List<Uri>,
+        pdfUri: Uri?,
+        appendToDocId: String?,
+        isArabic: Boolean
+    ) {
+        if (pageUris.isEmpty() && pdfUri == null) return
+        viewModelScope.launch {
+            isBusy.value = true
+            try {
+                val targetDocId = withContext(Dispatchers.IO) {
+                    val resolver = getApplication<Application>().contentResolver
+                    val now = System.currentTimeMillis()
+                    val existingDoc = appendToDocId?.let { repository.getDocumentOnce(it) }
+                    val docId = existingDoc?.id ?: UUID.randomUUID().toString()
+                    val existingPages = if (existingDoc != null) repository.getPagesOnce(docId) else emptyList()
+                    var nextOrder = existingPages.size
+
+                    val createdPages = mutableListOf<ScannedPageEntity>()
+                    val pdfInputs = mutableListOf<PdfRenderedPageInput>()
+
+                    pageUris.forEach { uri ->
+                        runCatching {
+                            resolver.openInputStream(uri)?.use { input ->
+                                val bmp = BitmapFactory.decodeStream(input) ?: return@use
+                                val pageFile = File(repository.docsRootDir, "mlkit_${UUID.randomUUID()}.jpg")
+                                DocumentImageProcessor.saveBitmapAsJpeg(bmp, pageFile, 93)
+                                val ocrRes = OfflineOcrAndBarcodeEngine.extractTextOffline(bmp)
+                                createdPages.add(
+                                    ScannedPageEntity(
+                                        documentId = docId,
+                                        pageOrder = nextOrder++,
+                                        originalImagePath = pageFile.absolutePath,
+                                        processedImagePath = pageFile.absolutePath,
+                                        cornersJson = DocumentQuad.FULL_FRAME.toJson(),
+                                        filterId = ScannerFilterType.ORIGINAL.id,
+                                        ocrText = ocrRes.fullText
+                                    )
+                                )
+                                pdfInputs.add(PdfRenderedPageInput(bmp, ocrRes.lines))
+                            }
+                        }
+                    }
+
+                    if (createdPages.isEmpty()) return@withContext null
+
+                    val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(now))
+                    val defaultTitle = if (isArabic) "مسح ذكي $stamp" else "AI Scan $stamp"
+
+                    if (existingDoc == null) {
+                        val destPdf = File(repository.docsRootDir, "doc_$docId.pdf")
+                        PdfEngine.buildPdfFromBitmaps(
+                            destFile = destPdf,
+                            pages = pdfInputs,
+                            pageSizePreset = PdfPageSizePreset.A4,
+                            searchableOcr = true
+                        )
+                        pdfInputs.forEach { it.bitmap.recycle() }
+
+                        val totalSize = createdPages.sumOf { File(it.processedImagePath).length() } +
+                            (destPdf.takeIf { it.exists() }?.length() ?: 0L)
+
+                        val docEntity = ScannedDocumentEntity(
+                            id = docId,
+                            folderId = currentFolderId.value,
+                            title = defaultTitle,
+                            createdAt = now,
+                            updatedAt = now,
+                            pageCount = createdPages.size,
+                            totalSizeBytes = totalSize,
+                            coverThumbnailPath = createdPages.firstOrNull()?.processedImagePath.orEmpty(),
+                            pdfPath = destPdf.absolutePath,
+                            ocrFullText = createdPages.mapNotNull { it.ocrText.takeIf(String::isNotBlank) }.joinToString("\n\n"),
+                            isSearchablePdf = true
+                        )
+                        repository.upsertDocument(docEntity)
+                        repository.upsertPages(createdPages)
+                    } else {
+                        pdfInputs.forEach { it.bitmap.recycle() }
+                        repository.upsertPages(createdPages)
+                        repository.syncDocumentStats(docId)
+                    }
+                    docId
+                }
+
+                if (targetDocId != null) {
+                    currentRoute.value = ScannerSubRoute.DocumentDetail(targetDocId)
+                    statusMessage.value = if (isArabic) {
+                        "تم حفظ المستند بالماسح الذكي ✨"
+                    } else {
+                        "Scanned & saved with AI Document Scanner ✨"
+                    }
+                } else {
+                    statusMessage.value = if (isArabic) "تعذر معالجة الصفحات" else "Unable to process scanned pages"
+                }
+            } finally {
+                isBusy.value = false
+            }
+        }
+    }
+
     fun proceedToCropReview(appendToDocId: String?) {
         if (batchFrames.value.isEmpty()) return
         activeCropIndex.value = 0
