@@ -688,17 +688,20 @@ private fun InteractiveCropWithMagnifier(
                 lineTo(bl.x, bl.y)
                 close()
             }
-            drawPath(path, ScannerGlassPalette.CyanGlow.copy(alpha = 0.10f))
+            drawPath(path, ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.12f))
             drawPath(
                 path,
-                brush = Brush.linearGradient(listOf(ScannerGlassPalette.CyanGlow, ScannerGlassPalette.VioletGlow)),
-                style = Stroke(width = 2.4.dp.toPx())
+                brush = Brush.linearGradient(
+                    listOf(ScannerGlassPalette.EdgeOverlayCyan, ScannerGlassPalette.EdgeOverlayPurple)
+                ),
+                style = Stroke(width = 2.6.dp.toPx())
             )
 
             // Corner handles
             listOf(tl, tr, br, bl).forEach { pt ->
-                drawCircle(ScannerGlassPalette.CyanGlow, radius = 10.dp.toPx(), center = pt)
-                drawCircle(Color.White, radius = 5.dp.toPx(), center = pt)
+                drawCircle(ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.35f), radius = 14.dp.toPx(), center = pt)
+                drawCircle(ScannerGlassPalette.EdgeOverlayCyan, radius = 9.5.dp.toPx(), center = pt)
+                drawCircle(Color.White, radius = 4.5.dp.toPx(), center = pt)
             }
             // Edge mid-point handles
             listOf(
@@ -707,7 +710,7 @@ private fun InteractiveCropWithMagnifier(
                 Offset((bl.x + br.x) / 2f, (bl.y + br.y) / 2f),
                 Offset((tl.x + bl.x) / 2f, (tl.y + bl.y) / 2f)
             ).forEach { mid ->
-                drawCircle(ScannerGlassPalette.VioletGlow, radius = 7.dp.toPx(), center = mid)
+                drawCircle(ScannerGlassPalette.EdgeOverlayPurple, radius = 7.dp.toPx(), center = mid)
                 drawCircle(Color.White, radius = 3.dp.toPx(), center = mid)
             }
         }

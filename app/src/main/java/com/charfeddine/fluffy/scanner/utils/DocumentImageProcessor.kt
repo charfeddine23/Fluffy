@@ -11,6 +11,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.media.ExifInterface
 import androidx.camera.core.ImageProxy
 import com.charfeddine.fluffy.scanner.data.model.DocumentQuad
 import com.charfeddine.fluffy.scanner.data.model.PageAnnotations
@@ -21,153 +22,23 @@ import com.charfeddine.fluffy.scanner.data.model.WatermarkConfig
 import java.io.File
 import java.io.FileOutputStream
 import kotlin.math.abs
-import kotlin.math.atan2
-import kotlin.math.cos
-import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.hypot
 import kotlin.math.roundToInt
 import kotlin.math.sin
-import kotlin.math.sqrt
-
-data class EdgeDetectionFrameResult(
-    val quad: DocumentQuad,
-    val confidence: Float
-)
+import kotlin.math.cos
 
 object DocumentImageProcessor {
 
     /**
-     * Real-time 100% offline 4-corner document edge detection on CameraX YUV luma plane.
-     * Samples into a fast grid (< 10ms) and finds strong edge transitions near the 4 quadrants.
+     * Delegates real-time 100% offline 4-corner detection to [DocumentEdgeDetector].
      */
-    fun detectDocumentQuadFromImageProxy(imageProxy: ImageProxy): EdgeDetectionFrameResult {
-        val plane = imageProxy.planes.firstOrNull()
-            ?: return EdgeDetectionFrameResult(DocumentQuad.FULL_FRAME, 0f)
-        val width = imageProxy.width
-        val height = imageProxy.height
-        if (width < 32 || height < 32) {
-            return EdgeDetectionFrameResult(DocumentQuad.FULL_FRAME, 0f)
-        }
+    fun detectDocumentQuadFromImageProxy(imageProxy: ImageProxy): EdgeDetectionFrameResult =
+        DocumentEdgeDetector.detectFromImageProxy(imageProxy)
 
-        val buffer = plane.buffer
-        buffer.rewind()
-        val rowStride = plane.rowStride
-        val pixelStride = plane.pixelStride
-
-        val gridW = 64
-        val gridH = 84
-        val luma = IntArray(gridW * gridH)
-
-        val rotation = imageProxy.imageInfo.rotationDegrees
-        for (gy in 0 until gridH) {
-            for (gx in 0 until gridW) {
-                val u = gx.toFloat() / (gridW - 1)
-                val v = gy.toFloat() / (gridH - 1)
-                val (srcX, srcY) = when (rotation) {
-                    90 -> ((v * (width - 1)).toInt() to ((1f - u) * (height - 1)).toInt())
-                    180 -> (((1f - u) * (width - 1)).toInt() to ((1f - v) * (height - 1)).toInt())
-                    270 -> (((1f - v) * (width - 1)).toInt() to (u * (height - 1)).toInt())
-                    else -> ((u * (width - 1)).toInt() to (v * (height - 1)).toInt())
-                }
-                val idx = srcY.coerceIn(0, height - 1) * rowStride +
-                    srcX.coerceIn(0, width - 1) * pixelStride
-                luma[gy * gridW + gx] = if (idx in 0 until buffer.limit()) {
-                    buffer.get(idx).toInt() and 0xFF
-                } else 128
-            }
-        }
-        return analyzeLumaGridForQuad(luma, gridW, gridH)
-    }
-
-    fun detectQuadFromBitmap(bitmap: Bitmap): DocumentQuad {
-        val gridW = 64
-        val gridH = 84
-        val scaled = Bitmap.createScaledBitmap(bitmap, gridW, gridH, true)
-        val pixels = IntArray(gridW * gridH)
-        scaled.getPixels(pixels, 0, gridW, 0, 0, gridW, gridH)
-        if (scaled !== bitmap) scaled.recycle()
-
-        val luma = IntArray(gridW * gridH) { i ->
-            val c = pixels[i]
-            (Color.red(c) * 77 + Color.green(c) * 150 + Color.blue(c) * 29) shr 8
-        }
-        val res = analyzeLumaGridForQuad(luma, gridW, gridH)
-        return if (res.confidence >= 0.25f) res.quad else DocumentQuad.FULL_FRAME
-    }
-
-    private fun analyzeLumaGridForQuad(luma: IntArray, w: Int, h: Int): EdgeDetectionFrameResult {
-        val grad = IntArray(w * h)
-        var maxGrad = 1
-        for (y in 2 until h - 2) {
-            for (x in 2 until w - 2) {
-                val gx = -luma[(y - 1) * w + (x - 1)] + luma[(y - 1) * w + (x + 1)] -
-                    2 * luma[y * w + (x - 1)] + 2 * luma[y * w + (x + 1)] -
-                    luma[(y + 1) * w + (x - 1)] + luma[(y + 1) * w + (x + 1)]
-                val gy = -luma[(y - 1) * w + (x - 1)] - 2 * luma[(y - 1) * w + x] -
-                    luma[(y - 1) * w + (x + 1)] + luma[(y + 1) * w + (x - 1)] +
-                    2 * luma[(y + 1) * w + x] + luma[(y + 1) * w + (x + 1)]
-                val mag = abs(gx) + abs(gy)
-                grad[y * w + x] = mag
-                if (mag > maxGrad) maxGrad = mag
-            }
-        }
-
-        val threshold = max(65, (maxGrad * 0.28f).toInt())
-
-        fun findBestCorner(
-            xRange: IntProgression,
-            yRange: IntProgression,
-            targetCornerX: Int,
-            targetCornerY: Int,
-            defaultX: Float,
-            defaultY: Float
-        ): Pair<PointNorm, Boolean> {
-            var bestScore = -1f
-            var bestX = defaultX
-            var bestY = defaultY
-            var found = false
-            for (y in yRange) {
-                for (x in xRange) {
-                    val g = grad[y * w + x]
-                    if (g > threshold) {
-                        val distToOuter = hypot((x - targetCornerX).toFloat(), (y - targetCornerY).toFloat())
-                        val score = g - distToOuter * 3.8f
-                        if (score > bestScore) {
-                            bestScore = score
-                            bestX = (x.toFloat() / (w - 1)).coerceIn(0.03f, 0.97f)
-                            bestY = (y.toFloat() / (h - 1)).coerceIn(0.03f, 0.97f)
-                            found = true
-                        }
-                    }
-                }
-            }
-            return PointNorm(bestX, bestY) to found
-        }
-
-        val midX = w / 2
-        val midY = h / 2
-        val (tl, okTl) = findBestCorner(3 until midX - 4, 3 until midY - 4, 3, 3, 0.08f, 0.08f)
-        val (tr, okTr) = findBestCorner(midX + 4 until w - 3, 3 until midY - 4, w - 4, 3, 0.92f, 0.08f)
-        val (br, okBr) = findBestCorner(midX + 4 until w - 3, midY + 4 until h - 3, w - 4, h - 4, 0.92f, 0.92f)
-        val (bl, okBl) = findBestCorner(3 until midX - 4, midY + 4 until h - 3, 3, h - 4, 0.08f, 0.92f)
-
-        val quad = DocumentQuad(tl, tr, br, bl)
-        val widthTop = tr.x - tl.x
-        val widthBottom = br.x - bl.x
-        val heightLeft = bl.y - tl.y
-        val heightRight = br.y - tr.y
-
-        val validGeom = widthTop > 0.28f && widthBottom > 0.28f &&
-            heightLeft > 0.28f && heightRight > 0.28f
-        val foundCount = listOf(okTl, okTr, okBr, okBl).count { it }
-        val confidence = if (validGeom) (foundCount / 4f) * 0.92f else 0.15f
-
-        return EdgeDetectionFrameResult(
-            quad = if (validGeom) quad else DocumentQuad.FULL_FRAME,
-            confidence = confidence
-        )
-    }
+    fun detectQuadFromBitmap(bitmap: Bitmap): DocumentQuad =
+        DocumentEdgeDetector.detectFromBitmap(bitmap)
 
     /**
      * Perspective warp transformation using Matrix.setPolyToPoly (homography warp)
@@ -668,9 +539,29 @@ object DocumentImageProcessor {
         while ((opts.outWidth / inSampleSize) > maxSide || (opts.outHeight / inSampleSize) > maxSide) {
             inSampleSize *= 2
         }
-        return BitmapFactory.decodeFile(
+        val decoded = BitmapFactory.decodeFile(
             file.absolutePath,
             BitmapFactory.Options().apply { this.inSampleSize = inSampleSize }
-        )
+        ) ?: return null
+
+        val orientation = runCatching {
+            ExifInterface(file.absolutePath).getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_NORMAL
+            )
+        }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+
+        val rotateDeg = when (orientation) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+            ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+            ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+            else -> 0f
+        }
+        if (rotateDeg == 0f) return decoded
+
+        val matrix = Matrix().apply { postRotate(rotateDeg) }
+        val rotated = Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
+        if (rotated !== decoded) decoded.recycle()
+        return rotated
     }
 }

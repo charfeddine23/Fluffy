@@ -213,6 +213,7 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
         file: File,
         appendToDocId: String?,
         isArabic: Boolean,
+        capturedQuad: DocumentQuad? = null,
         autoNavigateToCrop: Boolean = false
     ) {
         viewModelScope.launch {
@@ -222,6 +223,8 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                 val framesToAdd = withContext(Dispatchers.IO) {
                     val rawBmp = DocumentImageProcessor.decodeSampledBitmap(file, 2200)
                         ?: return@withContext emptyList()
+                    // Normalize raw saved file orientation on disk so Crop & Preview align cleanly
+                    DocumentImageProcessor.saveBitmapAsJpeg(rawBmp, file, 94)
 
                     when (mode) {
                         ScanMode.ID_CARD -> {
@@ -292,12 +295,16 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                         }
 
                         else -> {
-                            val quad = DocumentImageProcessor.detectQuadFromBitmap(rawBmp)
+                            val quad = capturedQuad ?: DocumentImageProcessor.detectQuadFromBitmap(rawBmp)
+                            val warpedPreview = DocumentImageProcessor.warpPerspective(rawBmp, quad, 2000)
+                            val warpedFile = File(repository.docsRootDir, "warp_${UUID.randomUUID()}.jpg")
+                            DocumentImageProcessor.saveBitmapAsJpeg(warpedPreview, warpedFile, 92)
+                            if (warpedPreview !== rawBmp) warpedPreview.recycle()
                             rawBmp.recycle()
                             listOf(
                                 BatchCapturedFrame(
                                     rawImagePath = file.absolutePath,
-                                    processedImagePath = file.absolutePath,
+                                    processedImagePath = warpedFile.absolutePath,
                                     detectedQuad = quad,
                                     filter = ScannerFilterType.MAGIC_COLOR
                                 )

@@ -29,6 +29,8 @@ import androidx.camera.view.PreviewView
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -57,6 +59,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.FlashAuto
 import androidx.compose.material.icons.filled.FlashOff
@@ -86,6 +89,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -95,9 +99,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -114,14 +121,17 @@ import com.charfeddine.fluffy.scanner.domain.ScannerViewModel
 import com.charfeddine.fluffy.scanner.ui.theme.ScannerDarkLiquidBackdrop
 import com.charfeddine.fluffy.scanner.ui.theme.ScannerGlassPalette
 import com.charfeddine.fluffy.scanner.ui.theme.scannerGlassSurface
+import com.charfeddine.fluffy.scanner.utils.CornerStabilityTracker
 import com.charfeddine.fluffy.scanner.utils.DocumentImageProcessor
 import com.charfeddine.fluffy.scanner.utils.OfflineOcrAndBarcodeEngine
+import com.charfeddine.fluffy.scanner.utils.TrackedEdgeState
 import com.google.mlkit.vision.common.InputImage
 import kotlinx.coroutines.delay
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.Executors
 import kotlin.math.abs
+import kotlin.math.max
 
 @OptIn(ExperimentalGetImage::class)
 @Composable
@@ -169,12 +179,15 @@ fun CameraScannerScreen(
         }
     }
 
+    val haptics = LocalHapticFeedback.current
     var flashMode by remember { mutableIntStateOf(FLASH_MODE_OFF) }
     var showGrid by remember { mutableStateOf(true) }
     var autoCaptureEnabled by remember { mutableStateOf(true) }
-    var detectedQuad by remember { mutableStateOf(DocumentQuad.FULL_FRAME) }
-    var edgeConfidence by remember { mutableFloatStateOf(0f) }
+    var edgeState by remember { mutableStateOf(TrackedEdgeState()) }
     var barcodeResult by remember { mutableStateOf<BarcodeScanResult?>(null) }
+    var showCapturedBanner by remember { mutableStateOf(false) }
+    var showCaptureFlash by remember { mutableStateOf(false) }
+    val stabilityTracker = remember { CornerStabilityTracker(windowSize = 5, steadyDurationMs = 1200L) }
 
     // Tilt / Leveler accelerometer state
     var tiltRollDeg by remember { mutableFloatStateOf(0f) }
@@ -204,10 +217,14 @@ fun CameraScannerScreen(
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
     var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
     var boundCamera by remember { mutableStateOf<Camera?>(null) }
+    var cameraProviderRef by remember { mutableStateOf<ProcessCameraProvider?>(null) }
     var lastAnalysisMs by remember { mutableLongStateOf(0L) }
 
     DisposableEffect(Unit) {
-        onDispose { cameraExecutor.shutdown() }
+        onDispose {
+            runCatching { cameraProviderRef?.unbindAll() }
+            cameraExecutor.shutdown()
+        }
     }
 
     LaunchedEffect(flashMode, boundCamera) {
@@ -215,8 +232,28 @@ fun CameraScannerScreen(
         boundCamera?.cameraControl?.enableTorch(flashMode == FLASH_MODE_ON)
     }
 
+    LaunchedEffect(showCapturedBanner) {
+        if (showCapturedBanner) {
+            delay(1100L)
+            showCapturedBanner = false
+        }
+    }
+
+    LaunchedEffect(showCaptureFlash) {
+        if (showCaptureFlash) {
+            delay(160L)
+            showCaptureFlash = false
+        }
+    }
+
     fun takePhoto(autoGoCrop: Boolean) {
         val cap = imageCapture ?: return
+        stabilityTracker.markCaptured()
+        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        showCaptureFlash = true
+        showCapturedBanner = true
+        val lockedQuadSnapshot = if (edgeState.isLocked) edgeState.quad else null
+
         val outFile = File(scannerViewModel.repository.docsRootDir, "raw_${UUID.randomUUID()}.jpg")
         val outputOptions = ImageCapture.OutputFileOptions.Builder(outFile).build()
         cap.takePicture(
@@ -228,6 +265,7 @@ fun CameraScannerScreen(
                         file = outFile,
                         appendToDocId = appendToDocId,
                         isArabic = isArabic,
+                        capturedQuad = lockedQuadSnapshot,
                         autoNavigateToCrop = autoGoCrop
                     )
                 }
@@ -243,37 +281,20 @@ fun CameraScannerScreen(
         )
     }
 
-    // Auto-capture countdown when edge detection confidence stays >= 0.72 in Document modes
-    var autoCountdownSec by remember { mutableIntStateOf(0) }
-    LaunchedEffect(autoCaptureEnabled, edgeConfidence, activeMode, isBusy, hasCameraPermission) {
-        if (!hasCameraPermission || !autoCaptureEnabled || activeMode == ScanMode.QR_BARCODE || isBusy) {
-            autoCountdownSec = 0
-            return@LaunchedEffect
-        }
-        if (edgeConfidence >= 0.72f) {
-            for (sec in 3 downTo 1) {
-                autoCountdownSec = sec
-                delay(750L)
-                if (edgeConfidence < 0.65f || !autoCaptureEnabled) {
-                    autoCountdownSec = 0
-                    return@LaunchedEffect
-                }
-            }
-            autoCountdownSec = 0
-            takePhoto(autoGoCrop = false)
-        } else {
-            autoCountdownSec = 0
-        }
-    }
+    val latestActiveMode by rememberUpdatedState(activeMode)
+    val latestAutoCapture by rememberUpdatedState(autoCaptureEnabled)
+    val latestIsBusy by rememberUpdatedState(isBusy)
+    val latestTakePhoto by rememberUpdatedState<(Boolean) -> Unit>({ goCrop -> takePhoto(goCrop) })
 
-    val animTlX by animateFloatAsState(detectedQuad.topLeft.x, spring(stiffness = 300f), label = "tlx")
-    val animTlY by animateFloatAsState(detectedQuad.topLeft.y, spring(stiffness = 300f), label = "tly")
-    val animTrX by animateFloatAsState(detectedQuad.topRight.x, spring(stiffness = 300f), label = "trx")
-    val animTrY by animateFloatAsState(detectedQuad.topRight.y, spring(stiffness = 300f), label = "try")
-    val animBrX by animateFloatAsState(detectedQuad.bottomRight.x, spring(stiffness = 300f), label = "brx")
-    val animBrY by animateFloatAsState(detectedQuad.bottomRight.y, spring(stiffness = 300f), label = "bry")
-    val animBlX by animateFloatAsState(detectedQuad.bottomLeft.x, spring(stiffness = 300f), label = "blx")
-    val animBlY by animateFloatAsState(detectedQuad.bottomLeft.y, spring(stiffness = 300f), label = "bly")
+    val animTlX by animateFloatAsState(edgeState.quad.topLeft.x, spring(stiffness = 260f, dampingRatio = 0.85f), label = "tlx")
+    val animTlY by animateFloatAsState(edgeState.quad.topLeft.y, spring(stiffness = 260f, dampingRatio = 0.85f), label = "tly")
+    val animTrX by animateFloatAsState(edgeState.quad.topRight.x, spring(stiffness = 260f, dampingRatio = 0.85f), label = "trx")
+    val animTrY by animateFloatAsState(edgeState.quad.topRight.y, spring(stiffness = 260f, dampingRatio = 0.85f), label = "try")
+    val animBrX by animateFloatAsState(edgeState.quad.bottomRight.x, spring(stiffness = 260f, dampingRatio = 0.85f), label = "brx")
+    val animBrY by animateFloatAsState(edgeState.quad.bottomRight.y, spring(stiffness = 260f, dampingRatio = 0.85f), label = "bry")
+    val animBlX by animateFloatAsState(edgeState.quad.bottomLeft.x, spring(stiffness = 260f, dampingRatio = 0.85f), label = "blx")
+    val animBlY by animateFloatAsState(edgeState.quad.bottomLeft.y, spring(stiffness = 260f, dampingRatio = 0.85f), label = "bly")
+    val animStability by animateFloatAsState(edgeState.stabilityProgress, spring(stiffness = 240f), label = "stability_ring")
 
     ScannerDarkLiquidBackdrop {
         if (!hasCameraPermission) {
@@ -379,6 +400,7 @@ fun CameraScannerScreen(
                     val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
                     cameraProviderFuture.addListener({
                         val provider = cameraProviderFuture.get()
+                        cameraProviderRef = provider
                         val preview = Preview.Builder().build().also {
                             it.setSurfaceProvider(previewView.surfaceProvider)
                         }
@@ -391,15 +413,17 @@ fun CameraScannerScreen(
                         val analysis = ImageAnalysis.Builder()
                             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                             .build()
+                        val mainExec = ContextCompat.getMainExecutor(ctx)
                         analysis.setAnalyzer(cameraExecutor) { imageProxy ->
                             val now = System.currentTimeMillis()
-                            if (now - lastAnalysisMs < 130L) {
+                            if (now - lastAnalysisMs < 85L) {
                                 imageProxy.close()
                                 return@setAnalyzer
                             }
                             lastAnalysisMs = now
 
-                            if (activeMode == ScanMode.QR_BARCODE) {
+                            val modeNow = latestActiveMode
+                            if (modeNow == ScanMode.QR_BARCODE) {
                                 val mediaImg = imageProxy.image
                                 if (mediaImg != null) {
                                     val inputImg = InputImage.fromMediaImage(mediaImg, imageProxy.imageInfo.rotationDegrees)
@@ -412,10 +436,19 @@ fun CameraScannerScreen(
                                     imageProxy.close()
                                 }
                             } else {
-                                val edgeRes = DocumentImageProcessor.detectDocumentQuadFromImageProxy(imageProxy)
-                                detectedQuad = edgeRes.quad
-                                edgeConfidence = edgeRes.confidence
+                                val rawRes = DocumentImageProcessor.detectDocumentQuadFromImageProxy(imageProxy)
+                                val tracked = stabilityTracker.update(
+                                    detection = rawRes,
+                                    nowMs = now,
+                                    autoCaptureEnabled = latestAutoCapture && !latestIsBusy
+                                )
                                 imageProxy.close()
+                                mainExec.execute {
+                                    edgeState = tracked
+                                    if (tracked.shouldAutoCapture && !latestIsBusy) {
+                                        latestTakePhoto(false)
+                                    }
+                                }
                             }
                         }
 
@@ -435,13 +468,26 @@ fun CameraScannerScreen(
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Overlays: 3x3 Grid, Neon 4-Corner Polygon, Book Spine Divider, ID Card Frame, QR Target
+            // Visual Shutter Flash Overlay on Auto/Manual Capture
+            AnimatedVisibility(
+                visible = showCaptureFlash,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.White.copy(alpha = 0.58f))
+                )
+            }
+
+            // Overlays: 3x3 Grid, Real-Time Glowing Neon Quad (#00F5D4 -> #9B5DE5), Book Spine Divider, ID Card Frame, QR Target
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val w = size.width
                 val h = size.height
 
                 if (showGrid) {
-                    val gridColor = Color.White.copy(alpha = 0.20f)
+                    val gridColor = Color.White.copy(alpha = 0.16f)
                     drawLine(gridColor, Offset(w / 3f, 0f), Offset(w / 3f, h), strokeWidth = 1.dp.toPx())
                     drawLine(gridColor, Offset(w * 2f / 3f, 0f), Offset(w * 2f / 3f, h), strokeWidth = 1.dp.toPx())
                     drawLine(gridColor, Offset(0f, h / 3f), Offset(w, h / 3f), strokeWidth = 1.dp.toPx())
@@ -454,7 +500,9 @@ fun CameraScannerScreen(
                         val left = (w - boxSize) / 2f
                         val top = (h - boxSize) / 2f
                         drawRoundRect(
-                            brush = ScannerGlassPalette.NeonBorderBrush,
+                            brush = Brush.linearGradient(
+                                listOf(ScannerGlassPalette.EdgeOverlayCyan, ScannerGlassPalette.EdgeOverlayPurple)
+                            ),
                             topLeft = Offset(left, top),
                             size = androidx.compose.ui.geometry.Size(boxSize, boxSize),
                             cornerRadius = androidx.compose.ui.geometry.CornerRadius(24f, 24f),
@@ -463,10 +511,9 @@ fun CameraScannerScreen(
                     }
 
                     ScanMode.BOOK -> {
-                        // Center Spine Guide
                         drawLine(
                             brush = Brush.verticalGradient(
-                                listOf(Color.Transparent, ScannerGlassPalette.VioletGlow, Color.Transparent)
+                                listOf(Color.Transparent, ScannerGlassPalette.EdgeOverlayPurple, Color.Transparent)
                             ),
                             start = Offset(w / 2f, h * 0.16f),
                             end = Offset(w / 2f, h * 0.78f),
@@ -481,7 +528,9 @@ fun CameraScannerScreen(
                         val left = (w - cardW) / 2f
                         val top = (h - cardH) / 2f
                         drawRoundRect(
-                            color = ScannerGlassPalette.CyanGlow.copy(alpha = 0.85f),
+                            brush = Brush.linearGradient(
+                                listOf(ScannerGlassPalette.EdgeOverlayCyan, ScannerGlassPalette.EdgeOverlayPurple)
+                            ),
                             topLeft = Offset(left, top),
                             size = androidx.compose.ui.geometry.Size(cardW, cardH),
                             cornerRadius = androidx.compose.ui.geometry.CornerRadius(28f, 28f),
@@ -490,33 +539,89 @@ fun CameraScannerScreen(
                     }
 
                     ScanMode.SINGLE -> {
-                        // Real-time Detected Neon Quad Overlay
-                        val tl = Offset(animTlX * w, animTlY * h)
-                        val tr = Offset(animTrX * w, animTrY * h)
-                        val br = Offset(animBrX * w, animBrY * h)
-                        val bl = Offset(animBlX * w, animBlY * h)
-                        val polyPath = Path().apply {
-                            moveTo(tl.x, tl.y)
-                            lineTo(tr.x, tr.y)
-                            lineTo(br.x, br.y)
-                            lineTo(bl.x, bl.y)
-                            close()
-                        }
-                        val fillAlpha = if (edgeConfidence >= 0.65f) 0.16f else 0.06f
-                        drawPath(
-                            path = polyPath,
-                            color = ScannerGlassPalette.CyanGlow.copy(alpha = fillAlpha)
-                        )
-                        drawPath(
-                            path = polyPath,
-                            brush = Brush.linearGradient(
-                                listOf(ScannerGlassPalette.CyanGlow, ScannerGlassPalette.VioletGlow)
-                            ),
-                            style = Stroke(width = 2.6.dp.toPx())
-                        )
-                        listOf(tl, tr, br, bl).forEach { pt ->
-                            drawCircle(ScannerGlassPalette.CyanGlow, radius = 7.dp.toPx(), center = pt)
-                            drawCircle(Color.White, radius = 3.dp.toPx(), center = pt)
+                        if (edgeState.isLocked) {
+                            // FILL_CENTER exact projection from rotated camera frame -> PreviewView Canvas
+                            val camAspect = edgeState.frameAspectRatio.coerceIn(0.4f, 2.5f)
+                            val camH = 1f
+                            val camW = camAspect
+                            val scale = max(w / camW, h / camH)
+                            val renderedW = camW * scale
+                            val renderedH = camH * scale
+                            val offX = (w - renderedW) / 2f
+                            val offY = (h - renderedH) / 2f
+
+                            fun project(nx: Float, ny: Float) = Offset(
+                                (offX + nx * renderedW).coerceIn(6f, w - 6f),
+                                (offY + ny * renderedH).coerceIn(6f, h - 6f)
+                            )
+
+                            val tl = project(animTlX, animTlY)
+                            val tr = project(animTrX, animTrY)
+                            val br = project(animBrX, animBrY)
+                            val bl = project(animBlX, animBlY)
+
+                            val polyPath = Path().apply {
+                                moveTo(tl.x, tl.y)
+                                lineTo(tr.x, tr.y)
+                                lineTo(br.x, br.y)
+                                lineTo(bl.x, bl.y)
+                                close()
+                            }
+
+                            val neonBrush = Brush.linearGradient(
+                                colors = listOf(
+                                    ScannerGlassPalette.EdgeOverlayCyan,
+                                    ScannerGlassPalette.EdgeOverlayPurple
+                                )
+                            )
+                            val fillAlpha = if (edgeState.stabilityProgress > 0.25f) 0.18f else 0.10f
+                            drawPath(
+                                path = polyPath,
+                                brush = Brush.linearGradient(
+                                    colors = listOf(
+                                        ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = fillAlpha),
+                                        ScannerGlassPalette.EdgeOverlayPurple.copy(alpha = fillAlpha)
+                                    )
+                                )
+                            )
+                            // Soft outer glow halo stroke + sharp inner neon stroke
+                            drawPath(
+                                path = polyPath,
+                                brush = Brush.linearGradient(
+                                    colors = listOf(
+                                        ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.35f),
+                                        ScannerGlassPalette.EdgeOverlayPurple.copy(alpha = 0.35f)
+                                    )
+                                ),
+                                style = Stroke(width = 8.dp.toPx(), join = StrokeJoin.Round)
+                            )
+                            drawPath(
+                                path = polyPath,
+                                brush = neonBrush,
+                                style = Stroke(width = 2.8.dp.toPx(), join = StrokeJoin.Round)
+                            )
+
+                            listOf(tl, tr, br, bl).forEach { pt ->
+                                drawCircle(ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.40f), radius = 11.dp.toPx(), center = pt)
+                                drawCircle(ScannerGlassPalette.EdgeOverlayCyan, radius = 6.5.dp.toPx(), center = pt)
+                                drawCircle(Color.White, radius = 3.dp.toPx(), center = pt)
+                            }
+                        } else {
+                            // Subtle corner search reticles while searching
+                            val marginX = w * 0.11f
+                            val topY = h * 0.20f
+                            val botY = h * 0.76f
+                            val len = 26.dp.toPx()
+                            val reticleColor = ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.42f)
+                            val st = 2.2.dp.toPx()
+                            drawLine(reticleColor, Offset(marginX, topY + len), Offset(marginX, topY), st, StrokeCap.Round)
+                            drawLine(reticleColor, Offset(marginX, topY), Offset(marginX + len, topY), st, StrokeCap.Round)
+                            drawLine(reticleColor, Offset(w - marginX - len, topY), Offset(w - marginX, topY), st, StrokeCap.Round)
+                            drawLine(reticleColor, Offset(w - marginX, topY), Offset(w - marginX, topY + len), st, StrokeCap.Round)
+                            drawLine(reticleColor, Offset(marginX, botY - len), Offset(marginX, botY), st, StrokeCap.Round)
+                            drawLine(reticleColor, Offset(marginX, botY), Offset(marginX + len, botY), st, StrokeCap.Round)
+                            drawLine(reticleColor, Offset(w - marginX - len, botY), Offset(w - marginX, botY), st, StrokeCap.Round)
+                            drawLine(reticleColor, Offset(w - marginX, botY), Offset(w - marginX, botY - len), st, StrokeCap.Round)
                         }
                     }
                 }
@@ -550,40 +655,72 @@ fun CameraScannerScreen(
                         )
                     }
 
-                    // Compact Leveler / Countdown Status Pill
+                    // Dynamic Detection Guidance Pill with Circular Stability Progress Ring
+                    val isHoldingSteady = edgeState.isLocked && !showCapturedBanner &&
+                        (activeMode == ScanMode.SINGLE || activeMode == ScanMode.BOOK)
                     Row(
                         modifier = Modifier
-                            .scannerGlassSurface(CircleShape, glowBorder = isLevelSteady || autoCountdownSec > 0)
+                            .weight(1f, fill = false)
+                            .padding(horizontal = 6.dp)
+                            .scannerGlassSurface(CircleShape, glowBorder = isHoldingSteady || showCapturedBanner)
                             .padding(horizontal = 12.dp, vertical = 7.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    if (isLevelSteady) ScannerGlassPalette.EmeraldGlow
-                                    else ScannerGlassPalette.AmberGlow
+                        when {
+                            showCapturedBanner -> {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = ScannerGlassPalette.EdgeOverlayCyan,
+                                    modifier = Modifier.size(16.dp)
                                 )
-                        )
+                            }
+                            isHoldingSteady && autoCaptureEnabled -> {
+                                CircularProgressIndicator(
+                                    progress = { animStability.coerceIn(0.08f, 1f) },
+                                    color = ScannerGlassPalette.EdgeOverlayCyan,
+                                    trackColor = Color.White.copy(alpha = 0.18f),
+                                    strokeWidth = 2.4.dp,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                            else -> {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(
+                                            when {
+                                                edgeState.isLocked -> ScannerGlassPalette.EdgeOverlayCyan
+                                                isLevelSteady -> ScannerGlassPalette.AmberGlow
+                                                else -> ScannerGlassPalette.TextSecondary
+                                            }
+                                        )
+                                )
+                            }
+                        }
+
                         Text(
                             text = when {
-                                autoCountdownSec > 0 ->
-                                    if (isArabic) "تلقائي $autoCountdownSec..." else "Auto $autoCountdownSec..."
+                                showCapturedBanner ->
+                                    if (isArabic) "تم الالتقاط!" else "Captured!"
                                 activeMode == ScanMode.ID_CARD && idCardFrontPath == null ->
                                     if (isArabic) "وجه البطاقة الأمامي" else "Front of ID"
                                 activeMode == ScanMode.ID_CARD && idCardFrontPath != null ->
                                     if (isArabic) "وجه البطاقة الخلفي" else "Back of ID"
-                                isLevelSteady ->
-                                    if (isArabic) "متوازن" else "Level"
+                                activeMode == ScanMode.QR_BARCODE ->
+                                    if (isArabic) "وجّه نحو الرمز" else "Point at QR / Code"
+                                edgeState.isLocked ->
+                                    if (isArabic) "ثبّت الهاتف..." else "Hold Steady..."
                                 else ->
-                                    if (isArabic) "ثبّت الهاتف" else "Steady"
+                                    if (isArabic) "جارٍ البحث عن مستند..." else "Searching for document..."
                             },
                             fontSize = 11.5.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = ScannerGlassPalette.TextPrimary,
-                            maxLines = 1
+                            color = if (showCapturedBanner) ScannerGlassPalette.EdgeOverlayCyan else ScannerGlassPalette.TextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
 
@@ -789,7 +926,7 @@ fun CameraScannerScreen(
                                 .clip(CircleShape)
                                 .border(3.dp, ScannerGlassPalette.NeonBorderBrush, CircleShape)
                                 .background(Color.White.copy(alpha = 0.14f))
-                                .clickable(enabled = !isBusy && activeMode != ScanMode.QR_BARCODE) {
+                                .clickable(enabled = activeMode != ScanMode.QR_BARCODE) {
                                     takePhoto(autoGoCrop = false)
                                 },
                             contentAlignment = Alignment.Center
@@ -826,7 +963,7 @@ fun CameraScannerScreen(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     Image(
-                                        painter = rememberAsyncImagePainter(File(batchFrames.last().rawImagePath)),
+                                        painter = rememberAsyncImagePainter(File(batchFrames.last().processedImagePath)),
                                         contentDescription = null,
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier

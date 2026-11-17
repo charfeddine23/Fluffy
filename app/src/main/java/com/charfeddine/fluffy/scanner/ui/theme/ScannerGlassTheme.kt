@@ -31,6 +31,8 @@ object ScannerGlassPalette {
 
     val CyanGlow = Color(0xFF22D3EE)
     val VioletGlow = Color(0xFFA855F7)
+    val EdgeOverlayCyan = Color(0xFF00F5D4)
+    val EdgeOverlayPurple = Color(0xFF9B5DE5)
     val EmeraldGlow = Color(0xFF34D399)
     val RoseGlow = Color(0xFFF43F5E)
     val AmberGlow = Color(0xFFFBBF24)
