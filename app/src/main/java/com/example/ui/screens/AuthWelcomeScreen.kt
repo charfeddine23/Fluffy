@@ -117,7 +117,8 @@ import kotlin.math.min
 private enum class AuthCardStage {
     WELCOME,
     LOGIN,
-    REGISTER
+    REGISTER,
+    GUEST_SETUP
 }
 
 @Composable
@@ -134,7 +135,7 @@ fun AuthWelcomeScreen(
     onEmailSignUp: (username: String, email: String, password: String, confirmPassword: String) -> Unit = { _, _, _, _ -> },
     onResetPassword: (email: String) -> Unit = {},
     onClearAuthMessages: () -> Unit = {},
-    onEnterGuestMode: () -> Unit = {},
+    onEnterGuestMode: (guestName: String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val googleController = rememberGoogleSignInController(
@@ -173,6 +174,8 @@ fun AuthWelcomeScreen(
     val accentForeground = if (primaryAccent.luminance() > 0.58f) Color(0xFF0F172A) else Color.White
 
     var authStage by remember { mutableStateOf(AuthCardStage.WELCOME) }
+    var previousStageBeforeGuest by remember { mutableStateOf(AuthCardStage.WELCOME) }
+    var guestUsername by remember { mutableStateOf("") }
     var firstName by remember { mutableStateOf("") }
     var lastName by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
@@ -189,7 +192,11 @@ fun AuthWelcomeScreen(
         localValidationError = null
         onClearAuthMessages()
         googleController.clearError()
-        authStage = AuthCardStage.WELCOME
+        authStage = if (authStage == AuthCardStage.GUEST_SETUP) {
+            previousStageBeforeGuest
+        } else {
+            AuthCardStage.WELCOME
+        }
     }
 
     val nameRequiredError = tr(
@@ -198,13 +205,33 @@ fun AuthWelcomeScreen(
         "Please enter your first and last name.",
         "Ttxil-k sekcem isem-ik d twacult-ik."
     )
+    val guestNameRequiredError = tr(
+        "يرجى كتابة اسم المستخدم للمتابعة",
+        "Veuillez saisir un nom d'utilisateur pour continuer.",
+        "Please enter a username to continue.",
+        "Ttxil-k sekcem isem n useqdac akken ad tkemmleḍ."
+    )
 
     fun switchStage(target: AuthCardStage) {
         focusManager.clearFocus()
         localValidationError = null
         onClearAuthMessages()
         googleController.clearError()
+        if (target == AuthCardStage.GUEST_SETUP && authStage != AuthCardStage.GUEST_SETUP) {
+            previousStageBeforeGuest = authStage
+        }
         authStage = target
+    }
+
+    fun attemptGuestEntry() {
+        focusManager.clearFocus()
+        val trimmed = guestUsername.trim()
+        if (trimmed.isEmpty()) {
+            localValidationError = guestNameRequiredError
+            return
+        }
+        localValidationError = null
+        onEnterGuestMode(trimmed)
     }
 
     fun attemptSignUp() {
@@ -220,12 +247,13 @@ fun AuthWelcomeScreen(
         onEmailSignUp(combinedName, email, password, confirmPassword)
     }
 
-    // Animated backdrop circle position matching the reference mockup across the 3 stages
+    // Animated backdrop circle position matching the reference mockup across the stages
     val circleXFraction by animateFloatAsState(
         targetValue = when (authStage) {
             AuthCardStage.LOGIN -> 0.14f
             AuthCardStage.WELCOME -> 0.50f
             AuthCardStage.REGISTER -> 0.86f
+            AuthCardStage.GUEST_SETUP -> 0.50f
         },
         animationSpec = tween(520, easing = FastOutSlowInEasing),
         label = "backdrop_circle_x"
@@ -235,6 +263,7 @@ fun AuthWelcomeScreen(
             AuthCardStage.LOGIN -> 0.34f
             AuthCardStage.WELCOME -> 0.52f
             AuthCardStage.REGISTER -> 0.56f
+            AuthCardStage.GUEST_SETUP -> 0.28f
         },
         animationSpec = tween(520, easing = FastOutSlowInEasing),
         label = "backdrop_circle_y"
@@ -244,6 +273,7 @@ fun AuthWelcomeScreen(
             AuthCardStage.WELCOME -> 0.72f
             AuthCardStage.LOGIN -> 0.88f
             AuthCardStage.REGISTER -> 0.94f
+            AuthCardStage.GUEST_SETUP -> 0.84f
         },
         animationSpec = tween(520, easing = FastOutSlowInEasing),
         label = "backdrop_circle_scale"
@@ -346,7 +376,10 @@ fun AuthWelcomeScreen(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = ripple(bounded = true)
                                 ) {
-                                    switchStage(AuthCardStage.WELCOME)
+                                    switchStage(
+                                        if (authStage == AuthCardStage.GUEST_SETUP) previousStageBeforeGuest
+                                        else AuthCardStage.WELCOME
+                                    )
                                 }
                                 .padding(horizontal = 12.dp),
                             contentAlignment = Alignment.Center
@@ -486,7 +519,7 @@ fun AuthWelcomeScreen(
                                     onClearAuthMessages()
                                     googleController.startSignIn(isArabic = isArabic)
                                 },
-                                onEnterGuestMode = onEnterGuestMode
+                                onEnterGuestMode = { switchStage(AuthCardStage.GUEST_SETUP) }
                             )
                         }
 
@@ -532,7 +565,7 @@ fun AuthWelcomeScreen(
                                     onClearAuthMessages()
                                     googleController.startSignIn(isArabic = isArabic)
                                 },
-                                onEnterGuestMode = onEnterGuestMode
+                                onEnterGuestMode = { switchStage(AuthCardStage.GUEST_SETUP) }
                             )
                         }
 
@@ -589,6 +622,28 @@ fun AuthWelcomeScreen(
                                 coloredBorders = coloredBorders,
                                 onRegister = { attemptSignUp() },
                                 onSwitchToLogin = { switchStage(AuthCardStage.LOGIN) }
+                            )
+                        }
+
+                        AuthCardStage.GUEST_SETUP -> {
+                            GuestSetupCardStage(
+                                username = guestUsername,
+                                onUsernameChange = {
+                                    guestUsername = it
+                                    localValidationError = null
+                                    onClearAuthMessages()
+                                },
+                                isLoading = isLoading,
+                                displayedError = displayedError,
+                                primaryAccent = primaryAccent,
+                                accentForeground = accentForeground,
+                                fieldSurface = fieldSurface,
+                                textPrimary = textPrimary,
+                                textSecondary = textSecondary,
+                                isDark = effectiveDark,
+                                coloredBorders = coloredBorders,
+                                onConfirmGuest = { attemptGuestEntry() },
+                                onBackToAuth = { switchStage(previousStageBeforeGuest) }
                             )
                         }
                     }
@@ -1274,6 +1329,183 @@ private fun RegisterCardStage(
                 onClick = onRegister,
                 contentPadding = PaddingValues(horizontal = 26.dp, vertical = 10.dp),
                 modifier = Modifier.testTag("welcome_primary_login_button")
+            )
+        }
+    }
+}
+
+@Composable
+private fun GuestSetupCardStage(
+    username: String,
+    onUsernameChange: (String) -> Unit,
+    isLoading: Boolean,
+    displayedError: String?,
+    primaryAccent: Color,
+    accentForeground: Color,
+    fieldSurface: Color,
+    textPrimary: Color,
+    textSecondary: Color,
+    isDark: Boolean,
+    coloredBorders: Boolean,
+    onConfirmGuest: () -> Unit,
+    onBackToAuth: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 520.dp)
+            .padding(horizontal = 26.dp, vertical = 32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Text(
+            text = "Fluffy",
+            fontSize = 34.sp,
+            fontWeight = FontWeight.ExtraBold,
+            fontStyle = FontStyle.Italic,
+            fontFamily = FontFamily.Cursive,
+            color = primaryAccent,
+            textAlign = TextAlign.Center
+        )
+
+        Spacer(modifier = Modifier.height(22.dp))
+
+        Box(
+            modifier = Modifier
+                .size(66.dp)
+                .clip(CircleShape)
+                .background(primaryAccent.copy(alpha = if (isDark) 0.16f else 0.12f))
+                .border(
+                    width = 1.4.dp,
+                    color = primaryAccent.copy(alpha = 0.48f),
+                    shape = CircleShape
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.PersonOutline,
+                contentDescription = null,
+                tint = primaryAccent,
+                modifier = Modifier.size(32.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(22.dp))
+
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.Start
+        ) {
+            Text(
+                text = tr("وضع الضيف", "Mode invité", "Guest Mode", "Askar n yinebgi"),
+                fontSize = 25.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = textPrimary
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = tr(
+                    "اكتب اسم المستخدم للمرور إلى التطبيق",
+                    "Entrez votre nom d'utilisateur pour accéder à l'application",
+                    "Enter your username to continue to the app",
+                    "Sekcem isem n useqdac akken ad tkecmeḍ ɣer usnas"
+                ),
+                fontSize = 13.sp,
+                color = textSecondary
+            )
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        MockupPillTextField(
+            value = username,
+            onValueChange = onUsernameChange,
+            placeholder = tr("اسم المستخدم", "Nom d'utilisateur", "Username", "Isem n useqdac"),
+            leadingIcon = Icons.Rounded.PersonOutline,
+            fieldSurface = fieldSurface,
+            primaryAccent = primaryAccent,
+            textPrimary = textPrimary,
+            textSecondary = textSecondary,
+            isDark = isDark,
+            coloredBorders = coloredBorders,
+            keyboardType = KeyboardType.Text,
+            imeAction = ImeAction.Done,
+            onDone = {
+                if (!isLoading) onConfirmGuest()
+            },
+            testTag = "guest_username_input"
+        )
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(primaryAccent.copy(alpha = if (isDark) 0.10f else 0.07f))
+                .border(
+                    width = 1.dp,
+                    color = primaryAccent.copy(alpha = 0.24f),
+                    shape = RoundedCornerShape(14.dp)
+                )
+                .padding(horizontal = 14.dp, vertical = 10.dp)
+        ) {
+            Text(
+                text = tr(
+                    "تُحفظ ملاحظاتك وملفاتك محلياً على جهازك، ويمكنك تسجيل الدخول لاحقاً للمزامنة.",
+                    "Vos notes restent enregistrées localement et vous pourrez vous connecter plus tard.",
+                    "Your notes and scans are saved locally on this device, and you can link an account anytime.",
+                    "Tizmamin-ik ad qqiment deg wallal-ik, tzemreḍ ad tkecmeḍ ticki."
+                ),
+                fontSize = 11.5.sp,
+                color = textSecondary,
+                lineHeight = 17.sp
+            )
+        }
+
+        if (!displayedError.isNullOrBlank()) {
+            Spacer(modifier = Modifier.height(14.dp))
+            InlineAuthBanner(
+                message = displayedError,
+                isError = true,
+                isDark = isDark
+            )
+        }
+
+        Spacer(modifier = Modifier.height(28.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = tr("رجوع", "Retour", "Back", "Uɣal"),
+                fontSize = 14.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = primaryAccent,
+                modifier = Modifier
+                    .testTag("guest_back_link")
+                    .defaultMinSize(minHeight = 48.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = ripple(bounded = true),
+                        onClick = onBackToAuth
+                    )
+                    .padding(horizontal = 8.dp, vertical = 12.dp)
+            )
+
+            ThemePillButton(
+                text = tr("تأكيد والدخول", "Confirmer et entrer", "Confirm & Enter", "Sentem u kcem"),
+                primaryAccent = primaryAccent,
+                accentForeground = accentForeground,
+                enabled = !isLoading,
+                isLoading = isLoading,
+                onClick = onConfirmGuest,
+                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 10.dp),
+                modifier = Modifier.testTag("guest_confirm_enter_button")
             )
         }
     }

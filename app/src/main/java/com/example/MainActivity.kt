@@ -277,8 +277,8 @@ class MainActivity : FragmentActivity() {
                                                 onClearAuthMessages = {
                                                     viewModel.clearAuthMessages()
                                                 },
-                                                onEnterGuestMode = {
-                                                    viewModel.enterGuestMode()
+                                                onEnterGuestMode = { guestName ->
+                                                    viewModel.enterGuestMode(guestName)
                                                 }
                                             )
                                         }

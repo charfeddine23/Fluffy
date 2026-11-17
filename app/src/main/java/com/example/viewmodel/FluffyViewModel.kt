@@ -1434,13 +1434,29 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         showAuthDialog.value = false
     }
 
-    fun enterGuestMode() {
+    fun enterGuestMode(guestName: String = "") {
+        val cleanName = guestName.trim()
+        if (cleanName.isNotEmpty()) {
+            useGoogleAccountName.value = false
+            profileFirstName.value = cleanName
+            profileLastName.value = ""
+            prefs.edit()
+                .putBoolean("use_google_account_name", false)
+                .putString("profile_first_name", cleanName)
+                .putString("profile_last_name", "")
+                .apply()
+        }
         isGuestMode.value = true
         prefs.edit().putBoolean("is_guest_mode", true).apply()
         showAuthDialog.value = false
         showSnackbar(
-            if (isArabic.value) "تم الدخول بوضع الضيف — بياناتك محفوظة محلياً على هاتفك 👤"
-            else "Guest Mode active — notes saved locally on your device 👤"
+            if (isArabic.value) {
+                if (cleanName.isNotEmpty()) "مرحباً $cleanName — بياناتك محفوظة محلياً على هاتفك 👤"
+                else "تم الدخول بوضع الضيف — بياناتك محفوظة محلياً على هاتفك 👤"
+            } else {
+                if (cleanName.isNotEmpty()) "Welcome $cleanName — notes saved locally on your device 👤"
+                else "Guest Mode active — notes saved locally on your device 👤"
+            }
         )
     }
 
