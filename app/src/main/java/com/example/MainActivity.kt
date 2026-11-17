@@ -56,6 +56,7 @@ import com.example.ui.theme.LocalAppLanguage
 import com.example.ui.theme.translateText
 import com.example.update.AppUpdateManager
 import com.example.viewmodel.FluffyViewModel
+import com.charfeddine.fluffy.scanner.ui.components.ScannerRootHost
 
 private sealed interface FluffyScreenState {
     data object Welcome : FluffyScreenState
@@ -65,6 +66,7 @@ private sealed interface FluffyScreenState {
     data object Archive : FluffyScreenState
     data object Account : FluffyScreenState
     data object AudioPlayer : FluffyScreenState
+    data object ScannerHub : FluffyScreenState
     data class Editor(val note: NoteEntity) : FluffyScreenState
     data object Vault : FluffyScreenState
 }
@@ -94,6 +96,7 @@ class MainActivity : FragmentActivity() {
             val isArchiveScreenOpen by viewModel.isArchiveScreenOpen.collectAsState()
             val isAccountScreenOpen by viewModel.isAccountScreenOpen.collectAsState()
             val isAudioPlayerScreenOpen by viewModel.isAudioPlayerScreenOpen.collectAsState()
+            val isScannerHubOpen by viewModel.isScannerHubOpen.collectAsState()
             val trashedNotes by viewModel.trashedNotes.collectAsState()
             val archivedNotes by viewModel.archivedNotes.collectAsState()
             val audioNotes by viewModel.audioNotes.collectAsState()
@@ -191,6 +194,7 @@ class MainActivity : FragmentActivity() {
                             val activeScreen = when {
                                 currentUser == null && !isGuestMode -> FluffyScreenState.Welcome
                                 isVaultOpen -> FluffyScreenState.Vault
+                                isScannerHubOpen -> FluffyScreenState.ScannerHub
                                 editingNote != null -> FluffyScreenState.Editor(editingNote!!)
                                 isAccountScreenOpen -> FluffyScreenState.Account
                                 isAudioPlayerScreenOpen -> FluffyScreenState.AudioPlayer
@@ -212,6 +216,7 @@ class MainActivity : FragmentActivity() {
                                             FluffyScreenState.Archive -> "archive"
                                             FluffyScreenState.Account -> "account"
                                             FluffyScreenState.AudioPlayer -> "audio_player"
+                                            FluffyScreenState.ScannerHub -> "scanner_hub"
                                             FluffyScreenState.Vault -> "vault"
                                             is FluffyScreenState.Editor -> "editor"
                                         }
@@ -234,7 +239,8 @@ class MainActivity : FragmentActivity() {
                                                 targetState is FluffyScreenState.Trash ||
                                                 targetState is FluffyScreenState.Archive ||
                                                 targetState is FluffyScreenState.Account ||
-                                                targetState is FluffyScreenState.AudioPlayer -> {
+                                                targetState is FluffyScreenState.AudioPlayer ||
+                                                targetState is FluffyScreenState.ScannerHub -> {
                                                 (slideInHorizontally { width -> if (appLanguage.isRtl) -width else width } + fadeIn())
                                                     .togetherWith(slideOutHorizontally { width -> if (appLanguage.isRtl) width else -width } + fadeOut())
                                             }
@@ -374,6 +380,28 @@ class MainActivity : FragmentActivity() {
                                                     viewModel.openExistingNote(note)
                                                 },
                                                 onBack = { viewModel.closeAudioPlayerScreen() }
+                                            )
+                                        }
+                                        FluffyScreenState.ScannerHub -> {
+                                            ScannerRootHost(
+                                                isArabic = isArabic,
+                                                onTriggerBiometricPrompt = { title, subtitle, onSuccess, onError ->
+                                                    val availability = biometricAuthManager.checkAvailability()
+                                                    if (availability == BiometricAvailability.NO_HARDWARE) {
+                                                        onError(if (isArabic) "لا توجد بصمة على الجهاز، استخدم رمز PIN" else "Biometric hardware unavailable, use PIN")
+                                                    } else {
+                                                        biometricAuthManager.promptBiometricAuth(
+                                                            title = title,
+                                                            subtitle = subtitle,
+                                                            onSuccess = onSuccess,
+                                                            onError = onError
+                                                        )
+                                                    }
+                                                },
+                                                onSaveQrAsFluffyNote = { title, content ->
+                                                    viewModel.saveQuickScannedNote(title, content)
+                                                },
+                                                onExitScanner = { viewModel.closeScannerHub() }
                                             )
                                         }
                                         FluffyScreenState.Vault -> {

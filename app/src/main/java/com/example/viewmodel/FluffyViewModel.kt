@@ -92,6 +92,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     val isArchiveScreenOpen = MutableStateFlow(false)
     val isAccountScreenOpen = MutableStateFlow(false)
     val isAudioPlayerScreenOpen = MutableStateFlow(false)
+    val isScannerHubOpen = MutableStateFlow(false)
 
     // Filter and Search
     val searchQuery = MutableStateFlow("")
@@ -599,11 +600,49 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         isTrashScreenOpen.value = false
         isArchiveScreenOpen.value = false
         isAccountScreenOpen.value = false
+        isScannerHubOpen.value = false
         isAudioPlayerScreenOpen.value = true
     }
 
     fun closeAudioPlayerScreen() {
         isAudioPlayerScreenOpen.value = false
+    }
+
+    fun openScannerHub() {
+        isSettingsDrawerOpen.value = false
+        isThemesScreenOpen.value = false
+        isTrashScreenOpen.value = false
+        isArchiveScreenOpen.value = false
+        isAccountScreenOpen.value = false
+        isAudioPlayerScreenOpen.value = false
+        isScannerHubOpen.value = true
+    }
+
+    fun closeScannerHub() {
+        isScannerHubOpen.value = false
+    }
+
+    fun saveQuickScannedNote(title: String, content: String) {
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val minOrder = withContext(Dispatchers.IO) { repository.getMinSortOrder() }
+            val note = NoteEntity(
+                title = title.ifBlank { if (isArabic.value) "ملاحظة ممسوحة ضوئياً" else "Scanned Note" },
+                content = content,
+                category = if (isArabic.value) "شخصي" else "Personal",
+                colorPreset = GlassTint.CYAN.id,
+                createdAt = now,
+                updatedAt = now,
+                syncId = UUID.randomUUID().toString(),
+                sortOrder = minOrder - 1000L
+            )
+            val id = repository.insertOrUpdate(note)
+            val saved = if (id > 0) note.copy(id = id) else note
+            syncNoteUpsertIfSignedIn(saved)
+            showSnackbar(
+                if (isArabic.value) "تم حفظ النتيجة كملاحظة في Fluffy ✨" else "Saved as a Fluffy note ✨"
+            )
+        }
     }
 
     private fun syncProfileNameFromUser(displayName: String?, forceIfGoogleNaming: Boolean = false) {

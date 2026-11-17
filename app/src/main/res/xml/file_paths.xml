@@ -3,4 +3,13 @@
     <cache-path
         name="updates"
         path="updates/" />
+    <cache-path
+        name="scanner_share"
+        path="scanner_share/" />
+    <files-path
+        name="scanner_docs"
+        path="scanner_docs/" />
+    <files-path
+        name="scanner_exports"
+        path="scanner_exports/" />
 </paths>

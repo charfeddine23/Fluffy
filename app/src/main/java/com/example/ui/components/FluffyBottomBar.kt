@@ -30,9 +30,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.Icon
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -62,6 +64,7 @@ fun FluffyBottomBar(
     onNewNote: () -> Unit,
     onNewChecklist: () -> Unit,
     onNewVoiceNote: () -> Unit,
+    onOpenScanner: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val activePreset = LocalAppThemePreset.current
@@ -82,8 +85,8 @@ fun FluffyBottomBar(
         label = "container_horizontal_bias"
     )
 
-    // Dynamic width: 64.dp circle -> 286.dp centered Dark Liquid Glass dock
-    val targetWidth = if (isExpanded) 286.dp else 64.dp
+    // Dynamic width: 64.dp circle -> 318.dp centered Liquid Glass dock (holds Voice, Note, Checklist, Doc Scanner, Close)
+    val targetWidth = if (isExpanded) 318.dp else 64.dp
     val animatedWidth by animateDpAsState(
         targetValue = targetWidth,
         animationSpec = spring(dampingRatio = 0.76f, stiffness = 380f),
@@ -128,10 +131,10 @@ fun FluffyBottomBar(
                 modifier = Modifier
                     .fillMaxSize()
                     .windowInsetsPadding(WindowInsets.navigationBars)
-                    .padding(horizontal = 20.dp, vertical = 20.dp),
+                    .padding(horizontal = 16.dp, vertical = 20.dp),
                 contentAlignment = BiasAlignment(animatedBias, 1.0f)
             ) {
-                // Original Liquid Glass Floating Plus Button -> Morphs smoothly into Liquid Glass Action Capsule
+                // Restored Liquid Glass Floating Plus Button -> Morphs smoothly into Liquid Glass Action Capsule
                 Box(
                     modifier = Modifier
                         .width(animatedWidth)
@@ -147,17 +150,17 @@ fun FluffyBottomBar(
                             shape = RoundedCornerShape(32.dp),
                             borderWidth = 1.5.dp,
                             customFill = if (isExpanded) {
-                                if (isDark) activePreset.surface.copy(alpha = 0.82f) else Color.White.copy(alpha = 0.88f)
+                                if (isDark) activePreset.surface.copy(alpha = 0.84f) else Color.White.copy(alpha = 0.90f)
                             } else {
                                 accentColor.copy(alpha = if (isDark) 0.44f else 0.88f)
                             }
                         )
                 ) {
                     if (!isExpanded) {
-                        // Collapsed state: Dark Liquid Glass Floating Plus Button
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
+                                .minimumInteractiveComponentSize()
                                 .testTag("floating_new_note_button")
                                 .clip(CircleShape)
                                 .clickable(
@@ -175,15 +178,14 @@ fun FluffyBottomBar(
                             )
                         }
                     } else {
-                        // Expanded state: 3 Dark Liquid Glass circular action lenses + Close orb
                         Row(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(horizontal = 10.dp),
+                                .padding(horizontal = 8.dp),
                             horizontalArrangement = Arrangement.SpaceEvenly,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // Icon 1: Voice Note (Microphone)
+                            // Icon 1: Voice Note
                             HorizontalActionButton(
                                 icon = Icons.Default.Mic,
                                 isDark = isDark,
@@ -197,7 +199,7 @@ fun FluffyBottomBar(
                                 }
                             )
 
-                            // Icon 2: New Text Note (Center, Prominent)
+                            // Icon 2: New Text Note
                             HorizontalActionButton(
                                 icon = Icons.Default.EditNote,
                                 isDark = isDark,
@@ -225,7 +227,21 @@ fun FluffyBottomBar(
                                 }
                             )
 
-                            // Icon 4: Close / Collapse orb
+                            // Icon 4: Doc Scanner (Opens full offline Document Scanner Ecosystem)
+                            HorizontalActionButton(
+                                icon = Icons.Default.DocumentScanner,
+                                isDark = isDark,
+                                glassTint = GlassTint.AMETHYST,
+                                tintColor = Color(0xFF38BDF8),
+                                contentDescription = if (isArabic) "تصوير الملفات" else "Doc Scanner",
+                                testTag = "action_doc_scanner_btn",
+                                onClick = {
+                                    isExpanded = false
+                                    onOpenScanner()
+                                }
+                            )
+
+                            // Icon 5: Close / Collapse orb
                             val closeInteraction = remember { MutableInteractionSource() }
                             val isClosePressed by closeInteraction.collectIsPressedAsState()
                             val closeScale by animateFloatAsState(
@@ -236,6 +252,7 @@ fun FluffyBottomBar(
                             Box(
                                 modifier = Modifier
                                     .size(46.dp)
+                                    .minimumInteractiveComponentSize()
                                     .graphicsLayer {
                                         scaleX = closeScale
                                         scaleY = closeScale
@@ -290,6 +307,7 @@ private fun HorizontalActionButton(
     Box(
         modifier = Modifier
             .size(46.dp)
+            .minimumInteractiveComponentSize()
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
@@ -313,7 +331,7 @@ private fun HorizontalActionButton(
             imageVector = icon,
             contentDescription = contentDescription,
             tint = tintColor,
-            modifier = Modifier.size(24.dp)
+            modifier = Modifier.size(22.dp)
         )
     }
 }

@@ -6,6 +6,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -38,6 +41,7 @@ import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridS
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Snackbar
@@ -61,6 +65,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -102,6 +107,8 @@ import com.example.ui.theme.LocalAppLanguage
 import com.example.ui.theme.tr
 import com.example.update.UpdateUiState
 import com.example.viewmodel.FluffyViewModel
+import com.charfeddine.fluffy.scanner.ui.theme.ScannerGlassPalette
+import com.charfeddine.fluffy.scanner.ui.theme.ScannerLaserIcon
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 
@@ -436,6 +443,96 @@ fun FluffyHomeScreen(
                     selectedCategory = selectedCategory,
                     onSelectCategory = { viewModel.selectCategory(it) }
                 )
+
+                // Sleek Dark Liquid Glass Quick-Action Card for Doc Scanner Ecosystem
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(
+                            brush = Brush.linearGradient(
+                                colors = if (isDark) {
+                                    listOf(
+                                        Color(0xD90E172D),
+                                        Color(0xCC131E3A),
+                                        Color(0xD91A1230)
+                                    )
+                                } else {
+                                    listOf(
+                                        Color(0xE60F172A),
+                                        Color(0xE616233F)
+                                    )
+                                }
+                            )
+                        )
+                        .border(
+                            width = 1.15.dp,
+                            brush = ScannerGlassPalette.NeonBorderBrush,
+                            shape = RoundedCornerShape(20.dp)
+                        )
+                        .clickable { viewModel.openScannerHub() }
+                        .padding(horizontal = 14.dp, vertical = 11.dp)
+                        .testTag("home_doc_scanner_card"),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                Brush.radialGradient(
+                                    colors = listOf(
+                                        ScannerGlassPalette.CyanGlow.copy(alpha = 0.24f),
+                                        ScannerGlassPalette.VioletGlow.copy(alpha = 0.16f)
+                                    )
+                                )
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = ScannerGlassPalette.CyanGlow.copy(alpha = 0.45f),
+                                shape = RoundedCornerShape(12.dp)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        ScannerLaserIcon(modifier = Modifier.size(24.dp))
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Doc Scanner",
+                            style = TextStyle(
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFFF8FAFC)
+                            )
+                        )
+                        Text(
+                            text = tr(
+                                "تصوير المستندات والـ PDF والـ OCR بدون إنترنت",
+                                "Scanner PDF, OCR et coffre hors ligne",
+                                "100% Offline Scanner, PDF Suite & Vault",
+                                "Amseḍfar PDF & OCR war tuqqna"
+                            ),
+                            style = TextStyle(
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = ScannerGlassPalette.CyanGlow.copy(alpha = 0.90f)
+                            )
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = tr(
+                            "فتح ماسح المستندات",
+                            "Ouvrir le scanner",
+                            "Open Doc Scanner",
+                            "Ldi amseḍfar"
+                        ),
+                        tint = Color.White.copy(alpha = 0.85f),
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
 
                 // Notes Content: Staggered Grid, List, or clean empty space
                 if (displayedNotes.isEmpty()) {
@@ -941,6 +1038,7 @@ fun FluffyHomeScreen(
                 onNewNote = { viewModel.openNewNote() },
                 onNewChecklist = { viewModel.openNewNote(startWithChecklist = true) },
                 onNewVoiceNote = { viewModel.showVoiceRecorder.value = true },
+                onOpenScanner = { viewModel.openScannerHub() },
                 modifier = Modifier.fillMaxSize()
             )
 
