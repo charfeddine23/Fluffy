@@ -209,19 +209,20 @@ fun ScannerHubScreen(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            Text(
-                                text = if (showTrash) {
-                                    if (isArabic) "تُحذف تلقائياً بعد 30 يوماً" else "Auto-deletes after 30 days"
-                                } else if (currentFolderObj != null) {
-                                    if (isArabic) "مجلد خاص • محلي 100%" else "Folder • 100% Offline"
-                                } else {
-                                    if (isArabic) "مستنداتك وملفات PDF محلياً 100%" else "100% Offline • PDF & OCR"
-                                },
-                                color = ScannerGlassPalette.TextSecondary,
-                                fontSize = 11.5.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            val subtitleText = when {
+                                showTrash -> if (isArabic) "تُحذف تلقائياً بعد 30 يوماً" else "Auto-deletes after 30 days"
+                                currentFolderObj != null -> if (isArabic) "مجلد خاص" else "Folder"
+                                else -> null
+                            }
+                            if (subtitleText != null) {
+                                Text(
+                                    text = subtitleText,
+                                    color = ScannerGlassPalette.TextSecondary,
+                                    fontSize = 11.5.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
 
