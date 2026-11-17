@@ -16,6 +16,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
@@ -100,6 +101,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -137,6 +139,8 @@ import com.example.ui.glass.FrostedBackdrop
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.glass.liquidGlass
 import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
 @Composable
@@ -218,6 +222,7 @@ fun NoteEditorScreen(
     var readZoomScale by remember { mutableFloatStateOf(1f) }
     var readPanOffset by remember { mutableStateOf(Offset.Zero) }
     var readViewportSize by remember { mutableStateOf(IntSize.Zero) }
+    var writingFontSizeSp by remember(note.id) { mutableFloatStateOf(16f) }
 
     val checklistItems = remember {
         mutableStateListOf<ChecklistItem>().apply {
@@ -1000,47 +1005,71 @@ fun NoteEditorScreen(
                             .clipToBounds()
                             .onSizeChanged { readViewportSize = it }
                             .pointerInput(isEditMode, pageIndex) {
-                                if (isEditMode) return@pointerInput
                                 awaitEachGesture {
                                     awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                                     var wasMultiTouch = false
                                     do {
                                         val event = awaitPointerEvent(pass = PointerEventPass.Initial)
                                         val pressedChanges = event.changes.filter { it.pressed }
-                                        if (pressedChanges.size >= 2) {
-                                            wasMultiTouch = true
-                                            val zoomChange = event.calculateZoom()
-                                            val panChange = event.calculatePan()
-                                            val newScale = (readZoomScale * zoomChange).coerceIn(1f, 3.0f)
-                                            readZoomScale = newScale
-                                            if (newScale <= 1.01f) {
-                                                readPanOffset = Offset.Zero
-                                            } else {
-                                                val maxX = (readViewportSize.width * (newScale - 1f)) / 2f
-                                                val maxY = (readViewportSize.height * (newScale - 1f)) / 2f
-                                                val candidate = readPanOffset + panChange
-                                                readPanOffset = Offset(
-                                                    x = candidate.x.coerceIn(-maxX, maxX),
-                                                    y = candidate.y.coerceIn(-maxY, maxY)
-                                                )
+                                        if (isEditMode) {
+                                            if (pressedChanges.size >= 2) {
+                                                wasMultiTouch = true
+                                                val zoomChange = event.calculateZoom()
+                                                if (zoomChange.isFinite() && zoomChange > 0f && abs(zoomChange - 1f) > 0.001f) {
+                                                    writingFontSizeSp = (writingFontSizeSp * zoomChange).coerceIn(12f, 32f)
+                                                }
+                                                event.changes.forEach { it.consume() }
+                                            } else if (wasMultiTouch && pressedChanges.isNotEmpty()) {
+                                                event.changes.forEach { it.consume() }
                                             }
-                                            event.changes.forEach { it.consume() }
-                                        } else if (pressedChanges.size == 1 && !wasMultiTouch && readZoomScale > 1.02f) {
-                                            val change = pressedChanges.first()
-                                            val delta = change.position - change.previousPosition
-                                            if (delta.getDistanceSquared() > 2f) {
-                                                val maxX = (readViewportSize.width * (readZoomScale - 1f)) / 2f
-                                                val maxY = (readViewportSize.height * (readZoomScale - 1f)) / 2f
-                                                val candidate = readPanOffset + delta
-                                                readPanOffset = Offset(
-                                                    x = candidate.x.coerceIn(-maxX, maxX),
-                                                    y = candidate.y.coerceIn(-maxY, maxY)
-                                                )
-                                                change.consume()
+                                        } else {
+                                            if (pressedChanges.size >= 2) {
+                                                wasMultiTouch = true
+                                                val zoomChange = event.calculateZoom()
+                                                val panChange = event.calculatePan()
+                                                val previousCentroid = event.calculateCentroid(useCurrent = false)
+                                                val oldScale = readZoomScale
+                                                val newScale = (oldScale * zoomChange).coerceIn(1f, 3.0f)
+                                                if (newScale <= 1.01f) {
+                                                    readZoomScale = 1f
+                                                    readPanOffset = Offset.Zero
+                                                } else {
+                                                    val zoomFactor = newScale / oldScale
+                                                    val stageW = size.width.toFloat().coerceAtLeast(1f)
+                                                    val stageH = size.height.toFloat().coerceAtLeast(1f)
+                                                    val center = Offset(stageW / 2f, stageH / 2f)
+                                                    val focal = if (previousCentroid.isSpecified) previousCentroid - center else Offset.Zero
+                                                    val candidate = (readPanOffset - focal) * zoomFactor + focal + panChange
+                                                    val maxX = (stageW * (newScale - 1f)) / 2f
+                                                    val maxY = (stageH * (newScale - 1f)) / 2f
+                                                    readZoomScale = newScale
+                                                    readPanOffset = Offset(
+                                                        x = candidate.x.coerceIn(-maxX, maxX),
+                                                        y = candidate.y.coerceIn(-maxY, maxY)
+                                                    )
+                                                }
+                                                event.changes.forEach { it.consume() }
+                                            } else if (pressedChanges.size == 1 && !wasMultiTouch && readZoomScale > 1.02f) {
+                                                val change = pressedChanges.first()
+                                                val delta = change.position - change.previousPosition
+                                                if (delta.getDistanceSquared() > 2f) {
+                                                    val stageW = size.width.toFloat().coerceAtLeast(1f)
+                                                    val stageH = size.height.toFloat().coerceAtLeast(1f)
+                                                    val maxX = (stageW * (readZoomScale - 1f)) / 2f
+                                                    val maxY = (stageH * (readZoomScale - 1f)) / 2f
+                                                    val candidate = readPanOffset + delta
+                                                    readPanOffset = Offset(
+                                                        x = candidate.x.coerceIn(-maxX, maxX),
+                                                        y = candidate.y.coerceIn(-maxY, maxY)
+                                                    )
+                                                    change.consume()
+                                                }
+                                            } else if (wasMultiTouch && pressedChanges.isNotEmpty()) {
+                                                event.changes.forEach { it.consume() }
                                             }
                                         }
                                     } while (event.changes.any { it.pressed })
-                                    if (readZoomScale <= 1.03f) {
+                                    if (!isEditMode && readZoomScale <= 1.03f) {
                                         readZoomScale = 1f
                                         readPanOffset = Offset.Zero
                                     }
@@ -1127,7 +1156,7 @@ fun NoteEditorScreen(
                                                         },
                                                         modifier = Modifier.weight(1f),
                                                         textStyle = TextStyle(
-                                                            fontSize = 15.sp,
+                                                            fontSize = (writingFontSizeSp - 1f).coerceIn(11f, 30f).sp,
                                                             color = if (item.isDone) metaColor else textColor,
                                                             textDecoration = if (item.isDone) TextDecoration.LineThrough else TextDecoration.None
                                                         ),
@@ -1136,7 +1165,7 @@ fun NoteEditorScreen(
                                                             if (item.text.isEmpty()) {
                                                                 Text(
                                                                     text = if (isArabic) "عنصر مهمة..." else "Checklist item...",
-                                                                    fontSize = 15.sp,
+                                                                    fontSize = (writingFontSizeSp - 1f).coerceIn(11f, 30f).sp,
                                                                     color = metaColor.copy(alpha = 0.55f)
                                                                 )
                                                             }
@@ -1160,7 +1189,7 @@ fun NoteEditorScreen(
                                                         text = item.text,
                                                         modifier = Modifier.weight(1f),
                                                         style = TextStyle(
-                                                            fontSize = 15.sp,
+                                                            fontSize = (writingFontSizeSp - 1f).coerceIn(11f, 30f).sp,
                                                             color = if (item.isDone) metaColor else textColor,
                                                             textDecoration = if (item.isDone) TextDecoration.LineThrough else TextDecoration.None
                                                         )
@@ -1227,9 +1256,9 @@ fun NoteEditorScreen(
                                         .defaultMinSize(minHeight = remainingMinHeight)
                                         .testTag(fieldTestTag),
                                     textStyle = TextStyle(
-                                        fontSize = 16.sp,
+                                        fontSize = writingFontSizeSp.sp,
                                         color = bodyColor,
-                                        lineHeight = 24.sp
+                                        lineHeight = (writingFontSizeSp * 1.5f).sp
                                     ),
                                     cursorBrush = SolidColor(selectedTint.accentColor),
                                     decorationBox = { innerTextField ->
@@ -1242,9 +1271,9 @@ fun NoteEditorScreen(
                                                         if (isArabic) "اكتب محتوى الصفحة ${pageIndex + 1} هنا..." else "Write page ${pageIndex + 1} here..."
                                                     },
                                                     style = TextStyle(
-                                                        fontSize = 16.sp,
+                                                        fontSize = writingFontSizeSp.sp,
                                                         color = metaColor.copy(alpha = 0.6f),
-                                                        lineHeight = 24.sp
+                                                        lineHeight = (writingFontSizeSp * 1.5f).sp
                                                     )
                                                 )
                                             }
@@ -1261,9 +1290,9 @@ fun NoteEditorScreen(
                                             .defaultMinSize(minHeight = remainingMinHeight)
                                             .testTag(fieldTestTag),
                                         style = TextStyle(
-                                            fontSize = 16.sp,
+                                            fontSize = writingFontSizeSp.sp,
                                             color = bodyColor,
-                                            lineHeight = 24.sp
+                                            lineHeight = (writingFontSizeSp * 1.5f).sp
                                         )
                                     )
                                 }
@@ -1296,6 +1325,36 @@ fun NoteEditorScreen(
                             ) {
                                 Text(
                                     text = "${String.format(Locale.US, "%.1fx", readZoomScale)} ↺",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = textColor
+                                )
+                            }
+                        } else if (isEditMode && abs(writingFontSizeSp - 16f) > 0.4f && pageIndex == pagerState.currentPage) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(16.dp)
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("editor_font_size_pill")
+                                    .liquidGlass(
+                                        isDark = effectiveDark,
+                                        tint = selectedTint,
+                                        shape = CircleShape,
+                                        borderWidth = 1.dp,
+                                        customFill = accentColor.copy(alpha = if (effectiveDark) 0.28f else 0.18f)
+                                    )
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = ripple(bounded = true)
+                                    ) {
+                                        writingFontSizeSp = 16f
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "${writingFontSizeSp.roundToInt()} sp ↺",
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = textColor

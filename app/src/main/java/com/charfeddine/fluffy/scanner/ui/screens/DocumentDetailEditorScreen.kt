@@ -1454,37 +1454,70 @@ private fun InteractiveAnnotatedPageCanvas(
         }
     }
 
+    val bw = bitmap.width.toFloat().coerceAtLeast(1f)
+    val bh = bitmap.height.toFloat().coerceAtLeast(1f)
+
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .clipToBounds()
             .onSizeChanged { boxSize = it }
             .then(
                 if (activeTool == AnnotationTool.NONE) {
                     Modifier
-                        .pointerInput(pageId) {
+                        .pointerInput(pageId, bw, bh) {
                             detectTapGestures(
-                                onDoubleTap = {
+                                onDoubleTap = { tapOffset ->
+                                    val stageW = size.width.toFloat().coerceAtLeast(1f)
+                                    val stageH = size.height.toFloat().coerceAtLeast(1f)
+                                    val stageScale = minOf(stageW / bw, stageH / bh)
+                                    val imgW = bw * stageScale
+                                    val imgH = bh * stageScale
                                     if (zoomScale > 1.05f) {
                                         zoomScale = 1f
                                         panOffset = Offset.Zero
                                     } else {
-                                        zoomScale = 2.2f
+                                        val oldScale = zoomScale
+                                        val targetScale = 2.4f
+                                        val zoomFactor = targetScale / oldScale
+                                        val center = Offset(stageW / 2f, stageH / 2f)
+                                        val focal = tapOffset - center
+                                        val candidatePan = (panOffset - focal) * zoomFactor + focal
+                                        val maxPanX = ((imgW * targetScale - stageW).coerceAtLeast(0f)) / 2f
+                                        val maxPanY = ((imgH * targetScale - stageH).coerceAtLeast(0f)) / 2f
+                                        zoomScale = targetScale
+                                        panOffset = Offset(
+                                            x = candidatePan.x.coerceIn(-maxPanX, maxPanX),
+                                            y = candidatePan.y.coerceIn(-maxPanY, maxPanY)
+                                        )
                                     }
                                 }
                             )
                         }
-                        .pointerInput(pageId, boxSize) {
-                            detectTransformGestures { _, pan, zoom, _ ->
-                                val newScale = (zoomScale * zoom).coerceIn(1f, 4f)
-                                zoomScale = newScale
+                        .pointerInput(pageId, bw, bh) {
+                            detectTransformGestures { centroid, pan, zoom, _ ->
+                                val stageW = size.width.toFloat().coerceAtLeast(1f)
+                                val stageH = size.height.toFloat().coerceAtLeast(1f)
+                                val stageScale = minOf(stageW / bw, stageH / bh)
+                                val imgW = bw * stageScale
+                                val imgH = bh * stageScale
+
+                                val oldScale = zoomScale
+                                val newScale = (oldScale * zoom).coerceIn(1f, 4f)
                                 if (newScale <= 1.01f) {
+                                    zoomScale = 1f
                                     panOffset = Offset.Zero
                                 } else {
-                                    val maxPanX = (boxSize.width * (newScale - 1f)) / 2f
-                                    val maxPanY = (boxSize.height * (newScale - 1f)) / 2f
+                                    val zoomFactor = newScale / oldScale
+                                    val center = Offset(stageW / 2f, stageH / 2f)
+                                    val focalFromCenter = centroid - center
+                                    val candidatePan = (panOffset - focalFromCenter) * zoomFactor + focalFromCenter + pan
+                                    val maxPanX = ((imgW * newScale - stageW).coerceAtLeast(0f)) / 2f
+                                    val maxPanY = ((imgH * newScale - stageH).coerceAtLeast(0f)) / 2f
+                                    zoomScale = newScale
                                     panOffset = Offset(
-                                        x = (panOffset.x + pan.x).coerceIn(-maxPanX, maxPanX),
-                                        y = (panOffset.y + pan.y).coerceIn(-maxPanY, maxPanY)
+                                        x = candidatePan.x.coerceIn(-maxPanX, maxPanX),
+                                        y = candidatePan.y.coerceIn(-maxPanY, maxPanY)
                                     )
                                 }
                             }
@@ -1493,15 +1526,7 @@ private fun InteractiveAnnotatedPageCanvas(
                     Modifier
                 }
             )
-            .graphicsLayer {
-                scaleX = zoomScale
-                scaleY = zoomScale
-                translationX = panOffset.x
-                translationY = panOffset.y
-            }
     ) {
-        val bw = bitmap.width.toFloat().coerceAtLeast(1f)
-        val bh = bitmap.height.toFloat().coerceAtLeast(1f)
         val cw = boxSize.width.toFloat().coerceAtLeast(1f)
         val ch = boxSize.height.toFloat().coerceAtLeast(1f)
         val scale = minOf(cw / bw, ch / bh)
@@ -1509,6 +1534,17 @@ private fun InteractiveAnnotatedPageCanvas(
         val drawH = bh * scale
         val offsetX = (cw - drawW) / 2f
         val offsetY = (ch - drawH) / 2f
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = zoomScale
+                    scaleY = zoomScale
+                    translationX = panOffset.x
+                    translationY = panOffset.y
+                }
+        ) {
 
         fun toNorm(pos: Offset) = PointNorm(
             x = ((pos.x - offsetX) / drawW).coerceIn(0f, 1f),
@@ -1690,6 +1726,7 @@ private fun InteractiveAnnotatedPageCanvas(
                     .align(Alignment.Center)
                     .rotate(watermark.angleDeg)
             )
+        }
         }
     }
 }

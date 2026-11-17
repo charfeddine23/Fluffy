@@ -149,7 +149,8 @@ fun ScannerHubScreen(
         allFolders.firstOrNull { it.id == currentFolderId }
     }
 
-    ScannerDarkLiquidBackdrop {
+    Box(modifier = Modifier.fillMaxSize()) {
+        ScannerDarkLiquidBackdrop {
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -862,7 +863,7 @@ fun ScannerHubScreen(
         }
     }
 
-    // PDF Utility Tools Sheet
+    // PDF Utility Studio (Full-Screen iOS 27 Dark Liquid Glass Overlay)
     PdfToolsSheet(
         visible = showPdfToolsSheet,
         isArabic = isArabic,
@@ -872,6 +873,7 @@ fun ScannerHubScreen(
         onProtectPdf = { uri, pwd, outName -> scannerViewModel.passwordProtectPdf(uri, pwd, outName, isArabic) },
         onDismiss = { showPdfToolsSheet = false }
     )
+    }
 }
 
 @Composable
