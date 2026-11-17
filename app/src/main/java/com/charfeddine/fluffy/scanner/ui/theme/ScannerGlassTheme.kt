@@ -6,6 +6,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -122,6 +123,48 @@ fun Modifier.scannerGlassSurface(
     .border(
         width = borderWidth,
         brush = if (glowBorder) ScannerGlassPalette.NeonBorderBrush else ScannerGlassPalette.SubtleGlassBorder,
+        shape = shape
+    )
+
+/**
+ * iOS 26/27-inspired Dark Liquid Glass modifier with crisp specular top highlight,
+ * refractive dual-tone stroke, and deep translucent frosted depth.
+ */
+fun Modifier.iosLiquidGlass(
+    shape: Shape = CircleShape,
+    glowAccent: Boolean = false,
+    fillAlpha: Float = 0.68f
+): Modifier = this
+    .clip(shape)
+    .background(
+        brush = Brush.verticalGradient(
+            colors = listOf(
+                Color(0xFF1D2948).copy(alpha = (fillAlpha + 0.06f).coerceAtMost(0.95f)),
+                Color(0xFF0B1224).copy(alpha = fillAlpha),
+                Color(0xFF060A16).copy(alpha = (fillAlpha + 0.14f).coerceAtMost(0.98f))
+            )
+        ),
+        shape = shape
+    )
+    .border(
+        width = if (glowAccent) 1.15.dp else 0.85.dp,
+        brush = Brush.linearGradient(
+            colors = if (glowAccent) {
+                listOf(
+                    Color.White.copy(alpha = 0.42f),
+                    ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.65f),
+                    ScannerGlassPalette.EdgeOverlayPurple.copy(alpha = 0.50f),
+                    Color.White.copy(alpha = 0.18f)
+                )
+            } else {
+                listOf(
+                    Color.White.copy(alpha = 0.36f),
+                    Color.White.copy(alpha = 0.10f),
+                    Color.White.copy(alpha = 0.05f),
+                    ScannerGlassPalette.CyanGlow.copy(alpha = 0.16f)
+                )
+            }
+        ),
         shape = shape
     )
 
