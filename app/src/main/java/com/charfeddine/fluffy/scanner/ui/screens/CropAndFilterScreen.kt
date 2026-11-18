@@ -114,6 +114,7 @@ import com.charfeddine.fluffy.scanner.data.model.DocumentQuad
 import com.charfeddine.fluffy.scanner.data.model.IdCardSide
 import com.charfeddine.fluffy.scanner.data.model.PointNorm
 import com.charfeddine.fluffy.scanner.data.model.ScannerFilterType
+import com.charfeddine.fluffy.scanner.domain.ScannerSubRoute
 import com.charfeddine.fluffy.scanner.domain.ScannerViewModel
 import com.charfeddine.fluffy.scanner.ui.theme.ScannerDarkLiquidBackdrop
 import com.charfeddine.fluffy.scanner.ui.theme.ScannerGlassPalette
@@ -143,11 +144,16 @@ fun CropAndFilterScreen(
 
     val batchFrames by scannerViewModel.batchFrames.collectAsState()
     val activeIdx by scannerViewModel.activeCropIndex.collectAsState()
+    val currentRoute by scannerViewModel.currentRoute.collectAsState()
     val isBusy by scannerViewModel.isBusy.collectAsState()
 
     val frame = batchFrames.getOrNull(activeIdx)
     if (frame == null) {
-        LaunchedEffect(Unit) { onBackToCamera() }
+        LaunchedEffect(currentRoute) {
+            if (currentRoute is ScannerSubRoute.CropAndFilter) {
+                onBackToCamera()
+            }
+        }
         return
     }
 

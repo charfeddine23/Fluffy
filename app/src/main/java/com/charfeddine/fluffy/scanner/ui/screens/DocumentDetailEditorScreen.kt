@@ -7,7 +7,9 @@ import android.graphics.Bitmap
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -17,9 +19,13 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -101,6 +107,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -156,6 +163,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.abs
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -219,6 +227,53 @@ fun DocumentDetailEditorScreen(
         }
     }
 
+    val density = LocalDensity.current
+    val stageSlideAnim = remember { Animatable(0f) }
+    var stageDragOffsetX by remember { mutableFloatStateOf(0f) }
+    var pendingSlideDirection by remember { mutableIntStateOf(0) }
+    val slideEnterDistPx = with(density) { 140.dp.toPx() }
+    val swipeThresholdPx = with(density) { 52.dp.toPx() }
+
+    LaunchedEffect(currentPage?.id) {
+        stageDragOffsetX = 0f
+        val dir = pendingSlideDirection
+        pendingSlideDirection = 0
+        if (dir != 0) {
+            val startX = if (isArabic) -dir * slideEnterDistPx else dir * slideEnterDistPx
+            stageSlideAnim.snapTo(startX)
+            stageSlideAnim.animateTo(0f, tween(durationMillis = 200))
+        } else {
+            stageSlideAnim.snapTo(0f)
+        }
+    }
+
+    fun navigatePageByDelta(delta: Int) {
+        val target = safePageIndex + delta
+        if (target in pages.indices) {
+            pendingSlideDirection = delta
+            activeSignaturePlacementId = null
+            activePageIndex = target
+        }
+    }
+
+    val canSwipePages = pages.size > 1 && activeTool == AnnotationTool.NONE
+    val onStageSwipeDragDelta: (Float) -> Unit = { totalDx ->
+        val isNextDrag = if (isArabic) totalDx > 0f else totalDx < 0f
+        val canMoveInDir = if (isNextDrag) safePageIndex < pages.lastIndex else safePageIndex > 0
+        stageDragOffsetX = if (canMoveInDir) totalDx * 0.55f else totalDx * 0.16f
+    }
+    val onStageSwipeRelease: (Float, Float) -> Unit = { totalDx, totalDy ->
+        stageDragOffsetX = 0f
+        if (abs(totalDx) >= swipeThresholdPx && abs(totalDx) > abs(totalDy) * 1.15f) {
+            val delta = if (isArabic) {
+                if (totalDx > 0f) 1 else -1
+            } else {
+                if (totalDx < 0f) 1 else -1
+            }
+            navigatePageByDelta(delta)
+        }
+    }
+
     ScannerDarkLiquidBackdrop {
         Box(modifier = Modifier.fillMaxSize()) {
             // 1. Expansive Document Viewing & Editing Stage (Edge-to-Edge Breathing Room)
@@ -248,29 +303,41 @@ fun DocumentDetailEditorScreen(
                 if (bmp == null || p == null) {
                     CircularProgressIndicator(color = ScannerGlassPalette.CyanGlow)
                 } else {
-                    InteractiveAnnotatedPageCanvas(
-                        pageId = p.id,
-                        bitmap = bmp,
-                        annotations = activeAnnotations,
-                        signatures = activeSignatures,
-                        watermark = activeWatermark,
-                        activeTool = activeTool,
-                        penColorArgb = penColorArgb,
-                        redactionColorArgb = if (redactionBlack) 0xFF000000L else 0xFFFFFFFFL,
-                        activeSignaturePlacementId = activeSignaturePlacementId,
-                        loadSignatureBitmap = { sigId ->
-                            savedSignatures.firstOrNull { it.id == sigId }?.let {
-                                scannerViewModel.repository.loadEncryptedSignatureBitmap(it)
-                            }
-                        },
-                        onSelectSignature = { activeSignaturePlacementId = it },
-                        onAnnotationsChanged = { updatedAnn ->
-                            scannerViewModel.updatePageMarkups(p, updatedAnn, activeSignatures, activeWatermark)
-                        },
-                        onSignaturesChanged = { updatedSigs ->
-                            scannerViewModel.updatePageMarkups(p, activeAnnotations, updatedSigs, activeWatermark)
-                        }
-                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                translationX = stageDragOffsetX + stageSlideAnim.value
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        InteractiveAnnotatedPageCanvas(
+                            pageId = p.id,
+                            bitmap = bmp,
+                            annotations = activeAnnotations,
+                            signatures = activeSignatures,
+                            watermark = activeWatermark,
+                            activeTool = activeTool,
+                            penColorArgb = penColorArgb,
+                            redactionColorArgb = if (redactionBlack) 0xFF000000L else 0xFFFFFFFFL,
+                            activeSignaturePlacementId = activeSignaturePlacementId,
+                            canSwipePages = canSwipePages,
+                            loadSignatureBitmap = { sigId ->
+                                savedSignatures.firstOrNull { it.id == sigId }?.let {
+                                    scannerViewModel.repository.loadEncryptedSignatureBitmap(it)
+                                }
+                            },
+                            onSelectSignature = { activeSignaturePlacementId = it },
+                            onAnnotationsChanged = { updatedAnn ->
+                                scannerViewModel.updatePageMarkups(p, updatedAnn, activeSignatures, activeWatermark)
+                            },
+                            onSignaturesChanged = { updatedSigs ->
+                                scannerViewModel.updatePageMarkups(p, activeAnnotations, updatedSigs, activeWatermark)
+                            },
+                            onSwipeDragDelta = onStageSwipeDragDelta,
+                            onSwipeRelease = onStageSwipeRelease
+                        )
+                    }
                 }
 
                 // Multi-page Quick Navigation Pill floating on top-end of canvas when > 1 page
@@ -285,7 +352,7 @@ fun DocumentDetailEditorScreen(
                         horizontalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         IconButton(
-                            onClick = { if (safePageIndex > 0) activePageIndex = safePageIndex - 1 },
+                            onClick = { navigatePageByDelta(-1) },
                             enabled = safePageIndex > 0,
                             modifier = Modifier.size(32.dp)
                         ) {
@@ -306,7 +373,7 @@ fun DocumentDetailEditorScreen(
                                 .padding(horizontal = 4.dp)
                         )
                         IconButton(
-                            onClick = { if (safePageIndex < pages.lastIndex) activePageIndex = safePageIndex + 1 },
+                            onClick = { navigatePageByDelta(1) },
                             enabled = safePageIndex < pages.lastIndex,
                             modifier = Modifier.size(32.dp)
                         ) {
@@ -1432,10 +1499,13 @@ private fun InteractiveAnnotatedPageCanvas(
     penColorArgb: Long,
     redactionColorArgb: Long,
     activeSignaturePlacementId: String?,
+    canSwipePages: Boolean,
     loadSignatureBitmap: (String) -> Bitmap?,
     onSelectSignature: (String?) -> Unit,
     onAnnotationsChanged: (PageAnnotations) -> Unit,
-    onSignaturesChanged: (List<SignaturePlacement>) -> Unit
+    onSignaturesChanged: (List<SignaturePlacement>) -> Unit,
+    onSwipeDragDelta: (Float) -> Unit,
+    onSwipeRelease: (Float, Float) -> Unit
 ) {
     var boxSize by remember { mutableStateOf(IntSize.Zero) }
     var draftPoints by remember { mutableStateOf<List<PointNorm>>(emptyList()) }
@@ -1445,6 +1515,12 @@ private fun InteractiveAnnotatedPageCanvas(
     var panOffset by remember(pageId) { mutableStateOf(Offset.Zero) }
     val density = LocalDensity.current
     val imageBitmap = remember(bitmap) { bitmap.asImageBitmap() }
+
+    val latestZoomScale by rememberUpdatedState(zoomScale)
+    val latestPanOffset by rememberUpdatedState(panOffset)
+    val latestCanSwipePages by rememberUpdatedState(canSwipePages)
+    val latestOnSwipeDragDelta by rememberUpdatedState(onSwipeDragDelta)
+    val latestOnSwipeRelease by rememberUpdatedState(onSwipeRelease)
 
     // Ensure 1:1 coordinate fidelity whenever user activates any markup tool
     LaunchedEffect(activeTool) {
@@ -1495,30 +1571,105 @@ private fun InteractiveAnnotatedPageCanvas(
                             )
                         }
                         .pointerInput(pageId, bw, bh) {
-                            detectTransformGestures { centroid, pan, zoom, _ ->
-                                val stageW = size.width.toFloat().coerceAtLeast(1f)
-                                val stageH = size.height.toFloat().coerceAtLeast(1f)
-                                val stageScale = minOf(stageW / bw, stageH / bh)
-                                val imgW = bw * stageScale
-                                val imgH = bh * stageScale
+                            val swipeSlopPx = viewConfiguration.touchSlop
+                            awaitEachGesture {
+                                val firstDown = awaitFirstDown(requireUnconsumed = false)
+                                val downPos = firstDown.position
+                                var wasMultiTouch = false
+                                var swipeActive = false
+                                var swipeDecidedNonSwipe = false
+                                var totalDx = 0f
+                                var totalDy = 0f
 
-                                val oldScale = zoomScale
-                                val newScale = (oldScale * zoom).coerceIn(1f, 4f)
-                                if (newScale <= 1.01f) {
-                                    zoomScale = 1f
-                                    panOffset = Offset.Zero
-                                } else {
-                                    val zoomFactor = newScale / oldScale
-                                    val center = Offset(stageW / 2f, stageH / 2f)
-                                    val focalFromCenter = centroid - center
-                                    val candidatePan = (panOffset - focalFromCenter) * zoomFactor + focalFromCenter + pan
-                                    val maxPanX = ((imgW * newScale - stageW).coerceAtLeast(0f)) / 2f
-                                    val maxPanY = ((imgH * newScale - stageH).coerceAtLeast(0f)) / 2f
-                                    zoomScale = newScale
-                                    panOffset = Offset(
-                                        x = candidatePan.x.coerceIn(-maxPanX, maxPanX),
-                                        y = candidatePan.y.coerceIn(-maxPanY, maxPanY)
-                                    )
+                                do {
+                                    val event = awaitPointerEvent()
+                                    val pressedCount = event.changes.count { it.pressed }
+                                    if (pressedCount >= 2) {
+                                        wasMultiTouch = true
+                                        if (swipeActive) {
+                                            swipeActive = false
+                                            latestOnSwipeDragDelta(0f)
+                                        }
+                                        val zoom = event.calculateZoom()
+                                        val pan = event.calculatePan()
+                                        val centroid = event.calculateCentroid(useCurrent = false)
+                                        val stageW = size.width.toFloat().coerceAtLeast(1f)
+                                        val stageH = size.height.toFloat().coerceAtLeast(1f)
+                                        val stageScale = minOf(stageW / bw, stageH / bh)
+                                        val imgW = bw * stageScale
+                                        val imgH = bh * stageScale
+
+                                        val oldScale = latestZoomScale
+                                        val newScale = (oldScale * zoom).coerceIn(1f, 4f)
+                                        if (newScale <= 1.01f) {
+                                            zoomScale = 1f
+                                            panOffset = Offset.Zero
+                                        } else {
+                                            val zoomFactor = newScale / oldScale
+                                            val center = Offset(stageW / 2f, stageH / 2f)
+                                            val focalFromCenter = centroid - center
+                                            val candidatePan = (latestPanOffset - focalFromCenter) * zoomFactor + focalFromCenter + pan
+                                            val maxPanX = ((imgW * newScale - stageW).coerceAtLeast(0f)) / 2f
+                                            val maxPanY = ((imgH * newScale - stageH).coerceAtLeast(0f)) / 2f
+                                            zoomScale = newScale
+                                            panOffset = Offset(
+                                                x = candidatePan.x.coerceIn(-maxPanX, maxPanX),
+                                                y = candidatePan.y.coerceIn(-maxPanY, maxPanY)
+                                            )
+                                        }
+                                        event.changes.forEach { it.consume() }
+                                    } else if (pressedCount == 1) {
+                                        val change = event.changes.firstOrNull { it.pressed } ?: break
+                                        // Respect child interactions (e.g. dragging a placed signature)
+                                        if (change.isConsumed) {
+                                            swipeDecidedNonSwipe = true
+                                            if (swipeActive) {
+                                                swipeActive = false
+                                                latestOnSwipeDragDelta(0f)
+                                            }
+                                            continue
+                                        }
+                                        if (latestZoomScale > 1.02f) {
+                                            val pan = event.calculatePan()
+                                            if (pan != Offset.Zero) {
+                                                val stageW = size.width.toFloat().coerceAtLeast(1f)
+                                                val stageH = size.height.toFloat().coerceAtLeast(1f)
+                                                val stageScale = minOf(stageW / bw, stageH / bh)
+                                                val imgW = bw * stageScale
+                                                val imgH = bh * stageScale
+                                                val maxPanX = ((imgW * latestZoomScale - stageW).coerceAtLeast(0f)) / 2f
+                                                val maxPanY = ((imgH * latestZoomScale - stageH).coerceAtLeast(0f)) / 2f
+                                                val candidatePan = latestPanOffset + pan
+                                                panOffset = Offset(
+                                                    x = candidatePan.x.coerceIn(-maxPanX, maxPanX),
+                                                    y = candidatePan.y.coerceIn(-maxPanY, maxPanY)
+                                                )
+                                                change.consume()
+                                            }
+                                        } else if (latestCanSwipePages && !wasMultiTouch && !swipeDecidedNonSwipe) {
+                                            totalDx = change.position.x - downPos.x
+                                            totalDy = change.position.y - downPos.y
+                                            if (!swipeActive) {
+                                                val dist = hypot(totalDx.toDouble(), totalDy.toDouble()).toFloat()
+                                                if (dist > swipeSlopPx) {
+                                                    if (abs(totalDx) > abs(totalDy) * 1.15f) {
+                                                        swipeActive = true
+                                                        change.consume()
+                                                        latestOnSwipeDragDelta(totalDx)
+                                                    } else {
+                                                        swipeDecidedNonSwipe = true
+                                                    }
+                                                }
+                                            } else {
+                                                change.consume()
+                                                latestOnSwipeDragDelta(totalDx)
+                                            }
+                                        }
+                                    }
+                                } while (event.changes.any { it.pressed })
+
+                                if (swipeActive) {
+                                    latestOnSwipeRelease(totalDx, totalDy)
                                 }
                             }
                         }

@@ -888,8 +888,8 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                     docId
                 }
 
-                batchFrames.value = emptyList()
                 currentRoute.value = ScannerSubRoute.DocumentDetail(targetDocId)
+                batchFrames.value = emptyList()
                 statusMessage.value = if (isArabic) "تم حفظ المستند وتنسيق النص بنجاح ✨" else "Document saved locally ✨"
             } finally {
                 isBusy.value = false
