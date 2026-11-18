@@ -99,6 +99,7 @@ fun VaultScreen(
     onBack: () -> Unit,
     isVaultLockEnabled: Boolean = false,
     isVaultUnlocked: Boolean = true,
+    isVaultActive: Boolean = true,
     hasVaultPasskey: Boolean = false,
     onTriggerBiometricUnlock: () -> Unit = {},
     onVerifyPasskey: (String) -> Boolean = { false },
@@ -158,8 +159,8 @@ fun VaultScreen(
         label = "vault_float"
     )
 
-    LaunchedEffect(isVaultLockEnabled, isVaultUnlocked) {
-        if (isVaultLockEnabled && !isVaultUnlocked) {
+    LaunchedEffect(isVaultActive, isVaultLockEnabled, isVaultUnlocked) {
+        if (isVaultActive && isVaultLockEnabled && !isVaultUnlocked) {
             passkeyAttempt = ""
             passkeyError = false
             onTriggerBiometricUnlock()

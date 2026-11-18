@@ -23,13 +23,15 @@ import com.charfeddine.fluffy.scanner.data.model.SignaturePlacement
 import com.charfeddine.fluffy.scanner.data.model.WatermarkConfig
 import java.io.File
 import java.io.FileOutputStream
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.floor
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.hypot
 import kotlin.math.roundToInt
 import kotlin.math.sin
-import kotlin.math.cos
 
 object DocumentImageProcessor {
 
@@ -41,6 +43,59 @@ object DocumentImageProcessor {
 
     fun detectQuadFromBitmap(bitmap: Bitmap): DocumentQuad =
         DocumentEdgeDetector.detectFromBitmap(bitmap)
+
+    /**
+     * Maps normalized [0..1] corner coordinates from the fast 640x480 rotated ImageAnalysis stream
+     * onto the full-resolution ImageCapture sensor bitmap dimensions, accounting for center-cropped FOV
+     * aspect-ratio differences when sensor capture & analysis aspect ratios differ.
+     */
+    fun mapAnalyzerQuadToCaptureDimensions(
+        quad: DocumentQuad,
+        analyzerWidth: Int,
+        analyzerHeight: Int,
+        captureWidth: Int,
+        captureHeight: Int
+    ): DocumentQuad {
+        if (analyzerWidth <= 0 || analyzerHeight <= 0 || captureWidth <= 0 || captureHeight <= 0) {
+            return quad
+        }
+        val aLong = max(analyzerWidth, analyzerHeight).toFloat()
+        val aShort = min(analyzerWidth, analyzerHeight).toFloat().coerceAtLeast(1f)
+        val cLong = max(captureWidth, captureHeight).toFloat()
+        val cShort = min(captureWidth, captureHeight).toFloat().coerceAtLeast(1f)
+
+        val aRatio = aLong / aShort
+        val cRatio = cLong / cShort
+        if (abs(aRatio - cRatio) < 0.015f) {
+            return quad
+        }
+
+        val fovScale = cRatio / aRatio
+        val isCaptureLandscape = captureWidth >= captureHeight
+
+        fun mapPoint(p: PointNorm): PointNorm {
+            val mx: Float
+            val my: Float
+            if (isCaptureLandscape) {
+                mx = p.x
+                my = 0.5f + (p.y - 0.5f) * fovScale
+            } else {
+                mx = 0.5f + (p.x - 0.5f) * fovScale
+                my = p.y
+            }
+            return PointNorm(
+                x = mx.coerceIn(0.01f, 0.99f),
+                y = my.coerceIn(0.01f, 0.99f)
+            )
+        }
+
+        return DocumentQuad(
+            topLeft = mapPoint(quad.topLeft),
+            topRight = mapPoint(quad.topRight),
+            bottomRight = mapPoint(quad.bottomRight),
+            bottomLeft = mapPoint(quad.bottomLeft)
+        )
+    }
 
     /**
      * Perspective warp transformation using Matrix.setPolyToPoly (homography warp)
@@ -210,58 +265,368 @@ object DocumentImageProcessor {
     }
 
     /**
-     * Magic Color: local illumination background division removes shadows and brightens paper
-     * while boosting ink color richness and crispness.
+     * Automatic AI Post-Capture Document / ID Card Enhancement Pipeline (runs on Dispatchers.Default):
+     *  1. Adaptive Super-Resolution (Lanczos4 upscaling to >= 2400px longest edge if smaller)
+     *  2. Illumination Division Normalization & Shadow/Yellow-Tint Removal
+     *     (Dedicated ID Card mode preserves natural skin tones, portraits, and holographic contrast)
+     *  3. Multi-Scale Edge-Preserving Unsharp Masking (razor-sharp text/MRZ without background grain)
      */
-    private fun applyMagicColorFilter(source: Bitmap): Bitmap {
+    fun autoEnhanceCapturedDocument(
+        warped: Bitmap,
+        isIdCardMode: Boolean = false
+    ): Bitmap {
+        val superRes = upscaleLanczos4IfNeeded(
+            source = warped,
+            minLongestEdge = 2400,
+            maxScale = 2.6f
+        )
+        val normalized = applyIlluminationDivisionNormalization(
+            source = superRes,
+            preserveSkinAndPortrait = isIdCardMode
+        )
+        if (superRes !== warped) {
+            superRes.recycle()
+        }
+        val sharpened = applyMultiScaleUnsharpMask(
+            source = normalized,
+            strength = if (isIdCardMode) 0.72f else 0.85f,
+            noiseThreshold = if (isIdCardMode) 6.0f else 5.0f
+        )
+        if (sharpened !== normalized) {
+            normalized.recycle()
+        }
+        return sharpened
+    }
+
+    /**
+     * Separable Lanczos4 (a = 4) adaptive super-resolution upscaler.
+     * Automatically upscales crops/ID cards below [minLongestEdge] (2400px) so text and portraits stay HD.
+     */
+    fun upscaleLanczos4IfNeeded(
+        source: Bitmap,
+        minLongestEdge: Int = 2400,
+        maxScale: Float = 2.6f
+    ): Bitmap {
+        val srcW = source.width
+        val srcH = source.height
+        val longest = max(srcW, srcH)
+        if (longest <= 0 || longest >= minLongestEdge || longest < 280) {
+            return source
+        }
+
+        val desiredScale = (minLongestEdge.toFloat() / longest.toFloat()).coerceIn(1f, maxScale)
+        if (desiredScale <= 1.03f) return source
+
+        val dstW = (srcW * desiredScale).roundToInt().coerceAtLeast(srcW + 1)
+        val dstH = (srcH * desiredScale).roundToInt().coerceAtLeast(srcH + 1)
+
+        // Precompute 8-tap Lanczos4 weights for each destination column & row (no sin() in pixel loops)
+        val a = 4
+        val tapCount = a * 2 // 8 taps
+        val xStart = IntArray(dstW)
+        val xWeights = FloatArray(dstW * tapCount)
+        val scaleX = srcW.toFloat() / dstW.toFloat()
+        for (dx in 0 until dstW) {
+            val center = (dx + 0.5f) * scaleX - 0.5f
+            val base = floor(center).toInt() - a + 1
+            xStart[dx] = base
+            var wSum = 0f
+            val rowOff = dx * tapCount
+            for (k in 0 until tapCount) {
+                val dist = center - (base + k)
+                val w = lanczosKernel(dist, a)
+                xWeights[rowOff + k] = w
+                wSum += w
+            }
+            val inv = if (abs(wSum) > 1e-6f) 1f / wSum else 1f
+            for (k in 0 until tapCount) xWeights[rowOff + k] *= inv
+        }
+
+        val yStart = IntArray(dstH)
+        val yWeights = FloatArray(dstH * tapCount)
+        val scaleY = srcH.toFloat() / dstH.toFloat()
+        for (dy in 0 until dstH) {
+            val center = (dy + 0.5f) * scaleY - 0.5f
+            val base = floor(center).toInt() - a + 1
+            yStart[dy] = base
+            var wSum = 0f
+            val rowOff = dy * tapCount
+            for (k in 0 until tapCount) {
+                val dist = center - (base + k)
+                val w = lanczosKernel(dist, a)
+                yWeights[rowOff + k] = w
+                wSum += w
+            }
+            val inv = if (abs(wSum) > 1e-6f) 1f / wSum else 1f
+            for (k in 0 until tapCount) yWeights[rowOff + k] *= inv
+        }
+
+        val srcPx = IntArray(srcW * srcH)
+        source.getPixels(srcPx, 0, srcW, 0, 0, srcW, srcH)
+
+        // Horizontal separable pass: srcW x srcH -> dstW x srcH (packed ARGB)
+        val tempPx = IntArray(dstW * srcH)
+        val wMinus1 = srcW - 1
+        for (sy in 0 until srcH) {
+            val srcRow = sy * srcW
+            val tmpRow = sy * dstW
+            for (dx in 0 until dstW) {
+                val base = xStart[dx]
+                val wOff = dx * tapCount
+                var rAcc = 0f
+                var gAcc = 0f
+                var bAcc = 0f
+                for (k in 0 until tapCount) {
+                    val sx = (base + k).coerceIn(0, wMinus1)
+                    val c = srcPx[srcRow + sx]
+                    val w = xWeights[wOff + k]
+                    rAcc += ((c ushr 16) and 0xFF) * w
+                    gAcc += ((c ushr 8) and 0xFF) * w
+                    bAcc += (c and 0xFF) * w
+                }
+                val r = rAcc.roundToInt().coerceIn(0, 255)
+                val g = gAcc.roundToInt().coerceIn(0, 255)
+                val b = bAcc.roundToInt().coerceIn(0, 255)
+                tempPx[tmpRow + dx] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+            }
+        }
+
+        // Vertical separable pass: dstW x srcH -> dstW x dstH
+        val dstPx = IntArray(dstW * dstH)
+        val hMinus1 = srcH - 1
+        for (dy in 0 until dstH) {
+            val base = yStart[dy]
+            val wOff = dy * tapCount
+            val dstRow = dy * dstW
+            for (dx in 0 until dstW) {
+                var rAcc = 0f
+                var gAcc = 0f
+                var bAcc = 0f
+                for (k in 0 until tapCount) {
+                    val sy = (base + k).coerceIn(0, hMinus1)
+                    val c = tempPx[sy * dstW + dx]
+                    val w = yWeights[wOff + k]
+                    rAcc += ((c ushr 16) and 0xFF) * w
+                    gAcc += ((c ushr 8) and 0xFF) * w
+                    bAcc += (c and 0xFF) * w
+                }
+                val r = rAcc.roundToInt().coerceIn(0, 255)
+                val g = gAcc.roundToInt().coerceIn(0, 255)
+                val b = bAcc.roundToInt().coerceIn(0, 255)
+                dstPx[dstRow + dx] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+            }
+        }
+
+        return Bitmap.createBitmap(dstPx, dstW, dstH, Bitmap.Config.ARGB_8888)
+    }
+
+    private fun lanczosKernel(x: Float, a: Int): Float {
+        val ax = abs(x)
+        if (ax < 1e-5f) return 1f
+        if (ax >= a) return 0f
+        val piX = PI * x
+        val piXOverA = piX / a
+        return ((sin(piX) / piX) * (sin(piXOverA) / piXOverA)).toFloat()
+    }
+
+    /**
+     * Illumination Normalization & Shadow Removal via Division Normalization:
+     * Divides pixel luminance by a heavily blurred local background surface estimate to erase
+     * uneven lighting, shadows, and warm yellow paper tint.
+     * When [preserveSkinAndPortrait] is true (ID Card Mode), blends gently to preserve natural
+     * skin tones and portrait/hologram contrast.
+     */
+    fun applyIlluminationDivisionNormalization(
+        source: Bitmap,
+        preserveSkinAndPortrait: Boolean = false
+    ): Bitmap {
         val w = source.width
         val h = source.height
-        val bgScale = 10
-        val bgW = (w / bgScale).coerceAtLeast(16)
-        val bgH = (h / bgScale).coerceAtLeast(16)
+        val bgW = (w / 14).coerceIn(18, 96)
+        val bgH = (h / 14).coerceIn(18, 96)
         val tiny = Bitmap.createScaledBitmap(source, bgW, bgH, true)
-        val blurredBg = boxBlurBitmap(tiny, radius = 3)
+        val blurredBg = boxBlurBitmap(tiny, radius = 4)
         val fullBg = Bitmap.createScaledBitmap(blurredBg, w, h, true)
         tiny.recycle()
         blurredBg.recycle()
 
-        val srcPx = IntArray(w * h)
-        val bgPx = IntArray(w * h)
+        val n = w * h
+        val srcPx = IntArray(n)
+        val bgPx = IntArray(n)
         source.getPixels(srcPx, 0, w, 0, 0, w, h)
         fullBg.getPixels(bgPx, 0, w, 0, 0, w, h)
         fullBg.recycle()
 
-        val outPx = IntArray(w * h)
-        for (i in srcPx.indices) {
-            val s = srcPx[i]
-            val b = bgPx[i]
-            val sr = Color.red(s)
-            val sg = Color.green(s)
-            val sb = Color.blue(s)
+        val outPx = IntArray(n)
+        if (preserveSkinAndPortrait) {
+            // Dedicated ID Card illumination leveling: preserves natural skin tones & holographic contrast
+            for (i in 0 until n) {
+                val s = srcPx[i]
+                val b = bgPx[i]
+                val sr = (s ushr 16) and 0xFF
+                val sg = (s ushr 8) and 0xFF
+                val sb = s and 0xFF
 
-            val br = max(36, Color.red(b))
-            val bg = max(36, Color.green(b))
-            val bb = max(36, Color.blue(b))
+                val bgLum = max(38, (((b ushr 16) and 0xFF) * 77 + ((b ushr 8) and 0xFF) * 150 + (b and 0xFF) * 29) shr 8)
+                val targetGain = (224f / bgLum.toFloat()).coerceIn(0.88f, 1.85f)
+                val gain = 1f + (targetGain - 1f) * 0.45f
 
-            // Illumination division + white paper stretch
-            var nr = ((sr * 246f) / br).toInt().coerceIn(0, 255)
-            var ng = ((sg * 246f) / bg).toInt().coerceIn(0, 255)
-            var nb = ((sb * 246f) / bb).toInt().coerceIn(0, 255)
-
-            // Subtle S-curve ink enrichment
-            val luma = (nr * 77 + ng * 150 + nb * 29) shr 8
-            if (luma > 218) {
-                nr = min(255, nr + ((255 - nr) * 3) / 5)
-                ng = min(255, ng + ((255 - ng) * 3) / 5)
-                nb = min(255, nb + ((255 - nb) * 3) / 5)
-            } else if (luma < 155) {
-                nr = (nr * 0.86f).toInt().coerceIn(0, 255)
-                ng = (ng * 0.86f).toInt().coerceIn(0, 255)
-                nb = (nb * 0.86f).toInt().coerceIn(0, 255)
+                val nr = (sr * gain).roundToInt().coerceIn(0, 255)
+                val ng = (sg * gain).roundToInt().coerceIn(0, 255)
+                val nb = (sb * gain).roundToInt().coerceIn(0, 255)
+                outPx[i] = (0xFF shl 24) or (nr shl 16) or (ng shl 8) or nb
             }
-            outPx[i] = Color.rgb(nr, ng, nb)
+        } else {
+            // Studio-lit Document normalization: luminance + white-balance division erases shadows & yellow cast
+            for (i in 0 until n) {
+                val s = srcPx[i]
+                val b = bgPx[i]
+                val sr = (s ushr 16) and 0xFF
+                val sg = (s ushr 8) and 0xFF
+                val sb = s and 0xFF
+
+                val br = max(36, (b ushr 16) and 0xFF)
+                val bg = max(36, (b ushr 8) and 0xFF)
+                val bb = max(36, b and 0xFF)
+
+                val sLum = max(1, (sr * 77 + sg * 150 + sb * 29) shr 8)
+                val bgLum = max(36, (br * 77 + bg * 150 + bb * 29) shr 8)
+
+                // Luminance division gain + per-channel tint neutralization
+                val lumScale = (246f / bgLum.toFloat()).coerceIn(0.85f, 3.2f)
+                val cr = (sr * 0.65f * lumScale) + (sr * 0.35f * (246f / br.toFloat()))
+                val cg = (sg * 0.65f * lumScale) + (sg * 0.35f * (246f / bg.toFloat()))
+                val cb = (sb * 0.65f * lumScale) + (sb * 0.35f * (246f / bb.toFloat()))
+
+                var nr = cr.toInt().coerceIn(0, 255)
+                var ng = cg.toInt().coerceIn(0, 255)
+                var nb = cb.toInt().coerceIn(0, 255)
+
+                // Clean studio-white paper ceiling & crisp dark ink anchoring
+                val outLum = (nr * 77 + ng * 150 + nb * 29) shr 8
+                if (outLum > 218) {
+                    val push = ((outLum - 218) / 37f).coerceIn(0f, 1f) * 0.65f
+                    nr = (nr + (255 - nr) * push).toInt().coerceIn(0, 255)
+                    ng = (ng + (255 - ng) * push).toInt().coerceIn(0, 255)
+                    nb = (nb + (255 - nb) * push).toInt().coerceIn(0, 255)
+                } else if (outLum < 150 && sLum < 165) {
+                    nr = (nr * 0.88f).toInt().coerceIn(0, 255)
+                    ng = (ng * 0.88f).toInt().coerceIn(0, 255)
+                    nb = (nb * 0.88f).toInt().coerceIn(0, 255)
+                }
+                outPx[i] = (0xFF shl 24) or (nr shl 16) or (ng shl 8) or nb
+            }
         }
         return Bitmap.createBitmap(outPx, w, h, Bitmap.Config.ARGB_8888)
+    }
+
+    /**
+     * Multi-Scale Edge-Preserving Unsharp Masking:
+     * Combines fine (3x3) and medium (5x5) luminance detail scales gated by a noise floor so
+     * fine printed text & MRZ micro-characters become razor crisp without amplifying paper grain.
+     */
+    fun applyMultiScaleUnsharpMask(
+        source: Bitmap,
+        strength: Float = 0.85f,
+        noiseThreshold: Float = 5.5f
+    ): Bitmap {
+        val w = source.width
+        val h = source.height
+        val n = w * h
+        if (w < 8 || h < 8) return source.copy(Bitmap.Config.ARGB_8888, true)
+
+        val srcPx = IntArray(n)
+        source.getPixels(srcPx, 0, w, 0, 0, w, h)
+
+        val luma = IntArray(n)
+        for (i in 0 until n) {
+            val c = srcPx[i]
+            val r = (c ushr 16) and 0xFF
+            val g = (c ushr 8) and 0xFF
+            val b = c and 0xFF
+            luma[i] = (r * 77 + g * 150 + b * 29) shr 8
+        }
+
+        // Fine scale: separable 3x3 Gaussian [1, 2, 1] / 4
+        val temp = IntArray(n)
+        val fineBlur = IntArray(n)
+        for (y in 0 until h) {
+            val row = y * w
+            for (x in 0 until w) {
+                val xm = max(0, x - 1)
+                val xp = min(w - 1, x + 1)
+                temp[row + x] = (luma[row + xm] + 2 * luma[row + x] + luma[row + xp]) shr 2
+            }
+        }
+        for (y in 0 until h) {
+            val ym = max(0, y - 1) * w
+            val y0 = y * w
+            val yp = min(h - 1, y + 1) * w
+            for (x in 0 until w) {
+                fineBlur[y0 + x] = (temp[ym + x] + 2 * temp[y0 + x] + temp[yp + x]) shr 2
+            }
+        }
+
+        // Medium scale: separable 5x5 Gaussian [1, 4, 6, 4, 1] / 16
+        val medBlur = IntArray(n)
+        for (y in 0 until h) {
+            val row = y * w
+            for (x in 0 until w) {
+                val xm2 = max(0, x - 2)
+                val xm1 = max(0, x - 1)
+                val xp1 = min(w - 1, x + 1)
+                val xp2 = min(w - 1, x + 2)
+                temp[row + x] = (luma[row + xm2] + 4 * luma[row + xm1] + 6 * luma[row + x] + 4 * luma[row + xp1] + luma[row + xp2]) shr 4
+            }
+        }
+        for (y in 0 until h) {
+            val ym2 = max(0, y - 2) * w
+            val ym1 = max(0, y - 1) * w
+            val y0 = y * w
+            val yp1 = min(h - 1, y + 1) * w
+            val yp2 = min(h - 1, y + 2) * w
+            for (x in 0 until w) {
+                medBlur[y0 + x] = (temp[ym2 + x] + 4 * temp[ym1 + x] + 6 * temp[y0 + x] + 4 * temp[yp1 + x] + temp[yp2 + x]) shr 4
+            }
+        }
+
+        val outPx = IntArray(n)
+        for (i in 0 until n) {
+            val lum = luma[i]
+            val detailFine = (lum - fineBlur[i]).toFloat()
+            val detailMed = (lum - medBlur[i]).toFloat()
+            val combinedDetail = 0.62f * detailFine + 0.38f * detailMed
+            val absD = abs(combinedDetail)
+            val delta = if (absD > noiseThreshold) {
+                val excess = absD - noiseThreshold
+                val signed = if (combinedDetail >= 0f) excess else -excess
+                (signed * strength).coerceIn(-68f, 68f).roundToInt()
+            } else {
+                0
+            }
+
+            val c = srcPx[i]
+            if (delta == 0) {
+                outPx[i] = c
+            } else {
+                val r = (((c ushr 16) and 0xFF) + delta).coerceIn(0, 255)
+                val g = (((c ushr 8) and 0xFF) + delta).coerceIn(0, 255)
+                val b = ((c and 0xFF) + delta).coerceIn(0, 255)
+                outPx[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+            }
+        }
+        return Bitmap.createBitmap(outPx, w, h, Bitmap.Config.ARGB_8888)
+    }
+
+    /**
+     * Magic Color: local illumination background division removes shadows and yellow cast
+     * while enriching ink clarity and crispness.
+     */
+    private fun applyMagicColorFilter(source: Bitmap): Bitmap {
+        val superRes = upscaleLanczos4IfNeeded(source, minLongestEdge = 2400, maxScale = 2.4f)
+        val leveled = applyIlluminationDivisionNormalization(superRes, preserveSkinAndPortrait = false)
+        if (superRes !== source) superRes.recycle()
+        return leveled
     }
 
     /**
@@ -346,32 +711,11 @@ object DocumentImageProcessor {
     }
 
     private fun applySharpen(source: Bitmap, amount: Float): Bitmap {
-        val w = source.width
-        val h = source.height
-        val px = IntArray(w * h)
-        source.getPixels(px, 0, w, 0, 0, w, h)
-        val out = px.copyOf()
-        val k = amount * 0.85f
-        for (y in 1 until h - 1) {
-            for (x in 1 until w - 1) {
-                val i = y * w + x
-                val c = px[i]
-                val n = px[(y - 1) * w + x]
-                val s = px[(y + 1) * w + x]
-                val e = px[y * w + (x + 1)]
-                val wst = px[y * w + (x - 1)]
-
-                val avgR = (Color.red(n) + Color.red(s) + Color.red(e) + Color.red(wst)) / 4
-                val avgG = (Color.green(n) + Color.green(s) + Color.green(e) + Color.green(wst)) / 4
-                val avgB = (Color.blue(n) + Color.blue(s) + Color.blue(e) + Color.blue(wst)) / 4
-
-                val nr = (Color.red(c) + ((Color.red(c) - avgR) * k)).roundToInt().coerceIn(0, 255)
-                val ng = (Color.green(c) + ((Color.green(c) - avgG) * k)).roundToInt().coerceIn(0, 255)
-                val nb = (Color.blue(c) + ((Color.blue(c) - avgB) * k)).roundToInt().coerceIn(0, 255)
-                out[i] = Color.rgb(nr, ng, nb)
-            }
-        }
-        return Bitmap.createBitmap(out, w, h, Bitmap.Config.ARGB_8888)
+        return applyMultiScaleUnsharpMask(
+            source = source,
+            strength = (amount * 1.15f).coerceIn(0.15f, 1.35f),
+            noiseThreshold = 5.0f
+        )
     }
 
     private fun boxBlurBitmap(src: Bitmap, radius: Int): Bitmap {
@@ -404,35 +748,36 @@ object DocumentImageProcessor {
     }
 
     /**
-     * Merges Front & Back of an ID card / Passport onto a single realistic A4 page (1240 x 1754).
+     * Merges Front & Back of an ID card / Passport onto a high-resolution 300-DPI A4 page (2480 x 3508)
+     * so Lanczos4 super-resolved ID card faces & MRZ lines stay razor sharp.
      */
     fun mergeIdCardFrontAndBack(front: Bitmap, back: Bitmap): Bitmap {
-        val a4Width = 1240
-        val a4Height = 1754
+        val a4Width = 2480
+        val a4Height = 3508
         val page = Bitmap.createBitmap(a4Width, a4Height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(page)
         canvas.drawColor(Color.WHITE)
 
-        val cardW = a4Width * 0.68f
+        val cardW = a4Width * 0.72f
         val cardH = cardW / 1.586f // Standard ISO/IEC 7810 ID-1 ratio
         val left = (a4Width - cardW) / 2f
-        val topY1 = a4Height * 0.16f
-        val topY2 = a4Height * 0.54f
+        val topY1 = a4Height * 0.14f
+        val topY2 = a4Height * 0.53f
 
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG)
         val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
-            strokeWidth = 3f
+            strokeWidth = 5f
             color = Color.rgb(203, 213, 225)
         }
 
         val rect1 = RectF(left, topY1, left + cardW, topY1 + cardH)
         val rect2 = RectF(left, topY2, left + cardW, topY2 + cardH)
         canvas.drawBitmap(front, null, rect1, paint)
-        canvas.drawRoundRect(rect1, 18f, 18f, borderPaint)
+        canvas.drawRoundRect(rect1, 32f, 32f, borderPaint)
 
         canvas.drawBitmap(back, null, rect2, paint)
-        canvas.drawRoundRect(rect2, 18f, 18f, borderPaint)
+        canvas.drawRoundRect(rect2, 32f, 32f, borderPaint)
         return page
     }
 
@@ -525,7 +870,7 @@ object DocumentImageProcessor {
         return out
     }
 
-    fun saveBitmapAsJpeg(bitmap: Bitmap, destFile: File, quality: Int = 92): File {
+    fun saveBitmapAsJpeg(bitmap: Bitmap, destFile: File, quality: Int = 98): File {
         destFile.parentFile?.mkdirs()
         FileOutputStream(destFile).use { fos ->
             bitmap.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(25, 100), fos)

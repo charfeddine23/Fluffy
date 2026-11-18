@@ -11,6 +11,9 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import android.util.Size as AndroidSize
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -28,6 +31,8 @@ import androidx.camera.core.ImageCapture.FLASH_MODE_OFF
 import androidx.camera.core.ImageCapture.FLASH_MODE_ON
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.AnimatedVisibility
@@ -142,13 +147,12 @@ import com.charfeddine.fluffy.scanner.utils.DocumentImageProcessor
 import com.charfeddine.fluffy.scanner.utils.OfflineOcrAndBarcodeEngine
 import com.charfeddine.fluffy.scanner.utils.TrackedEdgeState
 import com.google.mlkit.vision.common.InputImage
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.delay
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
@@ -207,7 +211,13 @@ fun CameraScannerScreen(
     var barcodeResult by remember { mutableStateOf<BarcodeScanResult?>(null) }
     var showCapturedBanner by remember { mutableStateOf(false) }
     var showCaptureFlash by remember { mutableStateOf(false) }
-    val stabilityTracker = remember { CornerStabilityTracker(windowSize = 5, steadyDurationMs = 1000L) }
+    val stabilityTracker = remember {
+        CornerStabilityTracker(
+            windowSize = 4,
+            steadyDurationMs = 600L,
+            jitterThresholdNorm = 0.018f
+        )
+    }
 
     // Tilt / Leveler accelerometer state
     var tiltRollDeg by remember { mutableFloatStateOf(0f) }
@@ -233,19 +243,25 @@ fun CameraScannerScreen(
 
     val isLevelSteady = abs(tiltRollDeg) < 12f && (abs(tiltPitchDeg) < 16f || abs(tiltPitchDeg - 45f) < 35f)
 
-    // CameraX handles (serialized Dispatchers.IO executor avoids UI jank and thread leaks)
-    @kotlin.OptIn(ExperimentalCoroutinesApi::class)
-    val cameraExecutor = remember { Dispatchers.IO.limitedParallelism(1).asExecutor() }
+    // Dedicated high-priority single-thread executor so ImageAnalysis never queues or lags UI
+    val cameraExecutor = remember {
+        Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "FluffyCameraAnalyzer").apply {
+                priority = Thread.MAX_PRIORITY
+                isDaemon = true
+            }
+        }
+    }
     var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
     var boundCamera by remember { mutableStateOf<Camera?>(null) }
     var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
     var cameraProviderRef by remember { mutableStateOf<ProcessCameraProvider?>(null) }
-    var lastAnalysisMs by remember { mutableLongStateOf(0L) }
     var focusTapOffset by remember { mutableStateOf<Offset?>(null) }
 
     DisposableEffect(Unit) {
         onDispose {
             runCatching { cameraProviderRef?.unbindAll() }
+            runCatching { cameraExecutor.shutdownNow() }
             stabilityTracker.reset()
         }
     }
@@ -283,32 +299,89 @@ fun CameraScannerScreen(
         showCaptureFlash = true
         showCapturedBanner = true
         val lockedQuadSnapshot = if (edgeState.isLocked) edgeState.quad else null
+        val analyzerW = edgeState.frameWidth
+        val analyzerH = edgeState.frameHeight
+        val frameAspect = edgeState.frameAspectRatio
 
         val outFile = File(scannerViewModel.repository.docsRootDir, "raw_${UUID.randomUUID()}.jpg")
         val outputOptions = ImageCapture.OutputFileOptions.Builder(outFile).build()
-        cap.takePicture(
-            outputOptions,
-            ContextCompat.getMainExecutor(context),
-            object : ImageCapture.OnImageSavedCallback {
-                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                    scannerViewModel.processCapturedFile(
-                        file = outFile,
-                        appendToDocId = appendToDocId,
-                        isArabic = isArabic,
-                        capturedQuad = lockedQuadSnapshot,
-                        autoNavigateToCrop = autoGoCrop
-                    )
-                }
+        val mainExecutor = ContextCompat.getMainExecutor(context)
+        val shutterFired = AtomicBoolean(false)
+        val mainHandler = Handler(Looper.getMainLooper())
 
-                override fun onError(exception: ImageCaptureException) {
-                    Toast.makeText(
-                        context,
-                        if (isArabic) "تعذر التقاط الصورة: ${exception.message}" else "Capture failed: ${exception.message}",
-                        Toast.LENGTH_SHORT
-                    ).show()
+        val executeShutter = Runnable {
+            if (!shutterFired.compareAndSet(false, true)) return@Runnable
+            cap.takePicture(
+                outputOptions,
+                mainExecutor,
+                object : ImageCapture.OnImageSavedCallback {
+                    override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                        scannerViewModel.processCapturedFile(
+                            file = outFile,
+                            appendToDocId = appendToDocId,
+                            isArabic = isArabic,
+                            capturedQuad = lockedQuadSnapshot,
+                            analyzerWidth = analyzerW,
+                            analyzerHeight = analyzerH,
+                            autoNavigateToCrop = autoGoCrop
+                        )
+                    }
+
+                    override fun onError(exception: ImageCaptureException) {
+                        Toast.makeText(
+                            context,
+                            if (isArabic) "تعذر التقاط الصورة: ${exception.message}" else "Capture failed: ${exception.message}",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
                 }
+            )
+        }
+
+        // Pre-capture FocusMeteringAction locked onto detected document bounding box or frame center
+        val pv = previewViewRef
+        val cam = boundCamera
+        if (pv != null && cam != null && pv.width > 0 && pv.height > 0) {
+            val pvW = pv.width.toFloat()
+            val pvH = pv.height.toFloat()
+            val (focusX, focusY) = if (lockedQuadSnapshot != null) {
+                val cx = (lockedQuadSnapshot.topLeft.x + lockedQuadSnapshot.topRight.x +
+                    lockedQuadSnapshot.bottomRight.x + lockedQuadSnapshot.bottomLeft.x) * 0.25f
+                val cy = (lockedQuadSnapshot.topLeft.y + lockedQuadSnapshot.topRight.y +
+                    lockedQuadSnapshot.bottomRight.y + lockedQuadSnapshot.bottomLeft.y) * 0.25f
+                val camAspect = frameAspect.coerceIn(0.4f, 2.5f)
+                val scale = max(pvW / camAspect, pvH)
+                val renderedW = camAspect * scale
+                val renderedH = scale
+                val offX = (pvW - renderedW) * 0.5f
+                val offY = (pvH - renderedH) * 0.5f
+                (offX + cx * renderedW).coerceIn(12f, pvW - 12f) to
+                    (offY + cy * renderedH).coerceIn(12f, pvH - 12f)
+            } else {
+                (pvW * 0.5f) to (pvH * 0.5f)
             }
-        )
+
+            runCatching {
+                val pt = pv.meteringPointFactory.createPoint(focusX, focusY, 0.22f)
+                val action = FocusMeteringAction.Builder(
+                    pt,
+                    FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE or FocusMeteringAction.FLAG_AWB
+                ).setAutoCancelDuration(2, TimeUnit.SECONDS).build()
+                mainHandler.postDelayed(executeShutter, 260L)
+                cam.cameraControl.startFocusAndMetering(action).addListener(
+                    {
+                        mainHandler.removeCallbacks(executeShutter)
+                        executeShutter.run()
+                    },
+                    mainExecutor
+                )
+            }.onFailure {
+                mainHandler.removeCallbacks(executeShutter)
+                executeShutter.run()
+            }
+        } else {
+            executeShutter.run()
+        }
     }
 
     val latestActiveMode by rememberUpdatedState(activeMode)
@@ -475,24 +548,33 @@ fun CameraScannerScreen(
                     val preview = Preview.Builder().build().also {
                         it.setSurfaceProvider(previewView.surfaceProvider)
                     }
+                    val captureResolutionSelector = ResolutionSelector.Builder()
+                        .setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY)
+                        .build()
                     val capture = ImageCapture.Builder()
                         .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+                        .setJpegQuality(100)
+                        .setResolutionSelector(captureResolutionSelector)
                         .setFlashMode(flashMode)
                         .build()
                     imageCapture = capture
 
+                    val analysisResolutionSelector = ResolutionSelector.Builder()
+                        .setResolutionStrategy(
+                            ResolutionStrategy(
+                                AndroidSize(640, 480),
+                                ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
+                            )
+                        )
+                        .build()
                     val analysis = ImageAnalysis.Builder()
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                        .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
+                        .setResolutionSelector(analysisResolutionSelector)
                         .build()
                     val mainExec = ContextCompat.getMainExecutor(ctx)
                     analysis.setAnalyzer(cameraExecutor) { imageProxy ->
                         val now = System.currentTimeMillis()
-                        if (now - lastAnalysisMs < 85L) {
-                            imageProxy.close()
-                            return@setAnalyzer
-                        }
-                        lastAnalysisMs = now
-
                         val modeNow = latestActiveMode
                         if (modeNow == ScanMode.QR_BARCODE) {
                             val mediaImg = imageProxy.image
@@ -525,13 +607,31 @@ fun CameraScannerScreen(
 
                     runCatching {
                         provider.unbindAll()
-                        boundCamera = provider.bindToLifecycle(
+                        val cam = provider.bindToLifecycle(
                             lifecycleOwner,
                             CameraSelector.DEFAULT_BACK_CAMERA,
                             preview,
                             capture,
                             analysis
                         )
+                        boundCamera = cam
+                        // Engage Continuous Auto-Focus & Metering on center plane immediately
+                        previewView.post {
+                            if (previewView.width > 0 && previewView.height > 0) {
+                                runCatching {
+                                    val centerPt = previewView.meteringPointFactory.createPoint(
+                                        previewView.width * 0.5f,
+                                        previewView.height * 0.5f,
+                                        0.25f
+                                    )
+                                    val cafAction = FocusMeteringAction.Builder(
+                                        centerPt,
+                                        FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE
+                                    ).setAutoCancelDuration(5, TimeUnit.SECONDS).build()
+                                    cam.cameraControl.startFocusAndMetering(cafAction)
+                                }
+                            }
+                        }
                     }
                 }, ContextCompat.getMainExecutor(ctx))
                 previewView

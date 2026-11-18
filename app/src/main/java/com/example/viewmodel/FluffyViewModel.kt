@@ -1977,6 +1977,9 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         if (isBiometricEnabled.value) {
             isAppLocked.value = true
         }
+        if (isVaultLockEnabled.value && isVaultOpen.value) {
+            isVaultUnlockedForSession.value = false
+        }
     }
 
     fun unlockApp() {
@@ -1999,7 +2002,6 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
 
     fun closeVault() {
         isVaultOpen.value = false
-        isVaultUnlockedForSession.value = false
     }
 
     fun showSnackbar(message: String) {

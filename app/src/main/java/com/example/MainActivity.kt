@@ -421,8 +421,10 @@ class MainActivity : FragmentActivity() {
                                                 onBack = { viewModel.closeVault() },
                                                 isVaultLockEnabled = isVaultLockEnabled,
                                                 isVaultUnlocked = isVaultUnlockedForSession,
+                                                isVaultActive = isVaultOpen,
                                                 hasVaultPasskey = hasVaultPasskey,
                                                 onTriggerBiometricUnlock = {
+                                                    if (!viewModel.isVaultOpen.value) return@VaultScreen
                                                     val availability = biometricAuthManager.checkAvailability()
                                                     if (availability == BiometricAvailability.NO_HARDWARE) {
                                                         if (!hasVaultPasskey) {
