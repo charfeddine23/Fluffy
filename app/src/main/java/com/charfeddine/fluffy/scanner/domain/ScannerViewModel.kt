@@ -3,6 +3,7 @@ package com.charfeddine.fluffy.scanner.domain
 import android.app.Application
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.PointF
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -217,6 +218,9 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
         appendToDocId: String?,
         isArabic: Boolean,
         capturedQuad: DocumentQuad? = null,
+        capturedPreviewCorners: Array<PointF>? = null,
+        previewWidth: Int = 0,
+        previewHeight: Int = 0,
         analyzerWidth: Int = 0,
         analyzerHeight: Int = 0,
         autoNavigateToCrop: Boolean = false
@@ -228,19 +232,32 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                 val framesToAdd = withContext(Dispatchers.Default) {
                     val rawBmp = withContext(Dispatchers.IO) {
                         DocumentImageProcessor.decodeSampledBitmap(file, 4096)?.also { decoded ->
-                            // Save upright 98% JPEG so Crop & Preview share exact sensor orientation
+                            // Normalize EXIF orientation into upright pixels before saving & mapping
                             DocumentImageProcessor.saveBitmapAsJpeg(decoded, file, 98)
                         }
                     } ?: return@withContext emptyList()
 
-                    val mappedLiveQuad = capturedQuad?.let { q ->
-                        DocumentImageProcessor.mapAnalyzerQuadToCaptureDimensions(
-                            quad = q,
-                            analyzerWidth = analyzerWidth,
-                            analyzerHeight = analyzerHeight,
-                            captureWidth = rawBmp.width,
-                            captureHeight = rawBmp.height
-                        )
+                    val mappedLiveQuad = when {
+                        capturedPreviewCorners != null && capturedPreviewCorners.size == 4 &&
+                            previewWidth > 0 && previewHeight > 0 ->
+                            DocumentImageProcessor.mapPreviewCornersToBitmapQuad(
+                                previewCorners = capturedPreviewCorners,
+                                previewWidth = previewWidth,
+                                previewHeight = previewHeight,
+                                bitmapWidth = rawBmp.width,
+                                bitmapHeight = rawBmp.height
+                            )
+
+                        capturedQuad != null ->
+                            DocumentImageProcessor.mapAnalyzerQuadToCaptureDimensions(
+                                quad = capturedQuad,
+                                analyzerWidth = analyzerWidth,
+                                analyzerHeight = analyzerHeight,
+                                captureWidth = rawBmp.width,
+                                captureHeight = rawBmp.height
+                            )
+
+                        else -> null
                     }
 
                     when (mode) {

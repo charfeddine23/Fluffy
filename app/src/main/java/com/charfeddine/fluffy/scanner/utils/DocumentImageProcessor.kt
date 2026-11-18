@@ -10,6 +10,7 @@ import android.graphics.ColorMatrixColorFilter
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.PointF
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.media.ExifInterface
@@ -43,6 +44,75 @@ object DocumentImageProcessor {
 
     fun detectQuadFromBitmap(bitmap: Bitmap): DocumentQuad =
         DocumentEdgeDetector.detectFromBitmap(bitmap)
+
+    /**
+     * Maps 4 corner [PointF] coordinates from [PreviewView] space (`previewWidth x previewHeight`)
+     * to exact upright full-resolution [Bitmap] coordinates (`bitmapWidth x bitmapHeight`) using
+     * explicit `scaleX = bitmapWidth / previewWidth` and `scaleY = bitmapHeight / previewHeight`
+     * while accounting for `PreviewView.ScaleType.FILL_CENTER` aspect-ratio center-cropping.
+     */
+    fun mapPreviewCornersToBitmapQuad(
+        previewCorners: Array<PointF>,
+        previewWidth: Int,
+        previewHeight: Int,
+        bitmapWidth: Int,
+        bitmapHeight: Int
+    ): DocumentQuad {
+        if (previewCorners.size < 4 || previewWidth <= 0 || previewHeight <= 0 || bitmapWidth <= 0 || bitmapHeight <= 0) {
+            return DocumentQuad.SAFE_DEFAULT_MARGIN
+        }
+
+        val scaleX = bitmapWidth.toFloat() / previewWidth.toFloat()
+        val scaleY = bitmapHeight.toFloat() / previewHeight.toFloat()
+        // Under FILL_CENTER, the sensor bitmap fills the larger scale on preview (i.e. smaller inverse ratio)
+        val uniformScale = min(scaleX, scaleY)
+        val renderedWInPreview = bitmapWidth.toFloat() / uniformScale
+        val renderedHInPreview = bitmapHeight.toFloat() / uniformScale
+        val offsetXInPreview = (previewWidth.toFloat() - renderedWInPreview) * 0.5f
+        val offsetYInPreview = (previewHeight.toFloat() - renderedHInPreview) * 0.5f
+
+        val mapped = previewCorners.take(4).map { pt ->
+            val bitmapPxX = if (abs(scaleX - scaleY) < 0.015f) {
+                pt.x * scaleX
+            } else {
+                (pt.x - offsetXInPreview) * uniformScale
+            }
+            val bitmapPxY = if (abs(scaleX - scaleY) < 0.015f) {
+                pt.y * scaleY
+            } else {
+                (pt.y - offsetYInPreview) * uniformScale
+            }
+            PointNorm(
+                x = (bitmapPxX / bitmapWidth.toFloat()).coerceIn(0.01f, 0.99f),
+                y = (bitmapPxY / bitmapHeight.toFloat()).coerceIn(0.01f, 0.99f)
+            )
+        }
+        return DocumentQuad(
+            topLeft = mapped[0],
+            topRight = mapped[1],
+            bottomRight = mapped[2],
+            bottomLeft = mapped[3]
+        )
+    }
+
+    /**
+     * Multiplies normalized [0..1] corner coordinates by the actual [Bitmap] pixel dimensions
+     * (`bitmapWidth x bitmapHeight`) to yield exact pixel-space [PointF] coordinates `[TL, TR, BR, BL]`.
+     */
+    fun denormalizeQuadToBitmapPoints(
+        quad: DocumentQuad,
+        bitmapWidth: Int,
+        bitmapHeight: Int
+    ): Array<PointF> {
+        val bw = bitmapWidth.toFloat().coerceAtLeast(1f)
+        val bh = bitmapHeight.toFloat().coerceAtLeast(1f)
+        return arrayOf(
+            PointF(quad.topLeft.x * bw, quad.topLeft.y * bh),
+            PointF(quad.topRight.x * bw, quad.topRight.y * bh),
+            PointF(quad.bottomRight.x * bw, quad.bottomRight.y * bh),
+            PointF(quad.bottomLeft.x * bw, quad.bottomLeft.y * bh)
+        )
+    }
 
     /**
      * Maps normalized [0..1] corner coordinates from the fast 640x480 rotated ImageAnalysis stream

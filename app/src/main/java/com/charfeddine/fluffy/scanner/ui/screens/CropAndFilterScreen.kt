@@ -1,6 +1,7 @@
 package com.charfeddine.fluffy.scanner.ui.screens
 
 import android.graphics.Bitmap
+import android.graphics.PointF
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.AnimationSpec
@@ -1029,49 +1030,56 @@ private fun InteractiveCropWithMagnifier(
     val ch = boxSize.height.toFloat().coerceAtLeast(1f)
     val availW = (cw - edgePadPx * 2f).coerceAtLeast(1f)
     val availH = (ch - edgePadPx * 2f).coerceAtLeast(1f)
-    val scale = minOf(availW / bw, availH / bh)
-    val drawW = bw * scale
-    val drawH = bh * scale
-    val offsetX = (cw - drawW) / 2f
-    val offsetY = (ch - drawH) / 2f
+    val fitScale = minOf(availW / bw, availH / bh)
+    val drawW = bw * fitScale
+    val drawH = bh * fitScale
+    val offsetX = (cw - drawW) * 0.5f
+    val offsetY = (ch - drawH) * 0.5f
+    val displayScaleX = drawW / bw
+    val displayScaleY = drawH / bh
 
-    fun normToScreen(p: PointNorm): Offset = Offset(
-        x = offsetX + p.x * drawW,
-        y = offsetY + p.y * drawH
+    fun bitmapPointToScreen(pt: PointF): Offset = Offset(
+        x = offsetX + pt.x * displayScaleX,
+        y = offsetY + pt.y * displayScaleY
+    )
+
+    fun normToScreen(p: PointNorm): Offset = bitmapPointToScreen(
+        PointF(p.x * bw, p.y * bh)
     )
 
     fun screenToNorm(off: Offset): PointNorm = PointNorm(
-        x = ((off.x - offsetX) / drawW).coerceIn(0f, 1f),
-        y = ((off.y - offsetY) / drawH).coerceIn(0f, 1f)
+        x = (((off.x - offsetX) / displayScaleX) / bw).coerceIn(0f, 1f),
+        y = (((off.y - offsetY) / displayScaleY) / bh).coerceIn(0f, 1f)
     )
 
     fun screenToNormUnclamped(off: Offset): PointNorm = PointNorm(
-        x = (off.x - offsetX) / drawW,
-        y = (off.y - offsetY) / drawH
+        x = ((off.x - offsetX) / displayScaleX) / bw,
+        y = ((off.y - offsetY) / displayScaleY) / bh
     )
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .onSizeChanged { boxSize = it }
-    ) {
-        Image(
-            bitmap = imageBitmap,
-            contentDescription = "Crop preview",
-            contentScale = ContentScale.Fit,
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(14.dp)
-        )
+                .onSizeChanged { boxSize = it }
+        ) {
+            Image(
+                bitmap = imageBitmap,
+                contentDescription = "Crop preview",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(14.dp)
+            )
 
-        Canvas(
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(bitmap, boxSize) {
-                    if (boxSize.width <= 0 || boxSize.height <= 0) return@pointerInput
-                    val cornerHitRadius = with(density) { 52.dp.toPx() }
-                    val midHitRadius = with(density) { 44.dp.toPx() }
-                    val minGap = 0.04f
+            Canvas(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(bitmap, boxSize) {
+                        if (boxSize.width <= 0 || boxSize.height <= 0) return@pointerInput
+                        val cornerHitRadius = with(density) { 52.dp.toPx() }
+                        val midHitRadius = with(density) { 44.dp.toPx() }
+                        val minGap = 0.04f
 
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
@@ -1273,10 +1281,16 @@ private fun InteractiveCropWithMagnifier(
                     }
                 }
         ) {
-            val tl = normToScreen(displayedQuad.topLeft)
-            val tr = normToScreen(displayedQuad.topRight)
-            val br = normToScreen(displayedQuad.bottomRight)
-            val bl = normToScreen(displayedQuad.bottomLeft)
+            if (boxSize.width <= 0 || boxSize.height <= 0) return@Canvas
+            val bitmapPts = DocumentImageProcessor.denormalizeQuadToBitmapPoints(
+                quad = displayedQuad,
+                bitmapWidth = bitmap.width,
+                bitmapHeight = bitmap.height
+            )
+            val tl = bitmapPointToScreen(bitmapPts[0])
+            val tr = bitmapPointToScreen(bitmapPts[1])
+            val br = bitmapPointToScreen(bitmapPts[2])
+            val bl = bitmapPointToScreen(bitmapPts[3])
 
             val path = Path().apply {
                 moveTo(tl.x, tl.y)
@@ -1436,6 +1450,7 @@ private fun InteractiveCropWithMagnifier(
                     )
                 }
             }
+        }
         }
     }
 }

@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.PointF
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -302,6 +303,31 @@ fun CameraScannerScreen(
         val analyzerW = edgeState.frameWidth
         val analyzerH = edgeState.frameHeight
         val frameAspect = edgeState.frameAspectRatio
+        val pvSnapshot = previewViewRef
+        val pvWidthSnapshot = pvSnapshot?.width ?: 0
+        val pvHeightSnapshot = pvSnapshot?.height ?: 0
+        val previewCornersSnapshot: Array<PointF>? = if (lockedQuadSnapshot != null && pvWidthSnapshot > 0 && pvHeightSnapshot > 0) {
+            val pw = pvWidthSnapshot.toFloat()
+            val ph = pvHeightSnapshot.toFloat()
+            val camAspect = frameAspect.coerceIn(0.4f, 2.5f)
+            val fillScale = max(pw / camAspect, ph)
+            val renderedW = camAspect * fillScale
+            val renderedH = fillScale
+            val offX = (pw - renderedW) * 0.5f
+            val offY = (ph - renderedH) * 0.5f
+            fun toPreviewPoint(nx: Float, ny: Float) = PointF(
+                offX + nx * renderedW,
+                offY + ny * renderedH
+            )
+            arrayOf(
+                toPreviewPoint(lockedQuadSnapshot.topLeft.x, lockedQuadSnapshot.topLeft.y),
+                toPreviewPoint(lockedQuadSnapshot.topRight.x, lockedQuadSnapshot.topRight.y),
+                toPreviewPoint(lockedQuadSnapshot.bottomRight.x, lockedQuadSnapshot.bottomRight.y),
+                toPreviewPoint(lockedQuadSnapshot.bottomLeft.x, lockedQuadSnapshot.bottomLeft.y)
+            )
+        } else {
+            null
+        }
 
         val outFile = File(scannerViewModel.repository.docsRootDir, "raw_${UUID.randomUUID()}.jpg")
         val outputOptions = ImageCapture.OutputFileOptions.Builder(outFile).build()
@@ -321,6 +347,9 @@ fun CameraScannerScreen(
                             appendToDocId = appendToDocId,
                             isArabic = isArabic,
                             capturedQuad = lockedQuadSnapshot,
+                            capturedPreviewCorners = previewCornersSnapshot,
+                            previewWidth = pvWidthSnapshot,
+                            previewHeight = pvHeightSnapshot,
                             analyzerWidth = analyzerW,
                             analyzerHeight = analyzerH,
                             autoNavigateToCrop = autoGoCrop

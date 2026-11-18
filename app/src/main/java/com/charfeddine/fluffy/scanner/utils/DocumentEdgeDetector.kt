@@ -467,7 +467,7 @@ object DocumentEdgeDetector {
             scaleY = scaleY
         )
 
-        if (pass1.isLocked && pass1.confidence >= 0.64f) {
+        if (pass1.isLocked && pass1.confidence >= 0.78f && !isBorderHuggingQuad(pass1.quad)) {
             return pass1.quad
         }
 
@@ -487,7 +487,7 @@ object DocumentEdgeDetector {
 
         val winner = when {
             pass1.isLocked && pass2.isLocked ->
-                if (pass2.confidence > pass1.confidence + 0.04f) pass2 else pass1
+                if (pass2.confidence >= pass1.confidence) pass2 else pass1
             pass1.isLocked -> pass1
             pass2.isLocked -> pass2
             else -> null
@@ -1156,29 +1156,30 @@ object DocumentEdgeDetector {
 
         val sortedComponents = components.sortedByDescending { it.size }.take(10)
 
-        // Build candidate point clouds: individual top components + merged top-2/top-3 large borders
-        val candidateClouds = ArrayList<List<PxPt>>(sortedComponents.size + 2)
-        candidateClouds.addAll(sortedComponents)
+        // Build candidate point clouds: individual top components first, then proximity-compatible merged borders
+        val candidateClouds = ArrayList<Pair<List<PxPt>, Boolean>>(sortedComponents.size + 2)
+        sortedComponents.forEach { candidateClouds.add(it to false) }
         if (sortedComponents.size >= 2) {
             val merged2 = ArrayList<PxPt>(sortedComponents[0].size + sortedComponents[1].size)
             merged2.addAll(sortedComponents[0])
             merged2.addAll(sortedComponents[1])
-            candidateClouds.add(merged2)
+            candidateClouds.add(merged2 to true)
         }
         if (sortedComponents.size >= 3) {
             val merged3 = ArrayList<PxPt>(1024)
             sortedComponents.take(3).forEach { merged3.addAll(it) }
-            candidateClouds.add(merged3)
+            candidateClouds.add(merged3 to true)
         }
 
-        for (cloud in candidateClouds) {
+        for ((cloud, isMergedCloud) in candidateClouds) {
             val hull = computeConvexHull(cloud)
             if (hull.size < 4) continue
+            val mergePenalty = if (isMergedCloud) 0.06f else 0f
 
             // Candidate A: Line-Intersection Quadrilateral Reconstruction (handles rounded / folded corners)
             val lineCorners = reconstructQuadByLineIntersections(hull, cloud, edges, w, h)
             if (lineCorners != null) {
-                val score = evaluateCandidateWorkQuad(lineCorners, edges, w, h)
+                val score = evaluateCandidateWorkQuad(lineCorners, edges, w, h) - mergePenalty
                 if (score > bestScore) {
                     bestScore = score
                     bestWorkCorners = lineCorners
@@ -1189,7 +1190,7 @@ object DocumentEdgeDetector {
             val polyCorners = fitFourPointPolygonPx(hull)
             if (polyCorners != null) {
                 val floatPoly = polyCorners.map { FloatPt(it.x.toFloat(), it.y.toFloat()) }
-                val score = evaluateCandidateWorkQuad(floatPoly, edges, w, h)
+                val score = evaluateCandidateWorkQuad(floatPoly, edges, w, h) - mergePenalty
                 if (score > bestScore) {
                     bestScore = score
                     bestWorkCorners = floatPoly
@@ -1197,7 +1198,7 @@ object DocumentEdgeDetector {
             }
         }
 
-        return if (bestWorkCorners != null && bestScore > 0.30f) {
+        return if (bestWorkCorners != null && bestScore > 0.34f) {
             val mappedQuad = mapWorkCornersToOriginalQuad(
                 corners = bestWorkCorners,
                 origW = origW,
@@ -1445,8 +1446,8 @@ object DocumentEdgeDetector {
         val bl = intersectLines(lines[2], lines[3]) ?: return null
 
         val raw = listOf(tl, tr, br, bl)
-        val marginX = w * 0.08f
-        val marginY = h * 0.08f
+        val marginX = w * 0.03f
+        val marginY = h * 0.03f
         if (raw.any {
                 it.x < -marginX || it.x > w + marginX ||
                     it.y < -marginY || it.y > h + marginY
@@ -1510,12 +1511,18 @@ object DocumentEdgeDetector {
         val norm = corners.map { FloatPt(it.x / wf, it.y / hf) }
 
         val areaFrac = polygonArea(norm)
-        if (areaFrac < 0.15f || areaFrac > 0.96f) return -1f
+        if (areaFrac < 0.055f || areaFrac > 0.96f) return -1f
         if (!isConvexAndValidAnglesPx(norm)) return -1f
         if (!hasValidAspectRatioPx(norm)) return -1f
 
         val edgeSupport = measureEdgeSupportPx(edges, w, h, corners)
-        if (edgeSupport < 0.24f) return -1f
+        if (edgeSupport < 0.28f) return -1f
+
+        // Penalize quads whose corners hug the outer 2% frame border (often spurious border/shadow clamps)
+        val borderCornerCount = norm.count { pt ->
+            pt.x <= 0.02f || pt.x >= 0.98f || pt.y <= 0.02f || pt.y >= 0.98f
+        }
+        val borderPenalty = borderCornerCount * 0.045f
 
         // Opposite-edge length consistency bonus (rectangles have similar opposite side lengths)
         val topL = hypot(norm[1].x - norm[0].x, norm[1].y - norm[0].y)
@@ -1526,7 +1533,13 @@ object DocumentEdgeDetector {
         val ratioH = min(leftL, rightL) / max(leftL, rightL).coerceAtLeast(1e-4f)
         val rectScore = ((ratioW + ratioH) * 0.5f).coerceIn(0f, 1f)
 
-        return (edgeSupport * 0.56f) + (areaFrac * 0.28f) + (rectScore * 0.16f)
+        val cappedAreaScore = (areaFrac / 0.65f).coerceIn(0f, 1f)
+        return (edgeSupport * 0.64f) + (rectScore * 0.22f) + (cappedAreaScore * 0.14f) - borderPenalty
+    }
+
+    private fun isBorderHuggingQuad(quad: DocumentQuad): Boolean {
+        val pts = listOf(quad.topLeft, quad.topRight, quad.bottomRight, quad.bottomLeft)
+        return pts.count { it.x <= 0.025f || it.x >= 0.975f || it.y <= 0.025f || it.y >= 0.975f } >= 2
     }
 
     /**
@@ -1691,7 +1704,7 @@ object DocumentEdgeDetector {
         val rightH = hypot(pts[2].x - pts[1].x, pts[2].y - pts[1].y)
         val avgW = (topW + botW) * 0.5f
         val avgH = (leftH + rightH) * 0.5f
-        if (avgW < 0.16f || avgH < 0.16f) return false
+        if (avgW < 0.12f || avgH < 0.12f) return false
         val ratio = avgW / avgH
         return ratio in 0.30f..3.30f
     }
