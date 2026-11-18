@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.PointF
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.animateOffsetAsState
 import androidx.compose.animation.core.snap
@@ -44,6 +45,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -78,6 +80,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -149,7 +152,9 @@ fun CropAndFilterScreen(
     }
 
     val uiScope = rememberCoroutineScope()
-    var isCropPhase by remember(frame.id) { mutableStateOf(true) }
+    val density = LocalDensity.current
+    val pageStripState = rememberLazyListState()
+    var isCropPhase by rememberSaveable { mutableStateOf(true) }
     var docTitle by remember { mutableStateOf("") }
     var showAdjustSliders by remember { mutableStateOf(false) }
     var activeToneMetric by remember { mutableIntStateOf(0) } // 0=Brightness, 1=Contrast, 2=Sharpness
@@ -161,6 +166,39 @@ fun CropAndFilterScreen(
     var enhancedBitmap by remember(frame.id) { mutableStateOf<Bitmap?>(null) }
     var filterThumbnails by remember(frame.id) { mutableStateOf<Map<ScannerFilterType, Bitmap>>(emptyMap()) }
     var isRenderingPreview by remember(frame.id) { mutableStateOf(false) }
+
+    val stageSlideAnim = remember { Animatable(0f) }
+    var stageDragOffsetX by remember { mutableFloatStateOf(0f) }
+    var pendingSlideDirection by remember { mutableIntStateOf(0) }
+    val slideEnterDistPx = with(density) { 140.dp.toPx() }
+    val swipeThresholdPx = with(density) { 52.dp.toPx() }
+
+    LaunchedEffect(frame.id) {
+        stageDragOffsetX = 0f
+        val dir = pendingSlideDirection
+        pendingSlideDirection = 0
+        if (dir != 0) {
+            val startX = if (isArabic) -dir * slideEnterDistPx else dir * slideEnterDistPx
+            stageSlideAnim.snapTo(startX)
+            stageSlideAnim.animateTo(0f, tween(durationMillis = 200))
+        } else {
+            stageSlideAnim.snapTo(0f)
+        }
+    }
+
+    LaunchedEffect(activeIdx, batchFrames.size) {
+        if (batchFrames.size > 1 && activeIdx in batchFrames.indices) {
+            pageStripState.animateScrollToItem(activeIdx)
+        }
+    }
+
+    fun navigateBatchPageByDelta(delta: Int) {
+        val target = activeIdx + delta
+        if (target in batchFrames.indices) {
+            pendingSlideDirection = delta
+            scannerViewModel.activeCropIndex.value = target
+        }
+    }
 
     // Before/After split comparison fraction (0.0 .. 1.0)
     var splitComparisonX by remember { mutableFloatStateOf(0.54f) }
@@ -485,9 +523,10 @@ fun CropAndFilterScreen(
                 }
             }
 
-            // Batch page selector strip (when scanning multiple pages)
+            // Batch page selector strip (when scanning or importing multiple pages)
             if (batchFrames.size > 1) {
                 LazyRow(
+                    state = pageStripState,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -502,7 +541,10 @@ fun CropAndFilterScreen(
                             modifier = Modifier
                                 .clip(CircleShape)
                                 .iosLiquidGlass(CircleShape, glowAccent = selected, fillAlpha = if (selected) 0.86f else 0.56f)
-                                .clickable { scannerViewModel.activeCropIndex.value = idx }
+                                .clickable {
+                                    pendingSlideDirection = if (idx > activeIdx) 1 else if (idx < activeIdx) -1 else 0
+                                    scannerViewModel.activeCropIndex.value = idx
+                                }
                                 .padding(horizontal = 13.dp, vertical = 7.dp)
                         ) {
                             Text(
@@ -517,6 +559,24 @@ fun CropAndFilterScreen(
             }
 
             // 2. Main Interactive Document Stage
+            val canSwipePages = batchFrames.size > 1
+            val onStageSwipeDragDelta: (Float) -> Unit = { totalDx ->
+                val isNextDrag = if (isArabic) totalDx > 0f else totalDx < 0f
+                val canMoveInDir = if (isNextDrag) activeIdx < batchFrames.lastIndex else activeIdx > 0
+                stageDragOffsetX = if (canMoveInDir) totalDx * 0.55f else totalDx * 0.16f
+            }
+            val onStageSwipeRelease: (Float, Float) -> Unit = { totalDx, totalDy ->
+                stageDragOffsetX = 0f
+                if (abs(totalDx) >= swipeThresholdPx && abs(totalDx) > abs(totalDy) * 1.15f) {
+                    val delta = if (isArabic) {
+                        if (totalDx > 0f) 1 else -1
+                    } else {
+                        if (totalDx < 0f) 1 else -1
+                    }
+                    navigateBatchPageByDelta(delta)
+                }
+            }
+
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -529,28 +589,49 @@ fun CropAndFilterScreen(
                 val bmp = rawBitmap
                 if (bmp == null) {
                     CircularProgressIndicator(color = ScannerGlassPalette.CyanGlow)
-                } else if (isCropPhase) {
-                    InteractiveCropWithMagnifier(
-                        bitmap = bmp,
-                        quad = frame.detectedQuad,
-                        onQuadChange = { newQuad -> scannerViewModel.updateFrameQuad(activeIdx, newQuad) }
-                    )
                 } else {
-                    val beforeBmp = warpedBitmap
-                    val afterBmp = enhancedBitmap
-                    if (beforeBmp == null || afterBmp == null) {
-                        CircularProgressIndicator(color = ScannerGlassPalette.CyanGlow)
-                    } else {
-                        BeforeAfterComparisonViewport(
-                            beforeBitmap = beforeBmp,
-                            afterBitmap = afterBmp,
-                            splitFraction = splitComparisonX,
-                            showSplitCompare = showSplitCompare,
-                            isRenderingPreview = isRenderingPreview,
-                            isArabic = isArabic,
-                            onToggleCompareMode = { showSplitCompare = !showSplitCompare },
-                            onSplitFractionChange = { splitComparisonX = it }
-                        )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                translationX = stageDragOffsetX + stageSlideAnim.value
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isCropPhase) {
+                            InteractiveCropWithMagnifier(
+                                frameId = frame.id,
+                                bitmap = bmp,
+                                quad = frame.detectedQuad,
+                                canSwipePages = canSwipePages,
+                                onQuadChange = { committedFrameId, newQuad ->
+                                    scannerViewModel.updateFrameQuadById(committedFrameId, newQuad)
+                                },
+                                onSwipeDragDelta = onStageSwipeDragDelta,
+                                onSwipeRelease = onStageSwipeRelease
+                            )
+                        } else {
+                            val beforeBmp = warpedBitmap
+                            val afterBmp = enhancedBitmap
+                            if (beforeBmp == null || afterBmp == null) {
+                                CircularProgressIndicator(color = ScannerGlassPalette.CyanGlow)
+                            } else {
+                                BeforeAfterComparisonViewport(
+                                    frameId = frame.id,
+                                    beforeBitmap = beforeBmp,
+                                    afterBitmap = afterBmp,
+                                    splitFraction = splitComparisonX,
+                                    showSplitCompare = showSplitCompare,
+                                    isRenderingPreview = isRenderingPreview,
+                                    isArabic = isArabic,
+                                    canSwipePages = canSwipePages,
+                                    onToggleCompareMode = { showSplitCompare = !showSplitCompare },
+                                    onSplitFractionChange = { splitComparisonX = it },
+                                    onSwipeDragDelta = onStageSwipeDragDelta,
+                                    onSwipeRelease = onStageSwipeRelease
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -1121,20 +1202,24 @@ fun CropAndFilterScreen(
 
 @Composable
 private fun InteractiveCropWithMagnifier(
+    frameId: String,
     bitmap: Bitmap,
     quad: DocumentQuad,
-    onQuadChange: (DocumentQuad) -> Unit
+    canSwipePages: Boolean,
+    onQuadChange: (String, DocumentQuad) -> Unit,
+    onSwipeDragDelta: (Float) -> Unit,
+    onSwipeRelease: (Float, Float) -> Unit
 ) {
     var boxSize by remember { mutableStateOf(IntSize.Zero) }
     var activeHandle by remember { mutableStateOf<DragHandleTarget?>(null) }
     var activeAnchorScreenPos by remember { mutableStateOf<Offset?>(null) }
-    var localQuad by remember(bitmap) { mutableStateOf(quad) }
-    var zoomScale by remember(bitmap) { mutableFloatStateOf(1f) }
-    var panOffset by remember(bitmap) { mutableStateOf(Offset.Zero) }
+    var localQuad by remember(frameId, bitmap) { mutableStateOf(quad) }
+    var zoomScale by remember(frameId, bitmap) { mutableFloatStateOf(1f) }
+    var panOffset by remember(frameId, bitmap) { mutableStateOf(Offset.Zero) }
     val density = LocalDensity.current
 
     // Sync external quad updates (e.g., Auto-Fit or Full Frame) only when not actively dragging
-    LaunchedEffect(quad) {
+    LaunchedEffect(frameId, quad) {
         if (activeHandle == null) {
             localQuad = quad
         }
@@ -1162,6 +1247,9 @@ private fun InteractiveCropWithMagnifier(
     val latestLocalQuad by rememberUpdatedState(localQuad)
     val latestZoomScale by rememberUpdatedState(zoomScale)
     val latestPanOffset by rememberUpdatedState(panOffset)
+    val latestCanSwipePages by rememberUpdatedState(canSwipePages)
+    val latestOnSwipeDragDelta by rememberUpdatedState(onSwipeDragDelta)
+    val latestOnSwipeRelease by rememberUpdatedState(onSwipeRelease)
     val imageBitmap = remember(bitmap) { bitmap.asImageBitmap() }
 
     val edgePadPx = with(density) { 14.dp.toPx() }
@@ -1252,7 +1340,7 @@ private fun InteractiveCropWithMagnifier(
             Canvas(
                 modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput(bitmap, boxSize) {
+                    .pointerInput(frameId, bitmap, boxSize) {
                         if (boxSize.width <= 0 || boxSize.height <= 0) return@pointerInput
                         val cornerHitRadius = with(density) { 52.dp.toPx() }
                         val midHitRadius = with(density) { 44.dp.toPx() }
@@ -1330,7 +1418,7 @@ private fun InteractiveCropWithMagnifier(
                                             isPinching = true
                                             activeHandle = null
                                             activeAnchorScreenPos = null
-                                            latestOnQuadCommit(latestLocalQuad)
+                                            latestOnQuadCommit(frameId, latestLocalQuad)
                                             val pA = pressed[0].position
                                             val pB = pressed[1].position
                                             prevCentroid = Offset((pA.x + pB.x) * 0.5f, (pA.y + pB.y) * 0.5f)
@@ -1483,7 +1571,7 @@ private fun InteractiveCropWithMagnifier(
                                     if (isDraggingHandle) {
                                         activeHandle = null
                                         activeAnchorScreenPos = null
-                                        latestOnQuadCommit(latestLocalQuad)
+                                        latestOnQuadCommit(frameId, latestLocalQuad)
                                     }
                                 }
                             }
@@ -1491,74 +1579,104 @@ private fun InteractiveCropWithMagnifier(
                             if (!isDraggingHandle) {
                                 val downTimeMs = System.currentTimeMillis()
                                 var maxMovedPx = 0f
-                                while (true) {
-                                    val event = awaitPointerEvent()
-                                    val pressed = event.changes.filter { it.pressed }
-                                    if (pressed.isEmpty()) break
+                                var isSwipingPage = false
+                                var swipeTotalDx = 0f
+                                var swipeTotalDy = 0f
+                                var wasMultiTouch = false
+                                try {
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        val pressed = event.changes.filter { it.pressed }
+                                        if (pressed.isEmpty()) break
 
-                                    if (pressed.size >= 2) {
-                                        val pA = pressed[0].position
-                                        val pB = pressed[1].position
-                                        val currCentroid = Offset((pA.x + pB.x) * 0.5f, (pA.y + pB.y) * 0.5f)
-                                        val currSpan = hypot(pA.x - pB.x, pA.y - pB.y).coerceAtLeast(1f)
-                                        if (!isPinching) {
-                                            isPinching = true
-                                            prevCentroid = currCentroid
-                                            prevSpan = currSpan
+                                        if (pressed.size >= 2) {
+                                            wasMultiTouch = true
+                                            if (isSwipingPage) {
+                                                isSwipingPage = false
+                                                latestOnSwipeDragDelta(0f)
+                                            }
+                                            val pA = pressed[0].position
+                                            val pB = pressed[1].position
+                                            val currCentroid = Offset((pA.x + pB.x) * 0.5f, (pA.y + pB.y) * 0.5f)
+                                            val currSpan = hypot(pA.x - pB.x, pA.y - pB.y).coerceAtLeast(1f)
+                                            if (!isPinching) {
+                                                isPinching = true
+                                                prevCentroid = currCentroid
+                                                prevSpan = currSpan
+                                            } else {
+                                                val zoomFactor = currSpan / prevSpan.coerceAtLeast(1f)
+                                                val curScale = latestZoomScale
+                                                val curPan = latestPanOffset
+                                                val newScale = (curScale * zoomFactor).coerceIn(1f, 5f)
+                                                val ratio = newScale / curScale
+                                                val rawPan = currCentroid - (prevCentroid - curPan) * ratio
+                                                zoomScale = newScale
+                                                panOffset = clampCropPan(rawPan, newScale)
+                                                prevCentroid = currCentroid
+                                                prevSpan = currSpan
+                                            }
+                                            maxMovedPx = tapSlopPx + 10f
+                                            pressed.forEach { it.consume() }
                                         } else {
-                                            val zoomFactor = currSpan / prevSpan.coerceAtLeast(1f)
-                                            val curScale = latestZoomScale
-                                            val curPan = latestPanOffset
-                                            val newScale = (curScale * zoomFactor).coerceIn(1f, 5f)
-                                            val ratio = newScale / curScale
-                                            val rawPan = currCentroid - (prevCentroid - curPan) * ratio
-                                            zoomScale = newScale
-                                            panOffset = clampCropPan(rawPan, newScale)
-                                            prevCentroid = currCentroid
-                                            prevSpan = currSpan
-                                        }
-                                        maxMovedPx = tapSlopPx + 10f
-                                        pressed.forEach { it.consume() }
-                                    } else {
-                                        if (isPinching) {
-                                            // One finger lifted after pinch
-                                            isPinching = false
-                                        } else {
-                                            val c = pressed[0]
-                                            val distFromDown = hypot(
-                                                c.position.x - down.position.x,
-                                                c.position.y - down.position.y
-                                            )
-                                            if (distFromDown > maxMovedPx) maxMovedPx = distFromDown
-                                            if (latestZoomScale > 1.02f) {
-                                                val delta = c.position - c.previousPosition
-                                                if (delta != Offset.Zero) {
-                                                    panOffset = clampCropPan(latestPanOffset + delta, latestZoomScale)
-                                                    c.consume()
+                                            if (isPinching) {
+                                                // One finger lifted after pinch
+                                                isPinching = false
+                                            } else {
+                                                val c = pressed[0]
+                                                val distFromDown = hypot(
+                                                    c.position.x - down.position.x,
+                                                    c.position.y - down.position.y
+                                                )
+                                                if (distFromDown > maxMovedPx) maxMovedPx = distFromDown
+                                                if (latestZoomScale > 1.02f) {
+                                                    val delta = c.position - c.previousPosition
+                                                    if (delta != Offset.Zero) {
+                                                        panOffset = clampCropPan(latestPanOffset + delta, latestZoomScale)
+                                                        c.consume()
+                                                    }
+                                                } else if (latestCanSwipePages && !wasMultiTouch) {
+                                                    val dx = c.position.x - down.position.x
+                                                    val dy = c.position.y - down.position.y
+                                                    if (!isSwipingPage && abs(dx) > tapSlopPx && abs(dx) > abs(dy) * 1.15f) {
+                                                        isSwipingPage = true
+                                                    }
+                                                    if (isSwipingPage) {
+                                                        swipeTotalDx = dx
+                                                        swipeTotalDy = dy
+                                                        latestOnSwipeDragDelta(dx)
+                                                        c.consume()
+                                                    }
                                                 }
                                             }
                                         }
                                     }
-                                }
 
-                                // Double-tap on image toggles 1x <-> 2.2x centered on tap point
-                                if (maxMovedPx < tapSlopPx && !isPinching) {
-                                    val nowMs = System.currentTimeMillis()
-                                    val tapDist = hypot(
-                                        down.position.x - lastTapPos.x,
-                                        down.position.y - lastTapPos.y
-                                    )
-                                    if (nowMs - lastTapTimeMs < 290L && tapDist < doubleTapDistPx) {
-                                        if (latestZoomScale > 1.05f) {
-                                            zoomScale = 1f
-                                            panOffset = Offset.Zero
-                                        } else {
-                                            applyCropZoomAt(2.2f, down.position)
+                                    if (isSwipingPage) {
+                                        latestOnSwipeRelease(swipeTotalDx, swipeTotalDy)
+                                        isSwipingPage = false
+                                    } else if (maxMovedPx < tapSlopPx && !isPinching && !wasMultiTouch) {
+                                        // Double-tap on image toggles 1x <-> 2.2x centered on tap point
+                                        val nowMs = System.currentTimeMillis()
+                                        val tapDist = hypot(
+                                            down.position.x - lastTapPos.x,
+                                            down.position.y - lastTapPos.y
+                                        )
+                                        if (nowMs - lastTapTimeMs < 290L && tapDist < doubleTapDistPx) {
+                                            if (latestZoomScale > 1.05f) {
+                                                zoomScale = 1f
+                                                panOffset = Offset.Zero
+                                            } else {
+                                                applyCropZoomAt(2.2f, down.position)
+                                            }
+                                            lastTapTimeMs = 0L
+                                        } else if (nowMs - downTimeMs < 260L) {
+                                            lastTapTimeMs = nowMs
+                                            lastTapPos = down.position
                                         }
-                                        lastTapTimeMs = 0L
-                                    } else if (nowMs - downTimeMs < 260L) {
-                                        lastTapTimeMs = nowMs
-                                        lastTapPos = down.position
+                                    }
+                                } finally {
+                                    if (isSwipingPage) {
+                                        latestOnSwipeDragDelta(0f)
                                     }
                                 }
                             }
@@ -1800,18 +1918,22 @@ private fun InteractiveCropWithMagnifier(
 
 @Composable
 private fun BeforeAfterComparisonViewport(
+    frameId: String,
     beforeBitmap: Bitmap,
     afterBitmap: Bitmap,
     splitFraction: Float,
     showSplitCompare: Boolean,
     isRenderingPreview: Boolean,
     isArabic: Boolean,
+    canSwipePages: Boolean,
     onToggleCompareMode: () -> Unit,
-    onSplitFractionChange: (Float) -> Unit
+    onSplitFractionChange: (Float) -> Unit,
+    onSwipeDragDelta: (Float) -> Unit,
+    onSwipeRelease: (Float, Float) -> Unit
 ) {
     var viewportSize by remember { mutableStateOf(IntSize.Zero) }
-    var zoomScale by remember { mutableFloatStateOf(1f) }
-    var panOffset by remember { mutableStateOf(Offset.Zero) }
+    var zoomScale by remember(frameId) { mutableFloatStateOf(1f) }
+    var panOffset by remember(frameId) { mutableStateOf(Offset.Zero) }
     val density = LocalDensity.current
     val beforeImg = remember(beforeBitmap) { beforeBitmap.asImageBitmap() }
     val afterImg = remember(afterBitmap) { afterBitmap.asImageBitmap() }
@@ -1819,6 +1941,9 @@ private fun BeforeAfterComparisonViewport(
     val latestZoomScale by rememberUpdatedState(zoomScale)
     val latestPanOffset by rememberUpdatedState(panOffset)
     val latestSplitFraction by rememberUpdatedState(splitFraction)
+    val latestCanSwipePages by rememberUpdatedState(canSwipePages)
+    val latestOnSwipeDragDelta by rememberUpdatedState(onSwipeDragDelta)
+    val latestOnSwipeRelease by rememberUpdatedState(onSwipeRelease)
 
     Box(modifier = Modifier.fillMaxSize()) {
         // Force physical LTR coordinate space for the Before/After wipe & natural-dimension preview
@@ -1868,9 +1993,9 @@ private fun BeforeAfterComparisonViewport(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .pointerInput(viewportSize, showSplitCompare, paperWpx) {
+                        .pointerInput(frameId, viewportSize, showSplitCompare, paperWpx) {
                             if (viewportSize.width <= 0 || viewportSize.height <= 0) return@pointerInput
-                            val dividerGrabPx = with(density) { 36.dp.toPx() }
+                            val dividerGrabPx = with(density) { 42.dp.toPx() }
                             val tapSlopPx = with(density) { 12.dp.toPx() }
                             val doubleTapDistPx = with(density) { 36.dp.toPx() }
                             var lastTapTimeMs = 0L
@@ -1882,86 +2007,117 @@ private fun BeforeAfterComparisonViewport(
                                 val s0 = latestZoomScale
                                 val p0 = latestPanOffset
                                 val splitScreenX = (paperLeftPx + paperWpx * latestSplitFraction) * s0 + p0.x
+                                val hitSplitBeam = abs(down.position.x - splitScreenX) <= dividerGrabPx
                                 var draggingDivider = showSplitCompare &&
-                                    (s0 <= 1.02f || abs(down.position.x - splitScreenX) <= dividerGrabPx)
+                                    (hitSplitBeam || (!latestCanSwipePages && s0 <= 1.02f))
                                 var isPinching = false
+                                var isSwipingPage = false
+                                var swipeTotalDx = 0f
+                                var swipeTotalDy = 0f
+                                var wasMultiTouch = false
                                 var prevCentroid = Offset.Zero
                                 var prevSpan = 0f
                                 var maxMovedPx = 0f
 
-                                while (true) {
-                                    val event = awaitPointerEvent()
-                                    val pressed = event.changes.filter { it.pressed }
-                                    if (pressed.isEmpty()) break
+                                try {
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        val pressed = event.changes.filter { it.pressed }
+                                        if (pressed.isEmpty()) break
 
-                                    if (pressed.size >= 2) {
-                                        draggingDivider = false
-                                        val pA = pressed[0].position
-                                        val pB = pressed[1].position
-                                        val currCentroid = Offset((pA.x + pB.x) * 0.5f, (pA.y + pB.y) * 0.5f)
-                                        val currSpan = hypot(pA.x - pB.x, pA.y - pB.y).coerceAtLeast(1f)
-                                        if (!isPinching) {
-                                            isPinching = true
-                                            prevCentroid = currCentroid
-                                            prevSpan = currSpan
+                                        if (pressed.size >= 2) {
+                                            draggingDivider = false
+                                            wasMultiTouch = true
+                                            if (isSwipingPage) {
+                                                isSwipingPage = false
+                                                latestOnSwipeDragDelta(0f)
+                                            }
+                                            val pA = pressed[0].position
+                                            val pB = pressed[1].position
+                                            val currCentroid = Offset((pA.x + pB.x) * 0.5f, (pA.y + pB.y) * 0.5f)
+                                            val currSpan = hypot(pA.x - pB.x, pA.y - pB.y).coerceAtLeast(1f)
+                                            if (!isPinching) {
+                                                isPinching = true
+                                                prevCentroid = currCentroid
+                                                prevSpan = currSpan
+                                            } else {
+                                                val zoomFactor = currSpan / prevSpan.coerceAtLeast(1f)
+                                                val curScale = latestZoomScale
+                                                val curPan = latestPanOffset
+                                                val newScale = (curScale * zoomFactor).coerceIn(1f, 5f)
+                                                val ratio = newScale / curScale
+                                                val rawPan = currCentroid - (prevCentroid - curPan) * ratio
+                                                zoomScale = newScale
+                                                panOffset = clampEnhancePan(rawPan, newScale)
+                                                prevCentroid = currCentroid
+                                                prevSpan = currSpan
+                                            }
+                                            maxMovedPx = tapSlopPx + 10f
+                                            pressed.forEach { it.consume() }
                                         } else {
-                                            val zoomFactor = currSpan / prevSpan.coerceAtLeast(1f)
-                                            val curScale = latestZoomScale
-                                            val curPan = latestPanOffset
-                                            val newScale = (curScale * zoomFactor).coerceIn(1f, 5f)
-                                            val ratio = newScale / curScale
-                                            val rawPan = currCentroid - (prevCentroid - curPan) * ratio
-                                            zoomScale = newScale
-                                            panOffset = clampEnhancePan(rawPan, newScale)
-                                            prevCentroid = currCentroid
-                                            prevSpan = currSpan
-                                        }
-                                        maxMovedPx = tapSlopPx + 10f
-                                        pressed.forEach { it.consume() }
-                                    } else {
-                                        if (isPinching) {
-                                            isPinching = false
-                                        } else {
-                                            val c = pressed[0]
-                                            val distFromDown = hypot(
-                                                c.position.x - down.position.x,
-                                                c.position.y - down.position.y
-                                            )
-                                            if (distFromDown > maxMovedPx) maxMovedPx = distFromDown
+                                            if (isPinching) {
+                                                isPinching = false
+                                            } else {
+                                                val c = pressed[0]
+                                                val distFromDown = hypot(
+                                                    c.position.x - down.position.x,
+                                                    c.position.y - down.position.y
+                                                )
+                                                if (distFromDown > maxMovedPx) maxMovedPx = distFromDown
 
-                                            if (draggingDivider && showSplitCompare) {
-                                                val contentX = (c.position.x - latestPanOffset.x) / latestZoomScale
-                                                val frac = ((contentX - paperLeftPx) / paperWpx).coerceIn(0.05f, 0.95f)
-                                                onSplitFractionChange(frac)
-                                                c.consume()
-                                            } else if (latestZoomScale > 1.02f) {
-                                                val delta = c.position - c.previousPosition
-                                                if (delta != Offset.Zero) {
-                                                    panOffset = clampEnhancePan(latestPanOffset + delta, latestZoomScale)
+                                                if (draggingDivider && showSplitCompare) {
+                                                    val contentX = (c.position.x - latestPanOffset.x) / latestZoomScale
+                                                    val frac = ((contentX - paperLeftPx) / paperWpx).coerceIn(0.05f, 0.95f)
+                                                    onSplitFractionChange(frac)
                                                     c.consume()
+                                                } else if (latestZoomScale > 1.02f) {
+                                                    val delta = c.position - c.previousPosition
+                                                    if (delta != Offset.Zero) {
+                                                        panOffset = clampEnhancePan(latestPanOffset + delta, latestZoomScale)
+                                                        c.consume()
+                                                    }
+                                                } else if (latestCanSwipePages && !wasMultiTouch) {
+                                                    val dx = c.position.x - down.position.x
+                                                    val dy = c.position.y - down.position.y
+                                                    if (!isSwipingPage && abs(dx) > tapSlopPx && abs(dx) > abs(dy) * 1.15f) {
+                                                        isSwipingPage = true
+                                                    }
+                                                    if (isSwipingPage) {
+                                                        swipeTotalDx = dx
+                                                        swipeTotalDy = dy
+                                                        latestOnSwipeDragDelta(dx)
+                                                        c.consume()
+                                                    }
                                                 }
                                             }
                                         }
                                     }
-                                }
 
-                                if (maxMovedPx < tapSlopPx && !isPinching) {
-                                    val nowMs = System.currentTimeMillis()
-                                    val tapDist = hypot(
-                                        down.position.x - lastTapPos.x,
-                                        down.position.y - lastTapPos.y
-                                    )
-                                    if (nowMs - lastTapTimeMs < 290L && tapDist < doubleTapDistPx) {
-                                        if (latestZoomScale > 1.05f) {
-                                            zoomScale = 1f
-                                            panOffset = Offset.Zero
-                                        } else {
-                                            applyEnhanceZoomAt(2.2f, down.position)
+                                    if (isSwipingPage) {
+                                        latestOnSwipeRelease(swipeTotalDx, swipeTotalDy)
+                                        isSwipingPage = false
+                                    } else if (maxMovedPx < tapSlopPx && !isPinching && !wasMultiTouch) {
+                                        val nowMs = System.currentTimeMillis()
+                                        val tapDist = hypot(
+                                            down.position.x - lastTapPos.x,
+                                            down.position.y - lastTapPos.y
+                                        )
+                                        if (nowMs - lastTapTimeMs < 290L && tapDist < doubleTapDistPx) {
+                                            if (latestZoomScale > 1.05f) {
+                                                zoomScale = 1f
+                                                panOffset = Offset.Zero
+                                            } else {
+                                                applyEnhanceZoomAt(2.2f, down.position)
+                                            }
+                                            lastTapTimeMs = 0L
+                                        } else if (nowMs - downTimeMs < 260L) {
+                                            lastTapTimeMs = nowMs
+                                            lastTapPos = down.position
                                         }
-                                        lastTapTimeMs = 0L
-                                    } else if (nowMs - downTimeMs < 260L) {
-                                        lastTapTimeMs = nowMs
-                                        lastTapPos = down.position
+                                    }
+                                } finally {
+                                    if (isSwipingPage) {
+                                        latestOnSwipeDragDelta(0f)
                                     }
                                 }
                             }

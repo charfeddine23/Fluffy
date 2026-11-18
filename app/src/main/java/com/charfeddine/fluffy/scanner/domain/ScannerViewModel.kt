@@ -624,6 +624,14 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
         batchFrames.value = list
     }
 
+    fun updateFrameQuadById(frameId: String, quad: DocumentQuad) {
+        val list = batchFrames.value.toMutableList()
+        val index = list.indexOfFirst { it.id == frameId }
+        if (index == -1) return
+        list[index] = list[index].copy(detectedQuad = quad)
+        batchFrames.value = list
+    }
+
     fun updateFrameEnhancement(
         index: Int,
         filter: ScannerFilterType,
