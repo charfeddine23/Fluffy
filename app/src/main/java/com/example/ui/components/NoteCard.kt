@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -57,6 +58,7 @@ import com.example.data.model.NoteEntity
 import com.example.data.model.NotePagesCodec
 import com.example.data.storage.AudioCloudPolicy
 import com.example.ui.glass.LiquidGlassCard
+import com.example.ui.theme.tr
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -71,6 +73,7 @@ fun NoteCard(
     onToggleFavorite: () -> Unit,
     onToggleChecklistItem: (Int) -> Unit,
     onArchive: () -> Unit = {},
+    onMoveToVault: () -> Unit = {},
     onDelete: () -> Unit,
     isDragging: Boolean = false,
     modifier: Modifier = Modifier
@@ -370,17 +373,20 @@ fun NoteCard(
                 Text(
                     text = formatFriendlyDate(note.updatedAt, isArabic),
                     fontSize = 11.sp,
-                    color = metaColor
+                    color = metaColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f).padding(end = 4.dp)
                 )
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     // Pin Button
                     Box(
                         modifier = Modifier
-                            .size(30.dp)
+                            .size(26.dp)
                             .clip(CircleShape)
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
@@ -391,16 +397,16 @@ fun NoteCard(
                     ) {
                         Icon(
                             imageVector = Icons.Default.PushPin,
-                            contentDescription = "Toggle Pin",
+                            contentDescription = tr("تثبيت", "Épingler", "Toggle Pin", "Senteḍ"),
                             tint = if (note.isPinned) Color(0xFFFBBF24) else metaColor.copy(alpha = 0.6f),
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(15.dp)
                         )
                     }
 
                     // Favorite Button
                     Box(
                         modifier = Modifier
-                            .size(30.dp)
+                            .size(26.dp)
                             .clip(CircleShape)
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
@@ -411,16 +417,37 @@ fun NoteCard(
                     ) {
                         Icon(
                             imageVector = if (note.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                            contentDescription = "Toggle Favorite",
+                            contentDescription = tr("مفضلة", "Favori", "Toggle Favorite", "Anurif"),
                             tint = if (note.isFavorite) Color(0xFFF43F5E) else metaColor.copy(alpha = 0.6f),
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+
+                    // Move to Vault Button
+                    Box(
+                        modifier = Modifier
+                            .size(26.dp)
+                            .testTag("note_move_to_vault_${note.id}")
+                            .clip(CircleShape)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = ripple(bounded = true),
+                                onClick = onMoveToVault
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Shield,
+                            contentDescription = tr("نقل إلى الـ Vault", "Déplacer vers Vault", "Move to Vault", "Smutti ɣer Vault"),
+                            tint = Color(0xFFC084FC).copy(alpha = 0.85f),
+                            modifier = Modifier.size(15.dp)
                         )
                     }
 
                     // Archive Button
                     Box(
                         modifier = Modifier
-                            .size(30.dp)
+                            .size(26.dp)
                             .clip(CircleShape)
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
@@ -433,14 +460,14 @@ fun NoteCard(
                             imageVector = if (note.isArchived) Icons.Default.Unarchive else Icons.Default.Archive,
                             contentDescription = if (note.isArchived) "Unarchive" else "Archive",
                             tint = if (note.isArchived) Color(0xFF38BDF8) else metaColor.copy(alpha = 0.6f),
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(15.dp)
                         )
                     }
 
                     // Delete Button
                     Box(
                         modifier = Modifier
-                            .size(30.dp)
+                            .size(26.dp)
                             .clip(CircleShape)
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
@@ -451,9 +478,9 @@ fun NoteCard(
                     ) {
                         Icon(
                             imageVector = Icons.Default.DeleteOutline,
-                            contentDescription = "Delete",
+                            contentDescription = tr("حذف", "Supprimer", "Delete", "Kkes"),
                             tint = Color(0xFFEF4444).copy(alpha = 0.78f),
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(15.dp)
                         )
                     }
                 }
@@ -475,6 +502,7 @@ fun GalleryNoteCard(
     onTogglePin: () -> Unit,
     onToggleFavorite: () -> Unit,
     onArchive: () -> Unit = {},
+    onMoveToVault: () -> Unit = {},
     onDelete: () -> Unit,
     isDragging: Boolean = false,
     modifier: Modifier = Modifier
@@ -681,15 +709,24 @@ fun GalleryNoteCard(
                     Text(
                         text = formatFriendlyDate(note.updatedAt, isArabic),
                         fontSize = 10.5.sp,
-                        color = metaColor
+                        color = metaColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).padding(end = 4.dp)
                     )
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(1.dp)) {
                         CompactCardIcon(
                             icon = if (note.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                             contentDescription = "Favorite",
                             tint = if (note.isFavorite) Color(0xFFF43F5E) else metaColor.copy(alpha = 0.72f),
                             onClick = onToggleFavorite
+                        )
+                        CompactCardIcon(
+                            icon = Icons.Default.Shield,
+                            contentDescription = tr("نقل إلى الـ Vault", "Déplacer vers Vault", "Move to Vault", "Smutti ɣer Vault"),
+                            tint = Color(0xFFC084FC).copy(alpha = 0.88f),
+                            onClick = onMoveToVault
                         )
                         CompactCardIcon(
                             icon = if (note.isArchived) Icons.Default.Unarchive else Icons.Default.Archive,
@@ -725,6 +762,7 @@ fun MagazineNoteCard(
     onTogglePin: () -> Unit,
     onToggleFavorite: () -> Unit,
     onArchive: () -> Unit = {},
+    onMoveToVault: () -> Unit = {},
     onDelete: () -> Unit,
     isDragging: Boolean = false,
     modifier: Modifier = Modifier
@@ -891,6 +929,12 @@ fun MagazineNoteCard(
                                 contentDescription = "Favorite",
                                 tint = if (note.isFavorite) Color(0xFFF43F5E) else metaColor.copy(alpha = 0.65f),
                                 onClick = onToggleFavorite
+                            )
+                            CompactCardIcon(
+                                icon = Icons.Default.Shield,
+                                contentDescription = tr("نقل إلى الـ Vault", "Déplacer vers Vault", "Move to Vault", "Smutti ɣer Vault"),
+                                tint = Color(0xFFC084FC).copy(alpha = 0.88f),
+                                onClick = onMoveToVault
                             )
                             CompactCardIcon(
                                 icon = if (note.isArchived) Icons.Default.Unarchive else Icons.Default.Archive,
@@ -1061,6 +1105,12 @@ fun MagazineNoteCard(
                                 contentDescription = "Favorite",
                                 tint = if (note.isFavorite) Color(0xFFF43F5E) else metaColor.copy(alpha = 0.65f),
                                 onClick = onToggleFavorite
+                            )
+                            CompactCardIcon(
+                                icon = Icons.Default.Shield,
+                                contentDescription = tr("نقل إلى الـ Vault", "Déplacer vers Vault", "Move to Vault", "Smutti ɣer Vault"),
+                                tint = Color(0xFFC084FC).copy(alpha = 0.88f),
+                                onClick = onMoveToVault
                             )
                             CompactCardIcon(
                                 icon = if (note.isArchived) Icons.Default.Unarchive else Icons.Default.Archive,

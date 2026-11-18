@@ -40,9 +40,11 @@ import androidx.compose.material.icons.rounded.CloudDone
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Stop
@@ -51,6 +53,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
@@ -97,7 +101,8 @@ private data class AudioTrackItem(
     val durationSec: Int,
     val byteSize: Long,
     val createdAt: Long,
-    val noteRef: NoteEntity? = null
+    val noteRef: NoteEntity? = null,
+    val vaultRef: VaultItemEntity? = null
 ) {
     val isLocalOnlyOver900Mb: Boolean
         get() = AudioCloudPolicy.isAudioOverCloudLimit(byteSize)
@@ -112,6 +117,10 @@ fun AudioRecordingsScreen(
     onCreateAudioNote: (title: String, durationSec: Int, filePath: String, byteSize: Long) -> Unit,
     onImportAudioUri: (Uri) -> Unit,
     onOpenNote: (NoteEntity) -> Unit,
+    onMoveNoteToVault: (NoteEntity) -> Unit = {},
+    onMoveVaultAudioToRecordings: (VaultItemEntity) -> Unit = {},
+    snackbarMessage: String? = null,
+    onClearSnackbar: () -> Unit = {},
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -120,6 +129,14 @@ fun AudioRecordingsScreen(
     val playbackController = rememberAudioPlaybackController()
     var filterMode by remember { mutableStateOf(AudioFilterMode.ALL) }
     var showRecorderDialog by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(snackbarMessage) {
+        if (!snackbarMessage.isNullOrBlank()) {
+            snackbarHostState.showSnackbar(snackbarMessage)
+            onClearSnackbar()
+        }
+    }
 
     val importAudioLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -155,7 +172,8 @@ fun AudioRecordingsScreen(
                     durationSec = 0,
                     byteSize = resolvedSize,
                     createdAt = v.createdAt,
-                    noteRef = null
+                    noteRef = null,
+                    vaultRef = v
                 )
             }
         (fromNotes + fromVault).sortedByDescending { it.createdAt }
@@ -556,20 +574,113 @@ fun AudioRecordingsScreen(
                                                 )
                                             }
 
-                                            if (track.noteRef != null) {
-                                                Text(
-                                                    text = if (isArabic) "فتح الملاحظة" else "Open Note",
-                                                    fontSize = 10.5.sp,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    color = accentCyan,
+                                            if (track.vaultRef != null) {
+                                                Row(
                                                     modifier = Modifier
-                                                        .clip(RoundedCornerShape(8.dp))
-                                                        .clickable {
-                                                            playbackController.stop()
-                                                            onOpenNote(track.noteRef)
-                                                        }
-                                                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                                                )
+                                                        .clip(CircleShape)
+                                                        .background(Color(0xFFC084FC).copy(alpha = 0.16f))
+                                                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Rounded.Shield,
+                                                        contentDescription = null,
+                                                        tint = Color(0xFFC084FC),
+                                                        modifier = Modifier.size(11.dp)
+                                                    )
+                                                    Text(
+                                                        text = "Vault",
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color(0xFFC084FC)
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        if (track.noteRef != null || track.vaultRef != null) {
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                if (track.noteRef != null) {
+                                                    Text(
+                                                        text = if (isArabic) "فتح الملاحظة" else "Open Note",
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = accentCyan,
+                                                        modifier = Modifier
+                                                            .clip(RoundedCornerShape(8.dp))
+                                                            .background(accentCyan.copy(alpha = 0.12f))
+                                                            .clickable {
+                                                                playbackController.stop()
+                                                                onOpenNote(track.noteRef)
+                                                            }
+                                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                                    )
+
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .clip(RoundedCornerShape(8.dp))
+                                                            .background(Color(0xFFC084FC).copy(alpha = 0.15f))
+                                                            .clickable {
+                                                                if (playbackController.activeTrackId == track.trackId) {
+                                                                    playbackController.stop()
+                                                                }
+                                                                onMoveNoteToVault(track.noteRef)
+                                                            }
+                                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                                            .testTag("audio_move_to_vault_${track.noteRef.id}"),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Rounded.Shield,
+                                                            contentDescription = null,
+                                                            tint = Color(0xFFC084FC),
+                                                            modifier = Modifier.size(12.dp)
+                                                        )
+                                                        Text(
+                                                            text = if (isArabic) "نقل إلى Vault" else "Move to Vault",
+                                                            fontSize = 11.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = Color(0xFFC084FC)
+                                                        )
+                                                    }
+                                                }
+
+                                                if (track.vaultRef != null) {
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .clip(RoundedCornerShape(8.dp))
+                                                            .background(Color(0xFF10B981).copy(alpha = 0.15f))
+                                                            .clickable {
+                                                                if (playbackController.activeTrackId == track.trackId) {
+                                                                    playbackController.stop()
+                                                                }
+                                                                onMoveVaultAudioToRecordings(track.vaultRef)
+                                                            }
+                                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                                            .testTag("audio_move_from_vault_${track.vaultRef.id}"),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Rounded.LockOpen,
+                                                            contentDescription = null,
+                                                            tint = Color(0xFF10B981),
+                                                            modifier = Modifier.size(12.dp)
+                                                        )
+                                                        Text(
+                                                            text = if (isArabic) "إخراج للتسجيلات" else "Move to Recordings",
+                                                            fontSize = 11.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = Color(0xFF10B981)
+                                                        )
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -793,6 +904,27 @@ fun AudioRecordingsScreen(
                             }
                         }
                     }
+                }
+            }
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 18.dp, vertical = if (activeTrack != null) 142.dp else 18.dp)
+            ) { data ->
+                LiquidGlassCard(
+                    isDark = isDark,
+                    tint = GlassTint.AMETHYST,
+                    shape = RoundedCornerShape(18.dp),
+                    borderWidth = 1.2.dp
+                ) {
+                    Text(
+                        text = data.visuals.message,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = textColor
+                    )
                 }
             }
         }

@@ -106,6 +106,8 @@ class MainActivity : FragmentActivity() {
             val isCreatingNew by viewModel.isCreatingNew.collectAsState()
             val isVaultOpen by viewModel.isVaultOpen.collectAsState()
             val vaultItems by viewModel.vaultItems.collectAsState()
+            val vaultViewMode by viewModel.vaultViewMode.collectAsState()
+            val vaultNoteMetaMap by viewModel.vaultNoteMetaMap.collectAsState()
             val updateState by viewModel.updateState.collectAsState()
             val showUpdateDialog by viewModel.showUpdateDialog.collectAsState()
             val currentUser by viewModel.currentUser.collectAsState()
@@ -318,6 +320,7 @@ class MainActivity : FragmentActivity() {
                                                 isArabic = isArabic,
                                                 onOpenNote = { note -> viewModel.openExistingNote(note) },
                                                 onUnarchiveNote = { note -> viewModel.toggleArchive(note) },
+                                                onMoveToVault = { note -> viewModel.moveNoteToVault(note) },
                                                 onMoveToTrash = { note -> viewModel.deleteNoteDirectly(note) },
                                                 onBack = { viewModel.closeArchiveScreen() }
                                             )
@@ -386,6 +389,14 @@ class MainActivity : FragmentActivity() {
                                                     viewModel.closeAudioPlayerScreen()
                                                     viewModel.openExistingNote(note)
                                                 },
+                                                onMoveNoteToVault = { note ->
+                                                    viewModel.moveNoteToVault(note)
+                                                },
+                                                onMoveVaultAudioToRecordings = { vaultItem ->
+                                                    viewModel.moveVaultItemToNotes(vaultItem)
+                                                },
+                                                snackbarMessage = snackbarMessage,
+                                                onClearSnackbar = { viewModel.clearSnackbar() },
                                                 onBack = { viewModel.closeAudioPlayerScreen() }
                                             )
                                         }
@@ -416,6 +427,9 @@ class MainActivity : FragmentActivity() {
                                                 vaultItems = vaultItems,
                                                 isDark = isDark,
                                                 isArabic = isArabic,
+                                                viewMode = vaultViewMode,
+                                                onSelectViewMode = { mode -> viewModel.setVaultViewMode(mode) },
+                                                vaultNoteMetaMap = vaultNoteMetaMap,
                                                 onSaveLiteralText = { title, content ->
                                                     viewModel.saveLiteralTextToVault(title, content)
                                                 },
@@ -424,6 +438,9 @@ class MainActivity : FragmentActivity() {
                                                 },
                                                 onExportItemToUri = { item, destUri ->
                                                     viewModel.exportVaultItemToUri(item, destUri)
+                                                },
+                                                onMoveToNotes = { item ->
+                                                    viewModel.moveVaultItemToNotes(item)
                                                 },
                                                 onDeleteItem = { item ->
                                                     viewModel.deleteVaultItem(item)
@@ -507,6 +524,7 @@ class MainActivity : FragmentActivity() {
                                                 },
                                                 onDelete = { viewModel.deleteCurrentNote() },
                                                 onToggleArchive = { viewModel.toggleArchive(screen.note) },
+                                                onMoveToVault = { updatedNote -> viewModel.moveNoteToVault(updatedNote) },
                                                 onAutoSave = { title, content, pagesJson, category, colorPreset, backgroundId, customColorArgb, isPinned, isFav, checklist, audioDuration, audioPath, audioSize ->
                                                     viewModel.autoSaveNote(
                                                         title = title,

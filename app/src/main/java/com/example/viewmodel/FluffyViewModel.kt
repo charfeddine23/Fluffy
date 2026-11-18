@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -64,6 +65,11 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     )
     val viewMode = MutableStateFlow(initialViewMode)
     val isGridView = MutableStateFlow(initialViewMode.isGridLike)
+    private val initialVaultViewMode = NotesViewMode.fromId(
+        id = prefs.getString("vault_view_mode", initialViewMode.id),
+        fallbackGrid = initialViewMode.isGridLike
+    )
+    val vaultViewMode = MutableStateFlow(initialVaultViewMode)
     val selectedThemeId = MutableStateFlow(
         prefs.getString(
             "selected_theme_id",
@@ -148,6 +154,18 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = emptyList()
+        )
+
+    val vaultNoteMetaMap: StateFlow<Map<String, NoteEntity>> = vaultItems
+        .map {
+            withContext(Dispatchers.IO) {
+                LocalDeviceStorageManager.loadAllVaultNoteMetadata(getApplication())
+            }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyMap()
         )
 
     val archivedNotes: StateFlow<List<NoteEntity>> = repository.archivedNotes
@@ -363,7 +381,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                                     val materialized = LocalDeviceStorageManager.restoreVaultRawFileFromBase64WriteOnce(
                                         context = getApplication(),
                                         item = payload.item,
-                                        base64Data = payload.rawFileBase64
+                                        base64Data = payload.rawFileBase64,
+                                        noteMetaJson = payload.noteMetaJson
                                     )
                                     vaultDao.insertImmutableItem(materialized)
                                 }
@@ -446,7 +465,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                 val materialized = LocalDeviceStorageManager.restoreVaultRawFileFromBase64WriteOnce(
                     context = app,
                     item = payload.item,
-                    base64Data = payload.rawFileBase64
+                    base64Data = payload.rawFileBase64,
+                    noteMetaJson = payload.noteMetaJson
                 )
                 vaultDao.insertImmutableItem(materialized)
             }
@@ -860,6 +880,11 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
 
     fun toggleViewMode() {
         setViewMode(viewMode.value.next())
+    }
+
+    fun setVaultViewMode(mode: NotesViewMode) {
+        vaultViewMode.value = mode
+        prefs.edit().putString("vault_view_mode", mode.id).apply()
     }
 
     fun setSearch(query: String) {
@@ -1827,6 +1852,127 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                 showSnackbar(
                     if (isArabic.value) "تعذر الحذف: ${e.localizedMessage}"
                     else "Unable to delete: ${e.localizedMessage}"
+                )
+            }
+        }
+    }
+
+    fun moveNoteToVault(note: NoteEntity) {
+        viewModelScope.launch {
+            try {
+                val app = getApplication<Application>()
+                val hasAudio = note.audioDurationSec > 0 || note.audioFilePath.isNotBlank()
+                val isNonEmpty = note.title.isNotEmpty() ||
+                    NotePagesCodec.hasAnyContent(note.content, note.pagesJson) ||
+                    ChecklistItem.jsonToList(note.checklistJson).any { it.text.isNotEmpty() } ||
+                    hasAudio
+                if (!isNonEmpty) {
+                    showSnackbar(
+                        translateText(
+                            appLanguage.value,
+                            ar = "الملاحظة فارغة ولا تحتوي على محتوى للنقل",
+                            fr = "La note est vide",
+                            en = "Note is empty",
+                            tzm = "Tira d tilemt"
+                        )
+                    )
+                    return@launch
+                }
+
+                val savedVaultItem = withContext(Dispatchers.IO) {
+                    LocalDeviceStorageManager.saveNoteAsVaultItem(app, note)
+                }
+                vaultDao.insertImmutableItem(savedVaultItem)
+
+                val uid = currentUser.value?.uid
+                if (uid != null && AudioCloudPolicy.canStoreVaultItemInCloud(savedVaultItem)) {
+                    launch(Dispatchers.IO) {
+                        FirebaseSyncRepository.upsertVaultItemIfAbsent(app, uid, savedVaultItem)
+                    }
+                }
+
+                // Remove original note from active/archived/trashed notes so it's cleanly moved
+                if (note.id != 0L) {
+                    repository.deleteNote(note)
+                }
+                if (note.syncId.isNotBlank()) {
+                    syncNoteDeleteIfSignedIn(note.syncId)
+                }
+                val activeEditor = editingNote.value
+                if (activeEditor != null && ((note.id != 0L && activeEditor.id == note.id) || (note.syncId.isNotBlank() && activeEditor.syncId == note.syncId))) {
+                    closeEditor()
+                }
+
+                // Clean up original audio file inside audioDir after Vault copy succeeded
+                if (note.audioFilePath.isNotBlank() && !note.audioFilePath.startsWith("content://")) {
+                    withContext(Dispatchers.IO) {
+                        val oldAudio = java.io.File(note.audioFilePath)
+                        val audioDir = AudioStorageManager.audioDir(app)
+                        if (oldAudio.exists() && oldAudio.parentFile?.absolutePath == audioDir.absolutePath) {
+                            oldAudio.delete()
+                        }
+                    }
+                }
+
+                showSnackbar(
+                    translateText(
+                        appLanguage.value,
+                        ar = if (hasAudio) "تم نقل التسجيل الصوتي إلى الـ Vault 🔒" else "تم نقل المسودة إلى الـ Vault 🔒",
+                        fr = if (hasAudio) "Enregistrement déplacé vers le Vault 🔒" else "Note déplacée vers le Vault 🔒",
+                        en = if (hasAudio) "Recording moved to Vault 🔒" else "Note moved to Vault 🔒",
+                        tzm = if (hasAudio) "Asekles yemmutti ɣer Vault 🔒" else "Tira temmutti ɣer Vault 🔒"
+                    )
+                )
+            } catch (e: Exception) {
+                showSnackbar(
+                    if (isArabic.value) "تعذر النقل إلى الـ Vault: ${e.localizedMessage}"
+                    else "Unable to move to Vault: ${e.localizedMessage}"
+                )
+            }
+        }
+    }
+
+    fun moveVaultItemToNotes(item: VaultItemEntity) {
+        viewModelScope.launch {
+            try {
+                val app = getApplication<Application>()
+                val restoredNote = withContext(Dispatchers.IO) {
+                    val minOrder = repository.getMinSortOrder() - 1000L
+                    LocalDeviceStorageManager.buildNoteFromVaultItem(
+                        context = app,
+                        item = item,
+                        isArabic = isArabic.value,
+                        targetSortOrder = minOrder
+                    )
+                }
+                val insertedId = repository.insertOrUpdate(restoredNote)
+                val savedNote = if (insertedId > 0L) restoredNote.copy(id = insertedId) else restoredNote
+                syncNoteUpsertIfSignedIn(savedNote)
+
+                markVaultIdDeleted(item.id)
+                vaultDao.deleteVaultItemById(item.id)
+                LocalDeviceStorageManager.deleteVaultItemFromDisk(app, item)
+                currentUser.value?.uid?.let { uid ->
+                    launch(Dispatchers.IO) {
+                        FirebaseSyncRepository.deleteVaultItem(app, uid, item.id)
+                    }
+                }
+
+                val isAudio = AudioCloudPolicy.isAudioFile(item.mimeType, item.fileName) ||
+                    savedNote.audioDurationSec > 0 || savedNote.audioFilePath.isNotBlank()
+                showSnackbar(
+                    translateText(
+                        appLanguage.value,
+                        ar = if (isAudio) "تم نقل التسجيل الصوتي إلى التسجيلات ✨" else "تم نقل المسودة إلى الواجهة الرئيسية ✨",
+                        fr = if (isAudio) "Enregistrement restauré depuis le Vault ✨" else "Note déplacée hors du Vault ✨",
+                        en = if (isAudio) "Recording moved to Audio & Notes ✨" else "Note moved out of Vault ✨",
+                        tzm = if (isAudio) "Asekles yuɣal-d seg Vault ✨" else "Tira tuɣal-d seg Vault ✨"
+                    )
+                )
+            } catch (e: Exception) {
+                showSnackbar(
+                    if (isArabic.value) "تعذر النقل من الـ Vault: ${e.localizedMessage}"
+                    else "Unable to move from Vault: ${e.localizedMessage}"
                 )
             }
         }

@@ -6,7 +6,10 @@ import android.os.Build
 import android.provider.OpenableColumns
 import android.util.Base64
 import com.example.BuildConfig
+import com.example.data.model.ChecklistItem
+import com.example.data.model.GlassTint
 import com.example.data.model.NoteEntity
+import com.example.data.model.NotePagesCodec
 import com.example.data.model.VaultItemEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -60,6 +63,7 @@ object LocalDeviceStorageManager {
     private const val SETTINGS_DIR = "settings"
     private const val VAULT_ITEMS_DIR = "vault/items"
     private const val VAULT_RAW_DIR = "vault/raw"
+    private const val VAULT_NOTE_META_DIR = "vault/note_meta"
     private const val BACKUPS_DIR = "backups"
 
     private const val NOTES_SNAPSHOT_FILE = "notes_literal_snapshot.json"
@@ -244,6 +248,359 @@ object LocalDeviceStorageManager {
         writeOnceUtf8(metaFile, vaultItemToJson(item, includeRawFile = false).toString(2))
     }
 
+    fun persistVaultNoteMetaJson(context: Context, vaultId: String, noteJson: String?) {
+        if (noteJson.isNullOrBlank()) return
+        runCatching {
+            val file = File(subDir(context, VAULT_NOTE_META_DIR), "$vaultId.json")
+            writeOnceUtf8(file, noteJson)
+        }
+    }
+
+    fun loadVaultNoteMetaJson(context: Context, vaultId: String): String? {
+        return runCatching {
+            val file = File(subDir(context, VAULT_NOTE_META_DIR), "$vaultId.json")
+            if (file.exists()) file.readText(Charsets.UTF_8) else null
+        }.getOrNull()
+    }
+
+    fun loadVaultNoteMetadata(context: Context, vaultId: String): NoteEntity? {
+        val raw = loadVaultNoteMetaJson(context, vaultId) ?: return null
+        return runCatching { jsonToNote(JSONObject(raw)) }.getOrNull()
+    }
+
+    fun loadAllVaultNoteMetadata(context: Context): Map<String, NoteEntity> {
+        return runCatching {
+            val dir = subDir(context, VAULT_NOTE_META_DIR)
+            dir.listFiles { f -> f.isFile && f.name.endsWith(".json") }
+                ?.mapNotNull { file ->
+                    val id = file.name.removeSuffix(".json")
+                    runCatching { id to jsonToNote(JSONObject(file.readText(Charsets.UTF_8))) }.getOrNull()
+                }
+                ?.toMap()
+                ?: emptyMap()
+        }.getOrDefault(emptyMap())
+    }
+
+    private fun buildReadableVaultLiteral(note: NoteEntity): String {
+        val pages = NotePagesCodec.decodePages(note.content, note.pagesJson)
+        val checklist = ChecklistItem.jsonToList(note.checklistJson)
+        if (pages.size <= 1 && checklist.isEmpty()) {
+            return note.content
+        }
+        val sb = StringBuilder()
+        val nonEmptyPages = if (pages.size <= 1) {
+            listOf(note.content)
+        } else {
+            pages.filterIndexed { index, text -> index == 0 || text.isNotEmpty() }
+        }
+        val body = nonEmptyPages.joinToString("\n\n").trimEnd()
+        if (body.isNotEmpty()) {
+            sb.append(body)
+        }
+        if (checklist.isNotEmpty()) {
+            if (sb.isNotEmpty()) sb.append("\n\n")
+            checklist.forEachIndexed { idx, item ->
+                if (idx > 0) sb.append('\n')
+                sb.append(if (item.isDone) "[✓] " else "[ ] ")
+                sb.append(item.text)
+            }
+        }
+        return sb.toString()
+    }
+
+    private fun guessAudioMimeType(fileName: String): String {
+        val ext = fileName.substringAfterLast('.', "").lowercase()
+        return when (ext) {
+            "wav" -> "audio/wav"
+            "m4a" -> "audio/mp4"
+            "mp3" -> "audio/mpeg"
+            "ogg", "opus" -> "audio/ogg"
+            "aac" -> "audio/aac"
+            "flac" -> "audio/flac"
+            "3gp" -> "audio/3gpp"
+            "amr" -> "audio/amr"
+            "weba" -> "audio/webm"
+            else -> "audio/wav"
+        }
+    }
+
+    suspend fun saveNoteAsVaultItem(
+        context: Context,
+        note: NoteEntity
+    ): VaultItemEntity = withContext(Dispatchers.IO) {
+        val id = UUID.randomUUID().toString()
+        val now = System.currentTimeMillis()
+        val literalText = buildReadableVaultLiteral(note)
+        val resolver = context.applicationContext.contentResolver
+
+        val hasAudio = note.audioFilePath.isNotBlank() || note.audioDurationSec > 0
+        var resolvedFileName = ""
+        var resolvedMimeType = "text/plain; charset=utf-8"
+        var resolvedLocalPath = ""
+        var resolvedByteSize: Long
+        var resolvedSha256 = ""
+
+        if (hasAudio && note.audioFilePath.isNotBlank()) {
+            val sourcePath = note.audioFilePath
+            if (sourcePath.startsWith("content://")) {
+                val uri = Uri.parse(sourcePath)
+                val origName = queryDisplayName(context, uri)
+                    ?: (note.title.ifBlank { "voice_$now" }.replace(Regex("""[^\w.\-() ]"""), "_") + ".m4a")
+                val safeName = origName.replace(Regex("""[^\w.\-() ]"""), "_")
+                val queriedSize = AudioStorageManager.getFileByteSize(context, sourcePath)
+                val canCopyLocally = queriedSize in 1L..(150L * 1024L * 1024L)
+                if (canCopyLocally) {
+                    val destFile = File(subDir(context, VAULT_RAW_DIR), "${id}_$safeName")
+                    val digest = MessageDigest.getInstance("SHA-256")
+                    var total = 0L
+                    val copied = runCatching {
+                        val tmpFile = File(destFile.parentFile, "${destFile.name}.part")
+                        resolver.openInputStream(uri)?.use { input ->
+                            FileOutputStream(tmpFile).use { output ->
+                                val buffer = ByteArray(64 * 1024)
+                                var read: Int
+                                while (input.read(buffer).also { read = it } != -1) {
+                                    output.write(buffer, 0, read)
+                                    digest.update(buffer, 0, read)
+                                    total += read
+                                }
+                                output.flush()
+                            }
+                        } ?: error("Cannot open audio URI")
+                        if (!tmpFile.renameTo(destFile)) {
+                            tmpFile.copyTo(destFile, overwrite = true)
+                            tmpFile.delete()
+                        }
+                        true
+                    }.getOrDefault(false)
+
+                    if (copied && destFile.exists()) {
+                        resolvedFileName = origName
+                        resolvedMimeType = resolver.getType(uri) ?: guessAudioMimeType(origName)
+                        resolvedLocalPath = destFile.absolutePath
+                        resolvedByteSize = maxOf(total, destFile.length())
+                        resolvedSha256 = digest.digest().joinToString("") { "%02x".format(it) }
+                    } else {
+                        resolvedFileName = origName
+                        resolvedMimeType = resolver.getType(uri) ?: guessAudioMimeType(origName)
+                        resolvedLocalPath = sourcePath
+                        resolvedByteSize = AudioCloudPolicy.effectiveAudioByteSize(note.audioByteSize, sourcePath)
+                        resolvedSha256 = ""
+                    }
+                } else {
+                    resolvedFileName = origName
+                    resolvedMimeType = resolver.getType(uri) ?: guessAudioMimeType(origName)
+                    resolvedLocalPath = sourcePath
+                    resolvedByteSize = AudioCloudPolicy.effectiveAudioByteSize(note.audioByteSize, sourcePath)
+                    resolvedSha256 = ""
+                }
+            } else {
+                val srcFile = File(sourcePath)
+                val origName = srcFile.name.ifBlank { "voice_$now.wav" }
+                val safeName = origName.replace(Regex("""[^\w.\-() ]"""), "_")
+                resolvedFileName = origName
+                resolvedMimeType = guessAudioMimeType(origName)
+                if (srcFile.exists()) {
+                    val destFile = File(subDir(context, VAULT_RAW_DIR), "${id}_$safeName")
+                    val digest = MessageDigest.getInstance("SHA-256")
+                    var total = 0L
+                    val tmpFile = File(destFile.parentFile, "${destFile.name}.part")
+                    FileInputStream(srcFile).use { input ->
+                        FileOutputStream(tmpFile).use { output ->
+                            val buffer = ByteArray(64 * 1024)
+                            var read: Int
+                            while (input.read(buffer).also { read = it } != -1) {
+                                output.write(buffer, 0, read)
+                                digest.update(buffer, 0, read)
+                                total += read
+                            }
+                            output.flush()
+                            try {
+                                output.fd.sync()
+                            } catch (_: Exception) {
+                            }
+                        }
+                    }
+                    if (!tmpFile.renameTo(destFile)) {
+                        tmpFile.copyTo(destFile, overwrite = true)
+                        tmpFile.delete()
+                    }
+                    resolvedLocalPath = destFile.absolutePath
+                    resolvedByteSize = maxOf(total, destFile.length())
+                    resolvedSha256 = digest.digest().joinToString("") { "%02x".format(it) }
+                } else {
+                    resolvedLocalPath = sourcePath
+                    resolvedByteSize = AudioCloudPolicy.effectiveAudioByteSize(note.audioByteSize, sourcePath)
+                    resolvedSha256 = ""
+                }
+            }
+        } else {
+            val rawBytes = literalText.toByteArray(Charsets.UTF_8)
+            resolvedSha256 = computeSha256(rawBytes)
+            val rawFile = File(subDir(context, VAULT_RAW_DIR), "${id}_literal.txt")
+            if (!rawFile.exists()) {
+                FileOutputStream(rawFile).use { out ->
+                    out.write(rawBytes)
+                    out.flush()
+                    try {
+                        out.fd.sync()
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+            resolvedLocalPath = rawFile.absolutePath
+            resolvedByteSize = rawBytes.size.toLong()
+        }
+
+        val resolvedDuration = if (hasAudio && note.audioDurationSec <= 0 && resolvedLocalPath.isNotBlank()) {
+            AudioStorageManager.computeDurationSec(context, resolvedLocalPath)
+        } else {
+            note.audioDurationSec
+        }
+
+        val normalizedNote = note.copy(
+            audioDurationSec = resolvedDuration,
+            audioByteSize = if (hasAudio) resolvedByteSize else note.audioByteSize
+        )
+        persistVaultNoteMetaJson(context, id, noteToJson(normalizedNote).toString(2))
+
+        val entity = VaultItemEntity(
+            id = id,
+            title = note.title.ifEmpty {
+                if (hasAudio) "Voice Recording" else ""
+            },
+            literalContent = literalText,
+            fileName = resolvedFileName,
+            mimeType = resolvedMimeType,
+            localFilePath = resolvedLocalPath,
+            byteSize = resolvedByteSize,
+            sha256 = resolvedSha256,
+            createdAt = now,
+            isImmutable = true
+        )
+
+        persistVaultEntityWriteOnce(context, entity)
+        entity
+    }
+
+    suspend fun buildNoteFromVaultItem(
+        context: Context,
+        item: VaultItemEntity,
+        isArabic: Boolean,
+        targetSortOrder: Long
+    ): NoteEntity = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        val meta = loadVaultNoteMetadata(context, item.id)
+        val isAudioItem = AudioCloudPolicy.isAudioFile(item.mimeType, item.fileName) ||
+            (meta != null && (meta.audioFilePath.isNotBlank() || meta.audioDurationSec > 0))
+
+        var restoredAudioPath = ""
+        var restoredAudioBytes = 0L
+        var restoredAudioDuration = meta?.audioDurationSec ?: 0
+
+        if (isAudioItem) {
+            val sourcePath = item.localFilePath.ifBlank { meta?.audioFilePath.orEmpty() }
+            if (sourcePath.isNotBlank() && !sourcePath.startsWith("content://")) {
+                val srcFile = File(sourcePath)
+                if (srcFile.exists()) {
+                    val extName = item.fileName.ifBlank { srcFile.name }.replace(Regex("""[^\w.\-() ]"""), "_")
+                    val destFile = File(AudioStorageManager.audioDir(context), "voice_${now}_$extName")
+                    val tmpFile = File(destFile.parentFile, "${destFile.name}.part")
+                    FileInputStream(srcFile).use { input ->
+                        FileOutputStream(tmpFile).use { output ->
+                            input.copyTo(output, bufferSize = 64 * 1024)
+                            output.flush()
+                        }
+                    }
+                    if (!tmpFile.renameTo(destFile)) {
+                        tmpFile.copyTo(destFile, overwrite = true)
+                        tmpFile.delete()
+                    }
+                    restoredAudioPath = destFile.absolutePath
+                    restoredAudioBytes = destFile.length()
+                    if (restoredAudioDuration <= 0) {
+                        restoredAudioDuration = AudioStorageManager.computeDurationSec(context, restoredAudioPath).coerceAtLeast(1)
+                    }
+                } else {
+                    restoredAudioPath = sourcePath
+                    restoredAudioBytes = AudioCloudPolicy.effectiveAudioByteSize(item.byteSize, sourcePath)
+                }
+            } else if (sourcePath.isNotBlank()) {
+                restoredAudioPath = sourcePath
+                restoredAudioBytes = AudioCloudPolicy.effectiveAudioByteSize(item.byteSize, sourcePath)
+                if (restoredAudioDuration <= 0) {
+                    restoredAudioDuration = AudioStorageManager.computeDurationSec(context, sourcePath).coerceAtLeast(1)
+                }
+            }
+        }
+
+        if (meta != null) {
+            return@withContext meta.copy(
+                id = 0L,
+                isArchived = false,
+                isDeleted = false,
+                deletedAt = 0L,
+                audioFilePath = if (isAudioItem) restoredAudioPath else meta.audioFilePath,
+                audioByteSize = if (isAudioItem) restoredAudioBytes else meta.audioByteSize,
+                audioDurationSec = if (isAudioItem) restoredAudioDuration else meta.audioDurationSec,
+                sortOrder = targetSortOrder,
+                updatedAt = now,
+                syncId = UUID.randomUUID().toString()
+            )
+        }
+
+        if (isAudioItem) {
+            val resolvedTitle = item.title.ifBlank {
+                item.fileName.substringBeforeLast('.').ifBlank {
+                    if (isArabic) "تسجيل صوتي" else "Voice Recording"
+                }
+            }
+            return@withContext NoteEntity(
+                title = resolvedTitle,
+                content = "",
+                category = if (isArabic) "صوتي" else "Audio",
+                colorPreset = GlassTint.ROSE.id,
+                audioDurationSec = restoredAudioDuration.coerceAtLeast(1),
+                audioFilePath = restoredAudioPath,
+                audioByteSize = restoredAudioBytes,
+                createdAt = item.createdAt,
+                updatedAt = now,
+                syncId = UUID.randomUUID().toString(),
+                sortOrder = targetSortOrder
+            )
+        }
+
+        // Fallback for standalone Vault text or Vault file item created inside Vault
+        val fallbackBody = when {
+            item.literalContent.isNotEmpty() -> item.literalContent
+            item.mimeType.startsWith("text/", ignoreCase = true) && item.localFilePath.isNotBlank() -> {
+                val f = File(item.localFilePath)
+                if (f.exists() && f.length() <= NotePagesCodec.MAX_NOTE_BYTES) {
+                    runCatching { f.readText(Charsets.UTF_8) }.getOrDefault("")
+                } else ""
+            }
+            item.fileName.isNotEmpty() -> {
+                val sizeLabel = AudioCloudPolicy.formatByteSize(item.byteSize, isArabic)
+                if (isArabic) "ملف مستورد من الـ Vault: ${item.fileName} ($sizeLabel)"
+                else "Imported from Vault: ${item.fileName} ($sizeLabel)"
+            }
+            else -> ""
+        }
+
+        val (fittedBody, _) = NotePagesCodec.fitWithinByteBudget(fallbackBody, NotePagesCodec.MAX_NOTE_BYTES)
+
+        return@withContext NoteEntity(
+            title = item.title.ifBlank { item.fileName.ifBlank { if (isArabic) "ملاحظة من الـ Vault" else "Vault Note" } },
+            content = fittedBody,
+            category = if (isArabic) "أفكار" else "Ideas",
+            colorPreset = GlassTint.AMETHYST.id,
+            createdAt = item.createdAt,
+            updatedAt = now,
+            syncId = UUID.randomUUID().toString(),
+            sortOrder = targetSortOrder
+        )
+    }
+
     fun loadAllLiteralVaultItemsFromDisk(context: Context): List<VaultItemEntity> {
         return runCatching {
             val dir = subDir(context, VAULT_ITEMS_DIR)
@@ -261,8 +618,10 @@ object LocalDeviceStorageManager {
     fun restoreVaultRawFileFromBase64WriteOnce(
         context: Context,
         item: VaultItemEntity,
-        base64Data: String?
+        base64Data: String?,
+        noteMetaJson: String? = null
     ): VaultItemEntity {
+        persistVaultNoteMetaJson(context, item.id, noteMetaJson)
         val rawDir = subDir(context, VAULT_RAW_DIR)
         if (!base64Data.isNullOrEmpty() && item.fileName.isNotEmpty()) {
             val safeName = item.fileName.replace(Regex("""[^\w.\-() ]"""), "_")
@@ -333,6 +692,10 @@ object LocalDeviceStorageManager {
         runCatching {
             val metaFile = File(subDir(context, VAULT_ITEMS_DIR), "${item.id}.json")
             if (metaFile.exists()) metaFile.delete()
+        }
+        runCatching {
+            val noteMetaFile = File(subDir(context, VAULT_NOTE_META_DIR), "${item.id}.json")
+            if (noteMetaFile.exists()) noteMetaFile.delete()
         }
     }
 

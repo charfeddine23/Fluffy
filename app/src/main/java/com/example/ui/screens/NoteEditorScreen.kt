@@ -75,6 +75,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -169,6 +170,7 @@ fun NoteEditorScreen(
     ) -> Unit,
     onDelete: () -> Unit,
     onToggleArchive: () -> Unit = {},
+    onMoveToVault: (NoteEntity) -> Unit = {},
     onAutoSave: ((
         title: String,
         content: String,
@@ -215,6 +217,7 @@ fun NoteEditorScreen(
     var showStyleSheet by remember { mutableStateOf(false) }
     var styleSheetInitialTab by remember { mutableIntStateOf(0) }
     var showMoreMenu by remember { mutableStateOf(false) }
+    var showViewMoreMenu by remember { mutableStateOf(false) }
     var showPagePickerDialog by remember { mutableStateOf(false) }
     var limitWarningMessage by remember { mutableStateOf<String?>(null) }
     var copyFeedbackMessage by remember { mutableStateOf<String?>(null) }
@@ -362,6 +365,24 @@ fun NoteEditorScreen(
                 audioDurationSec, audioFilePath, audioByteSize
             )
         }
+    }
+
+    fun buildCurrentEditorNote(): NoteEntity {
+        return note.copy(
+            title = title,
+            content = page1Content,
+            pagesJson = encodedExtraPages,
+            category = category,
+            colorPreset = selectedTint.id,
+            backgroundId = backgroundId,
+            customColorArgb = customColorArgb,
+            isPinned = isPinned,
+            isFavorite = isFavorite,
+            checklistJson = ChecklistItem.listToJson(checklistItems.filter { it.text.isNotBlank() }),
+            audioDurationSec = audioDurationSec,
+            audioFilePath = audioFilePath,
+            audioByteSize = AudioCloudPolicy.effectiveAudioByteSize(audioByteSize, audioFilePath)
+        )
     }
 
     // Real-time automatic background save with 500ms debounce (active only in Writing/Edit mode)
@@ -703,6 +724,130 @@ fun NoteEditorScreen(
                                 tint = textColor,
                                 modifier = Modifier.size(20.dp)
                             )
+                        }
+
+                        // View-Only More Menu (Move to Vault, Share, Archive, Delete)
+                        Box {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .testTag("editor_view_more_button")
+                                    .liquidGlass(
+                                        isDark = effectiveDark,
+                                        tint = GlassTint.FROST,
+                                        shape = RoundedCornerShape(14.dp),
+                                        borderWidth = 1.dp,
+                                        customFill = pillFill
+                                    )
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = ripple(bounded = true)
+                                    ) { showViewMoreMenu = true },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.MoreVert,
+                                    contentDescription = if (isArabic) "خيارات الملاحظة" else "Note options",
+                                    tint = textColor,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
+                            DropdownMenu(
+                                expanded = showViewMoreMenu,
+                                onDismissRequest = { showViewMoreMenu = false },
+                                containerColor = if (effectiveDark) Color(0xFF1E293B) else Color.White
+                            ) {
+                                DropdownMenuItem(
+                                    modifier = Modifier.testTag("editor_move_to_vault_view_item"),
+                                    text = {
+                                        Text(
+                                            text = if (isArabic) "نقل إلى الـ Vault" else "Move to Vault",
+                                            color = textColor
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Default.Shield,
+                                            contentDescription = null,
+                                            tint = Color(0xFFC084FC)
+                                        )
+                                    },
+                                    onClick = {
+                                        showViewMoreMenu = false
+                                        playbackController.stop()
+                                        onMoveToVault(buildCurrentEditorNote())
+                                    }
+                                )
+
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = if (isArabic) "مشاركة الملاحظة" else "Share Note",
+                                            color = textColor
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Default.Share,
+                                            contentDescription = null,
+                                            tint = Color(0xFF38BDF8)
+                                        )
+                                    },
+                                    onClick = {
+                                        showViewMoreMenu = false
+                                        shareNoteText(context, title, pages.toList(), checklistItems, isArabic)
+                                    }
+                                )
+
+                                if (note.id != 0L) {
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = if (note.isArchived) {
+                                                    if (isArabic) "إلغاء الأرشفة" else "Unarchive Note"
+                                                } else {
+                                                    if (isArabic) "أرشفة الملاحظة" else "Archive Note"
+                                                },
+                                                color = textColor
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = if (note.isArchived) Icons.Default.Unarchive else Icons.Default.Archive,
+                                                contentDescription = null,
+                                                tint = Color(0xFF38BDF8)
+                                            )
+                                        },
+                                        onClick = {
+                                            showViewMoreMenu = false
+                                            playbackController.stop()
+                                            onToggleArchive()
+                                        }
+                                    )
+
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = if (isArabic) "نقل إلى سلة المهملات" else "Move to Trash",
+                                                color = Color(0xFFEF4444)
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Default.Delete,
+                                                contentDescription = null,
+                                                tint = Color(0xFFEF4444)
+                                            )
+                                        },
+                                        onClick = {
+                                            showViewMoreMenu = false
+                                            playbackController.stop()
+                                            onDelete()
+                                        }
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -1601,6 +1746,28 @@ fun NoteEditorScreen(
                                     onClick = {
                                         isFavorite = !isFavorite
                                         showMoreMenu = false
+                                    }
+                                )
+
+                                DropdownMenuItem(
+                                    modifier = Modifier.testTag("editor_move_to_vault_edit_item"),
+                                    text = {
+                                        Text(
+                                            text = if (isArabic) "نقل إلى الـ Vault" else "Move to Vault",
+                                            color = textColor
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Default.Shield,
+                                            contentDescription = null,
+                                            tint = Color(0xFFC084FC)
+                                        )
+                                    },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        playbackController.stop()
+                                        onMoveToVault(buildCurrentEditorNote())
                                     }
                                 )
 

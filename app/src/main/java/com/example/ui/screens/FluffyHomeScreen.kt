@@ -652,6 +652,7 @@ fun FluffyHomeScreen(
                                                 viewModel.toggleChecklistItem(note, idx)
                                             },
                                             onArchive = { viewModel.toggleArchive(note) },
+                                            onMoveToVault = { viewModel.moveNoteToVault(note) },
                                             onDelete = { viewModel.deleteNoteDirectly(note) },
                                             modifier = cardDragModifier
                                         )
@@ -742,6 +743,7 @@ fun FluffyHomeScreen(
                                                     viewModel.toggleChecklistItem(note, idx)
                                                 },
                                                 onArchive = { viewModel.toggleArchive(note) },
+                                                onMoveToVault = { viewModel.moveNoteToVault(note) },
                                                 onDelete = { viewModel.deleteNoteDirectly(note) },
                                                 modifier = cardDragModifier
                                             )
@@ -832,6 +834,7 @@ fun FluffyHomeScreen(
                                                 onTogglePin = { viewModel.togglePin(note) },
                                                 onToggleFavorite = { viewModel.toggleFavorite(note) },
                                                 onArchive = { viewModel.toggleArchive(note) },
+                                                onMoveToVault = { viewModel.moveNoteToVault(note) },
                                                 onDelete = { viewModel.deleteNoteDirectly(note) },
                                                 modifier = cardDragModifier
                                             )
@@ -922,6 +925,7 @@ fun FluffyHomeScreen(
                                                 onTogglePin = { viewModel.togglePin(note) },
                                                 onToggleFavorite = { viewModel.toggleFavorite(note) },
                                                 onArchive = { viewModel.toggleArchive(note) },
+                                                onMoveToVault = { viewModel.moveNoteToVault(note) },
                                                 onDelete = { viewModel.deleteNoteDirectly(note) },
                                                 modifier = cardDragModifier
                                             )

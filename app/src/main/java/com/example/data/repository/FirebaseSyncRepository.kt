@@ -11,6 +11,7 @@ import com.example.data.model.NoteEntity
 import com.example.data.model.VaultItemEntity
 import com.example.data.storage.AudioCloudPolicy
 import com.example.data.storage.FluffySettingsSnapshot
+import com.example.data.storage.LocalDeviceStorageManager
 import com.google.firebase.Firebase
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
@@ -57,7 +58,8 @@ data class RemoteNotesSnapshot(
 
 data class RemoteVaultItemPayload(
     val item: VaultItemEntity,
-    val rawFileBase64: String?
+    val rawFileBase64: String?,
+    val noteMetaJson: String? = null
 )
 
 data class RemoteSettingsPayload(
@@ -458,6 +460,9 @@ object FirebaseSyncRepository {
                 }
             }
 
+            val noteMetaJson = LocalDeviceStorageManager.loadVaultNoteMetaJson(context, item.id)
+                ?.takeIf { it.toByteArray(Charsets.UTF_8).size <= MAX_FIRESTORE_INLINE_BYTES }
+
             val data = hashMapOf(
                 "id" to item.id,
                 "userId" to userId,
@@ -470,6 +475,7 @@ object FirebaseSyncRepository {
                 "createdAt" to item.createdAt,
                 "isImmutable" to true,
                 "rawFileBase64" to (inlineFileB64 ?: ""),
+                "noteMetaJson" to (noteMetaJson ?: ""),
                 "serverCreatedAt" to FieldValue.serverTimestamp()
             )
             ref.set(data).await()
@@ -592,6 +598,7 @@ object FirebaseSyncRepository {
         if (!exists()) return null
         val itemId = getString("id")?.takeIf { it.isNotBlank() } ?: id
         val b64 = getString("rawFileBase64")?.takeIf { it.isNotBlank() }
+        val noteMeta = getString("noteMetaJson")?.takeIf { it.isNotBlank() }
         val item = VaultItemEntity(
             id = itemId,
             title = getString("title") ?: "",
@@ -604,7 +611,7 @@ object FirebaseSyncRepository {
             createdAt = getLong("createdAt") ?: System.currentTimeMillis(),
             isImmutable = getBoolean("isImmutable") ?: true
         )
-        return RemoteVaultItemPayload(item = item, rawFileBase64 = b64)
+        return RemoteVaultItemPayload(item = item, rawFileBase64 = b64, noteMetaJson = noteMeta)
     }
 
     private fun handleFirestoreError(

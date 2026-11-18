@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -61,6 +62,7 @@ fun ArchiveScreen(
     isArabic: Boolean,
     onOpenNote: (NoteEntity) -> Unit,
     onUnarchiveNote: (NoteEntity) -> Unit,
+    onMoveToVault: (NoteEntity) -> Unit = {},
     onMoveToTrash: (NoteEntity) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
@@ -272,6 +274,31 @@ fun ArchiveScreen(
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = activePreset.primary
+                                        )
+                                    }
+
+                                    Row(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(Color(0xFFC084FC).copy(alpha = 0.16f))
+                                            .clickable { onMoveToVault(note) }
+                                            .padding(vertical = 9.dp),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Shield,
+                                            contentDescription = null,
+                                            tint = Color(0xFFC084FC),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "Vault",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFFC084FC)
                                         )
                                     }
 
