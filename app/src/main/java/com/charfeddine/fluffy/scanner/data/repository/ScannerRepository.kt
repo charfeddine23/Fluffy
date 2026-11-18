@@ -9,6 +9,7 @@ import com.charfeddine.fluffy.scanner.data.model.ScannedDocumentEntity
 import com.charfeddine.fluffy.scanner.data.model.ScannedPageEntity
 import com.charfeddine.fluffy.scanner.data.model.ScannerFolderEntity
 import com.charfeddine.fluffy.scanner.utils.CryptoVaultHelper
+import com.charfeddine.fluffy.scanner.utils.OfflineOcrAndBarcodeEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -20,6 +21,10 @@ class ScannerRepository(
     private val context: Context,
     private val dao: ScannerDao
 ) {
+    init {
+        OfflineOcrAndBarcodeEngine.init(context)
+    }
+
     val folders: Flow<List<ScannerFolderEntity>> = dao.observeAllFolders()
     val activeDocuments: Flow<List<ScannedDocumentEntity>> = dao.observeActiveDocuments()
     val trashedDocuments: Flow<List<ScannedDocumentEntity>> = dao.observeTrashedDocuments()

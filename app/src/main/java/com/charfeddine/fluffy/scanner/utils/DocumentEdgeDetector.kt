@@ -420,7 +420,7 @@ object DocumentEdgeDetector {
      * High-accuracy multi-stage document boundary detection for Gallery photos and captured Bitmaps.
      * Should be invoked on `Dispatchers.Default`.
      */
-    fun detectFromBitmap(bitmap: Bitmap): DocumentQuad {
+    fun detectFromBitmap(bitmap: Bitmap, isIdCardHint: Boolean = false): DocumentQuad {
         val origW = bitmap.width
         val origH = bitmap.height
         if (origW < 32 || origH < 32) return DocumentQuad.SAFE_DEFAULT_MARGIN
@@ -454,8 +454,29 @@ object DocumentEdgeDetector {
             (Color.red(c) * 77 + Color.green(c) * 150 + Color.blue(c) * 29) shr 8
         }
 
-        // 2. Pass 1: Standard Contrast (Grayscale -> CLAHE -> 5x5 Gaussian -> Morphological Closing -> Canny)
         val closingRadius = if (max(workW, workH) >= 420) 3 else 1
+
+        // ID Card Mode: run solid-silhouette card isolation FIRST (resistant to couch/wood/fabric textures & dark portraits)
+        val cardPass = if (isIdCardHint) {
+            runIdCardIsolationPass(
+                pixels = pixels,
+                rawLuma = rawLuma,
+                w = workW,
+                h = workH,
+                origW = origW,
+                origH = origH,
+                scaleX = scaleX,
+                scaleY = scaleY,
+                isIdCardHint = true
+            )
+        } else {
+            null
+        }
+        if (cardPass != null && cardPass.isLocked && cardPass.confidence >= 0.62f && !isBorderHuggingQuad(cardPass.quad)) {
+            return cardPass.quad
+        }
+
+        // 2. Pass 1: Standard Contrast (Grayscale -> CLAHE -> 5x5 Gaussian -> Morphological Closing -> Canny)
         val pass1 = runStandardPass(
             rawLuma = rawLuma,
             w = workW,
@@ -464,7 +485,8 @@ object DocumentEdgeDetector {
             origW = origW,
             origH = origH,
             scaleX = scaleX,
-            scaleY = scaleY
+            scaleY = scaleY,
+            isIdCardHint = isIdCardHint
         )
 
         if (pass1.isLocked && pass1.confidence >= 0.78f && !isBorderHuggingQuad(pass1.quad)) {
@@ -482,16 +504,29 @@ object DocumentEdgeDetector {
             origW = origW,
             origH = origH,
             scaleX = scaleX,
-            scaleY = scaleY
+            scaleY = scaleY,
+            isIdCardHint = isIdCardHint
         )
 
-        val winner = when {
-            pass1.isLocked && pass2.isLocked ->
-                if (pass2.confidence >= pass1.confidence) pass2 else pass1
-            pass1.isLocked -> pass1
-            pass2.isLocked -> pass2
-            else -> null
+        val fallbackCardPass = cardPass ?: if (!pass1.isLocked || isBorderHuggingQuad(pass1.quad) || (!pass2.isLocked)) {
+            runIdCardIsolationPass(
+                pixels = pixels,
+                rawLuma = rawLuma,
+                w = workW,
+                h = workH,
+                origW = origW,
+                origH = origH,
+                scaleX = scaleX,
+                scaleY = scaleY,
+                isIdCardHint = false
+            )
+        } else {
+            null
         }
+
+        val candidates = listOfNotNull(pass1, pass2, fallbackCardPass)
+            .filter { it.isLocked }
+        val winner = candidates.maxByOrNull { it.confidence }
 
         // 4. Graceful Safe Default Margin (8% inset rectangle; never 0,0 full frame)
         return winner?.quad ?: DocumentQuad.SAFE_DEFAULT_MARGIN
@@ -505,7 +540,8 @@ object DocumentEdgeDetector {
         origW: Int,
         origH: Int,
         scaleX: Float,
-        scaleY: Float
+        scaleY: Float,
+        isIdCardHint: Boolean = false
     ): EdgeDetectionFrameResult {
         val clahe = applyClahe(rawLuma, w, h)
         val blurred = applyGaussianBlur5x5(clahe, w, h)
@@ -525,7 +561,171 @@ object DocumentEdgeDetector {
             origW = origW,
             origH = origH,
             scaleX = scaleX,
-            scaleY = scaleY
+            scaleY = scaleY,
+            isIdCardHint = isIdCardHint
+        )
+    }
+
+    /**
+     * Dedicated ID Card & Small-Card Isolation Pass:
+     * Flattens textured surfaces (couches, wood, carpet, fabric) with Gaussian smoothing,
+     * isolates foreground cards from border background via Otsu separation on smoothed
+     * luminance + color distance, fills all enclosed interior holes (portraits/chips/text)
+     * with an outside-in flood fill, and fits sharp 4 corners from the solid perimeter.
+     */
+    private fun runIdCardIsolationPass(
+        pixels: IntArray,
+        rawLuma: IntArray,
+        w: Int,
+        h: Int,
+        origW: Int,
+        origH: Int,
+        scaleX: Float,
+        scaleY: Float,
+        isIdCardHint: Boolean
+    ): EdgeDetectionFrameResult {
+        val n = w * h
+        val borderBand = max(4, min(w, h) / 24)
+        val rHist = IntArray(256)
+        val gHist = IntArray(256)
+        val bHist = IntArray(256)
+        val lHist = IntArray(256)
+        var bgSamples = 0
+
+        for (y in 0 until h) {
+            val isEdgeY = y < borderBand || y >= h - borderBand
+            val row = y * w
+            for (x in 0 until w) {
+                if (isEdgeY || x < borderBand || x >= w - borderBand) {
+                    val idx = row + x
+                    val c = pixels[idx]
+                    rHist[Color.red(c)]++
+                    gHist[Color.green(c)]++
+                    bHist[Color.blue(c)]++
+                    lHist[rawLuma[idx].coerceIn(0, 255)]++
+                    bgSamples++
+                }
+            }
+        }
+        fun histMedian(hist: IntArray, total: Int): Int {
+            val half = total / 2
+            var acc = 0
+            for (i in 0 until 256) {
+                acc += hist[i]
+                if (acc >= half) return i
+            }
+            return 128
+        }
+        val bgR = histMedian(rHist, bgSamples)
+        val bgG = histMedian(gHist, bgSamples)
+        val bgB = histMedian(bHist, bgSamples)
+        val bgLum = histMedian(lHist, bgSamples)
+
+        val signal = IntArray(n)
+        for (i in 0 until n) {
+            val c = pixels[i]
+            val r = Color.red(c)
+            val g = Color.green(c)
+            val b = Color.blue(c)
+            val chromaDiff = (abs(r - bgR) + abs(g - bgG) + abs(b - bgB)) / 3f
+            val lumaDiff = abs(rawLuma[i] - bgLum).toFloat()
+            val maxC = max(r, max(g, b))
+            val minC = min(r, min(g, b))
+            val sat = if (maxC == 0) 0f else ((maxC - minC) * 255f) / maxC.toFloat()
+            // Bright / neutral-white or color-distinct card stands sharply apart from textured desks/couches
+            val s = chromaDiff * 1.15f + lumaDiff * 0.75f + (rawLuma[i] - bgLum) * 0.35f - sat * 0.12f
+            signal[i] = s.roundToInt().coerceIn(0, 255)
+        }
+
+        // Smooth out leather/fabric/wood texture speckles before thresholding
+        val smoothed1 = applyGaussianBlur5x5(signal, w, h)
+        val smoothed = applyGaussianBlur5x5(smoothed1, w, h)
+
+        // Otsu threshold on smoothed foreground signal
+        val hist = IntArray(256)
+        for (v in smoothed) hist[v.coerceIn(0, 255)]++
+        var sumAll = 0.0
+        for (t in 0 until 256) sumAll += t * hist[t]
+        var sumB = 0.0
+        var wB = 0
+        var maxVar = -1.0
+        var otsuThresh = 48
+        for (t in 0 until 256) {
+            wB += hist[t]
+            if (wB == 0) continue
+            val wF = n - wB
+            if (wF == 0) break
+            sumB += t * hist[t]
+            val mB = sumB / wB
+            val mF = (sumAll - sumB) / wF
+            val between = wB.toDouble() * wF.toDouble() * (mB - mF) * (mB - mF)
+            if (between > maxVar) {
+                maxVar = between
+                otsuThresh = t
+            }
+        }
+        val thresh = otsuThresh.coerceIn(28, 175)
+
+        val mask = BooleanArray(n) { smoothed[it] >= thresh }
+        // Clear outer 2px border so edge artifacts don't touch frame border
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                if (x < 2 || x >= w - 2 || y < 2 || y >= h - 2) {
+                    mask[y * w + x] = false
+                }
+            }
+        }
+
+        val closedMask = morphCloseBinary(mask, w, h, radius = 3)
+        // Outside-in flood fill on !closedMask -> everything NOT reachable from border is solid inside card
+        val isOutside = BooleanArray(n)
+        val q = IntArray(n)
+        var head = 0
+        var tail = 0
+        for (x in 0 until w) {
+            if (!closedMask[x]) { isOutside[x] = true; q[tail++] = x }
+            val bot = (h - 1) * w + x
+            if (!closedMask[bot] && !isOutside[bot]) { isOutside[bot] = true; q[tail++] = bot }
+        }
+        for (y in 1 until h - 1) {
+            val lIdx = y * w
+            if (!closedMask[lIdx] && !isOutside[lIdx]) { isOutside[lIdx] = true; q[tail++] = lIdx }
+            val rIdx = y * w + (w - 1)
+            if (!closedMask[rIdx] && !isOutside[rIdx]) { isOutside[rIdx] = true; q[tail++] = rIdx }
+        }
+        while (head < tail) {
+            val cur = q[head++]
+            val cy = cur / w
+            val cx = cur - cy * w
+            if (cx > 0) {
+                val idx = cur - 1
+                if (!isOutside[idx] && !closedMask[idx]) { isOutside[idx] = true; q[tail++] = idx }
+            }
+            if (cx < w - 1) {
+                val idx = cur + 1
+                if (!isOutside[idx] && !closedMask[idx]) { isOutside[idx] = true; q[tail++] = idx }
+            }
+            if (cy > 0) {
+                val idx = cur - w
+                if (!isOutside[idx] && !closedMask[idx]) { isOutside[idx] = true; q[tail++] = idx }
+            }
+            if (cy < h - 1) {
+                val idx = cur + w
+                if (!isOutside[idx] && !closedMask[idx]) { isOutside[idx] = true; q[tail++] = idx }
+            }
+        }
+        val solidMask = BooleanArray(n) { !isOutside[it] }
+        val perimeterEdges = extractMaskBoundaryEdges(solidMask, w, h)
+
+        return findBestDocumentQuad(
+            edges = perimeterEdges,
+            w = w,
+            h = h,
+            origW = origW,
+            origH = origH,
+            scaleX = scaleX,
+            scaleY = scaleY,
+            isIdCardHint = isIdCardHint
         )
     }
 
@@ -543,7 +743,8 @@ object DocumentEdgeDetector {
         origW: Int,
         origH: Int,
         scaleX: Float,
-        scaleY: Float
+        scaleY: Float,
+        isIdCardHint: Boolean = false
     ): EdgeDetectionFrameResult {
         val n = w * h
 
@@ -609,7 +810,8 @@ object DocumentEdgeDetector {
             origW = origW,
             origH = origH,
             scaleX = scaleX,
-            scaleY = scaleY
+            scaleY = scaleY,
+            isIdCardHint = isIdCardHint
         )
 
         // Sub-pipeline 2B: Integral-Image Adaptive Thresholding foreground silhouette -> perimeter
@@ -622,7 +824,8 @@ object DocumentEdgeDetector {
             origW = origW,
             origH = origH,
             scaleX = scaleX,
-            scaleY = scaleY
+            scaleY = scaleY,
+            isIdCardHint = isIdCardHint
         )
 
         return when {
@@ -1087,7 +1290,8 @@ object DocumentEdgeDetector {
         scaleX: Float,
         scaleY: Float,
         reusableVisited: BooleanArray? = null,
-        reusableStack: IntArray? = null
+        reusableStack: IntArray? = null,
+        isIdCardHint: Boolean = false
     ): EdgeDetectionFrameResult {
         val isHighResWork = max(w, h) >= 360
         val clusterEdges = if (isHighResWork) dilateBinary1Px(edges, w, h) else edges
@@ -1179,7 +1383,7 @@ object DocumentEdgeDetector {
             // Candidate A: Line-Intersection Quadrilateral Reconstruction (handles rounded / folded corners)
             val lineCorners = reconstructQuadByLineIntersections(hull, cloud, edges, w, h)
             if (lineCorners != null) {
-                val score = evaluateCandidateWorkQuad(lineCorners, edges, w, h) - mergePenalty
+                val score = evaluateCandidateWorkQuad(lineCorners, edges, w, h, isIdCardHint) - mergePenalty
                 if (score > bestScore) {
                     bestScore = score
                     bestWorkCorners = lineCorners
@@ -1190,7 +1394,7 @@ object DocumentEdgeDetector {
             val polyCorners = fitFourPointPolygonPx(hull)
             if (polyCorners != null) {
                 val floatPoly = polyCorners.map { FloatPt(it.x.toFloat(), it.y.toFloat()) }
-                val score = evaluateCandidateWorkQuad(floatPoly, edges, w, h) - mergePenalty
+                val score = evaluateCandidateWorkQuad(floatPoly, edges, w, h, isIdCardHint) - mergePenalty
                 if (score > bestScore) {
                     bestScore = score
                     bestWorkCorners = floatPoly
@@ -1504,16 +1708,23 @@ object DocumentEdgeDetector {
         return DocumentQuad(tl, tr, br, bl)
     }
 
-    private fun evaluateCandidateWorkQuad(corners: List<FloatPt>, edges: BooleanArray, w: Int, h: Int): Float {
+    private fun evaluateCandidateWorkQuad(
+        corners: List<FloatPt>,
+        edges: BooleanArray,
+        w: Int,
+        h: Int,
+        isIdCardHint: Boolean = false
+    ): Float {
         if (corners.size != 4) return -1f
         val wf = w.toFloat().coerceAtLeast(1f)
         val hf = h.toFloat().coerceAtLeast(1f)
         val norm = corners.map { FloatPt(it.x / wf, it.y / hf) }
 
         val areaFrac = polygonArea(norm)
-        if (areaFrac < 0.055f || areaFrac > 0.96f) return -1f
+        val minArea = if (isIdCardHint) 0.025f else 0.055f
+        if (areaFrac < minArea || areaFrac > 0.96f) return -1f
         if (!isConvexAndValidAnglesPx(norm)) return -1f
-        if (!hasValidAspectRatioPx(norm)) return -1f
+        if (!hasValidAspectRatioPx(norm, isIdCardHint)) return -1f
 
         val edgeSupport = measureEdgeSupportPx(edges, w, h, corners)
         if (edgeSupport < 0.28f) return -1f
@@ -1533,8 +1744,19 @@ object DocumentEdgeDetector {
         val ratioH = min(leftL, rightL) / max(leftL, rightL).coerceAtLeast(1e-4f)
         val rectScore = ((ratioW + ratioH) * 0.5f).coerceIn(0f, 1f)
 
+        val idAspectBonus = if (isIdCardHint) {
+            val pxAvgW = ((topL + botL) * 0.5f) * wf
+            val pxAvgH = ((leftL + rightL) * 0.5f) * hf
+            val pxAspect = max(pxAvgW, pxAvgH) / min(pxAvgW, pxAvgH).coerceAtLeast(1f)
+            // Standard ISO ID-1 card ratio is ~1.586
+            val distFromIso = abs(pxAspect - 1.586f)
+            (1f - (distFromIso / 0.65f)).coerceIn(0f, 1f) * 0.14f
+        } else {
+            0f
+        }
+
         val cappedAreaScore = (areaFrac / 0.65f).coerceIn(0f, 1f)
-        return (edgeSupport * 0.64f) + (rectScore * 0.22f) + (cappedAreaScore * 0.14f) - borderPenalty
+        return (edgeSupport * 0.62f) + (rectScore * 0.22f) + (cappedAreaScore * 0.12f) + idAspectBonus - borderPenalty
     }
 
     private fun isBorderHuggingQuad(quad: DocumentQuad): Boolean {
@@ -1697,14 +1919,15 @@ object DocumentEdgeDetector {
         return true
     }
 
-    private fun hasValidAspectRatioPx(pts: List<FloatPt>): Boolean {
+    private fun hasValidAspectRatioPx(pts: List<FloatPt>, isIdCardHint: Boolean = false): Boolean {
         val topW = hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y)
         val botW = hypot(pts[2].x - pts[3].x, pts[2].y - pts[3].y)
         val leftH = hypot(pts[3].x - pts[0].x, pts[3].y - pts[0].y)
         val rightH = hypot(pts[2].x - pts[1].x, pts[2].y - pts[1].y)
         val avgW = (topW + botW) * 0.5f
         val avgH = (leftH + rightH) * 0.5f
-        if (avgW < 0.12f || avgH < 0.12f) return false
+        val minDim = if (isIdCardHint) 0.08f else 0.12f
+        if (avgW < minDim || avgH < minDim) return false
         val ratio = avgW / avgH
         return ratio in 0.30f..3.30f
     }

@@ -11,6 +11,7 @@ import com.charfeddine.fluffy.scanner.data.local.ScannerDatabase
 import com.charfeddine.fluffy.scanner.data.model.BatchCapturedFrame
 import com.charfeddine.fluffy.scanner.data.model.CompressionQuality
 import com.charfeddine.fluffy.scanner.data.model.DocumentQuad
+import com.charfeddine.fluffy.scanner.data.model.IdCardSide
 import com.charfeddine.fluffy.scanner.data.model.PageAnnotations
 import com.charfeddine.fluffy.scanner.data.model.PdfPageSizePreset
 import com.charfeddine.fluffy.scanner.data.model.SavedSignatureEntity
@@ -75,6 +76,7 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
     val activeScanMode = MutableStateFlow(ScanMode.SINGLE)
     val batchFrames = MutableStateFlow<List<BatchCapturedFrame>>(emptyList())
     val idCardFrontRawPath = MutableStateFlow<String?>(null)
+    private var idCardFrontQuad: DocumentQuad? = null
     val activeCropIndex = MutableStateFlow(0)
 
     // Async Processing & Snackbar Feedback
@@ -134,6 +136,7 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
+        OfflineOcrAndBarcodeEngine.init(application)
         viewModelScope.launch {
             repository.purgeExpiredTrash()
         }
@@ -153,6 +156,7 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
         }
         batchFrames.value = emptyList()
         idCardFrontRawPath.value = null
+        idCardFrontQuad = null
         activeCropIndex.value = 0
         currentRoute.value = ScannerSubRoute.Camera(appendToDocId)
     }
@@ -164,6 +168,7 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
     fun navigateBackToHub() {
         batchFrames.value = emptyList()
         idCardFrontRawPath.value = null
+        idCardFrontQuad = null
         currentRoute.value = ScannerSubRoute.Hub
     }
 
@@ -219,6 +224,7 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
         isArabic: Boolean,
         capturedQuad: DocumentQuad? = null,
         capturedPreviewCorners: Array<PointF>? = null,
+        idGuidePreviewCorners: Array<PointF>? = null,
         previewWidth: Int = 0,
         previewHeight: Int = 0,
         analyzerWidth: Int = 0,
@@ -260,19 +266,48 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                         else -> null
                     }
 
+                    val mappedGuideQuad = if (idGuidePreviewCorners != null &&
+                        idGuidePreviewCorners.size == 4 &&
+                        previewWidth > 0 && previewHeight > 0
+                    ) {
+                        DocumentImageProcessor.mapPreviewCornersToBitmapQuad(
+                            previewCorners = idGuidePreviewCorners,
+                            previewWidth = previewWidth,
+                            previewHeight = previewHeight,
+                            bitmapWidth = rawBmp.width,
+                            bitmapHeight = rawBmp.height
+                        )
+                    } else {
+                        null
+                    }
+
                     when (mode) {
                         ScanMode.ID_CARD -> {
                             val firstPath = idCardFrontRawPath.value
                             if (firstPath == null) {
+                                val detectedFront = DocumentImageProcessor.detectQuadFromBitmap(
+                                    bitmap = rawBmp,
+                                    isIdCardHint = true
+                                )
+                                idCardFrontQuad = when {
+                                    detectedFront != DocumentQuad.SAFE_DEFAULT_MARGIN -> detectedFront
+                                    mappedLiveQuad != null -> mappedLiveQuad
+                                    mappedGuideQuad != null -> mappedGuideQuad
+                                    else -> DocumentQuad.SAFE_DEFAULT_MARGIN
+                                }
                                 idCardFrontRawPath.value = file.absolutePath
                                 rawBmp.recycle()
                                 return@withContext emptyList()
                             } else {
                                 val frontBmp = withContext(Dispatchers.IO) {
-                                    DocumentImageProcessor.decodeSampledBitmap(File(firstPath), 4096)
+                                    DocumentImageProcessor.decodeSampledBitmap(File(firstPath), 1200)
                                 } ?: rawBmp
-                                val frontQuad = DocumentImageProcessor.detectQuadFromBitmap(frontBmp)
-                                val frontWarped = DocumentImageProcessor.warpPerspective(frontBmp, frontQuad, 4096)
+                                val frontQuad = idCardFrontQuad
+                                    ?: DocumentImageProcessor.detectQuadFromBitmap(
+                                        bitmap = frontBmp,
+                                        isIdCardHint = true
+                                    )
+                                val frontWarped = DocumentImageProcessor.warpPerspective(frontBmp, frontQuad, 1200)
                                 val frontEnhanced = DocumentImageProcessor.autoEnhanceCapturedDocument(
                                     warped = frontWarped,
                                     isIdCardMode = true
@@ -280,13 +315,17 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                                 if (frontBmp !== rawBmp) frontBmp.recycle()
                                 if (frontWarped !== frontEnhanced) frontWarped.recycle()
 
-                                val detectedBack = DocumentImageProcessor.detectQuadFromBitmap(rawBmp)
-                                val backQuad = if (detectedBack != DocumentQuad.SAFE_DEFAULT_MARGIN) {
-                                    detectedBack
-                                } else {
-                                    mappedLiveQuad ?: DocumentQuad.SAFE_DEFAULT_MARGIN
+                                val detectedBack = DocumentImageProcessor.detectQuadFromBitmap(
+                                    bitmap = rawBmp,
+                                    isIdCardHint = true
+                                )
+                                val backQuad = when {
+                                    detectedBack != DocumentQuad.SAFE_DEFAULT_MARGIN -> detectedBack
+                                    mappedLiveQuad != null -> mappedLiveQuad
+                                    mappedGuideQuad != null -> mappedGuideQuad
+                                    else -> DocumentQuad.SAFE_DEFAULT_MARGIN
                                 }
-                                val backWarped = DocumentImageProcessor.warpPerspective(rawBmp, backQuad, 4096)
+                                val backWarped = DocumentImageProcessor.warpPerspective(rawBmp, backQuad, 1200)
                                 val backEnhanced = DocumentImageProcessor.autoEnhanceCapturedDocument(
                                     warped = backWarped,
                                     isIdCardMode = true
@@ -294,22 +333,36 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                                 rawBmp.recycle()
                                 if (backWarped !== backEnhanced) backWarped.recycle()
 
-                                val merged = DocumentImageProcessor.mergeIdCardFrontAndBack(frontEnhanced, backEnhanced)
+                                val frontThumbFile = File(repository.docsRootDir, "thumb_idf_${UUID.randomUUID()}.jpg")
+                                val mergedThumbFile = File(repository.docsRootDir, "thumb_idm_${UUID.randomUUID()}.jpg")
+                                val mergedPreview = DocumentImageProcessor.mergeIdCardFrontAndBack(frontEnhanced, backEnhanced)
+                                withContext(Dispatchers.IO) {
+                                    DocumentImageProcessor.saveBitmapAsJpeg(frontEnhanced, frontThumbFile, 90)
+                                    DocumentImageProcessor.saveBitmapAsJpeg(mergedPreview, mergedThumbFile, 90)
+                                }
                                 frontEnhanced.recycle()
                                 backEnhanced.recycle()
+                                mergedPreview.recycle()
 
-                                val mergedFile = File(repository.docsRootDir, "cap_id_${UUID.randomUUID()}.jpg")
-                                withContext(Dispatchers.IO) {
-                                    DocumentImageProcessor.saveBitmapAsJpeg(merged, mergedFile, 98)
-                                }
-                                merged.recycle()
+                                val pairGroupId = UUID.randomUUID().toString()
                                 idCardFrontRawPath.value = null
+                                idCardFrontQuad = null
                                 listOf(
                                     BatchCapturedFrame(
-                                        rawImagePath = mergedFile.absolutePath,
-                                        processedImagePath = mergedFile.absolutePath,
-                                        detectedQuad = DocumentQuad.FULL_FRAME,
-                                        filter = ScannerFilterType.ORIGINAL
+                                        rawImagePath = firstPath,
+                                        processedImagePath = frontThumbFile.absolutePath,
+                                        detectedQuad = frontQuad,
+                                        filter = ScannerFilterType.ORIGINAL,
+                                        idCardGroupId = pairGroupId,
+                                        idCardSide = IdCardSide.FRONT
+                                    ),
+                                    BatchCapturedFrame(
+                                        rawImagePath = file.absolutePath,
+                                        processedImagePath = mergedThumbFile.absolutePath,
+                                        detectedQuad = backQuad,
+                                        filter = ScannerFilterType.ORIGINAL,
+                                        idCardGroupId = pairGroupId,
+                                        idCardSide = IdCardSide.BACK
                                     )
                                 )
                             }
@@ -581,20 +634,46 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
     ) {
         val list = batchFrames.value.toMutableList()
         if (index !in list.indices) return
-        list[index] = list[index].copy(
+        val updated = list[index].copy(
             filter = filter,
             brightness = brightness,
             contrast = contrast,
             sharpness = sharpness,
             rotationDeg = rotationDeg
         )
+        list[index] = updated
+        val groupId = updated.idCardGroupId
+        if (groupId != null) {
+            for (i in list.indices) {
+                if (i != index && list[i].idCardGroupId == groupId) {
+                    list[i] = list[i].copy(
+                        filter = filter,
+                        brightness = brightness,
+                        contrast = contrast,
+                        sharpness = sharpness,
+                        rotationDeg = rotationDeg
+                    )
+                }
+            }
+        }
         batchFrames.value = list
     }
 
     fun removeBatchFrame(index: Int) {
         val list = batchFrames.value.toMutableList()
         if (index !in list.indices) return
-        list.removeAt(index)
+        val removed = list.removeAt(index)
+        val groupId = removed.idCardGroupId
+        if (groupId != null) {
+            for (i in list.indices) {
+                if (list[i].idCardGroupId == groupId) {
+                    list[i] = list[i].copy(
+                        idCardGroupId = null,
+                        idCardSide = IdCardSide.NONE
+                    )
+                }
+            }
+        }
         batchFrames.value = list
         if (list.isEmpty()) {
             currentRoute.value = ScannerSubRoute.Camera(null)
@@ -604,8 +683,8 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
-     * Finalizes all cropped + filtered frames, runs optional offline OCR, generates a Document
-     * & local multi-page PDF, and saves into Room.
+     * Finalizes all cropped + filtered frames, merges paired Front/Back ID cards onto a 300-DPI
+     * 2-in-1 A4 sheet, runs optional offline OCR, generates a Document & local PDF, and saves into Room.
      */
     fun commitBatchToDocument(
         docTitleInput: String,
@@ -627,45 +706,138 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
 
                     val createdPages = mutableListOf<ScannedPageEntity>()
                     val pdfInputs = mutableListOf<PdfRenderedPageInput>()
+                    val processedIndices = mutableSetOf<Int>()
 
-                    frames.forEach { frame ->
-                        val rawBmp = DocumentImageProcessor.decodeSampledBitmap(File(frame.rawImagePath), 4096)
-                            ?: return@forEach
-                        val warped = withContext(Dispatchers.Default) {
-                            DocumentImageProcessor.warpPerspective(rawBmp, frame.detectedQuad, 4096)
-                        }
-                        val enhanced = withContext(Dispatchers.Default) {
-                            DocumentImageProcessor.applyEnhancements(
-                                source = warped,
-                                filter = frame.filter,
-                                brightness = frame.brightness,
-                                contrast = frame.contrast,
-                                sharpness = frame.sharpness,
-                                rotationDeg = frame.rotationDeg
-                            )
-                        }
-                        val outFile = File(repository.docsRootDir, "page_${UUID.randomUUID()}.jpg")
-                        DocumentImageProcessor.saveBitmapAsJpeg(enhanced, outFile, 98)
-                        val ocrRes = OfflineOcrAndBarcodeEngine.extractTextOffline(enhanced)
+                    frames.forEachIndexed { idx, frame ->
+                        if (idx in processedIndices) return@forEachIndexed
 
-                        createdPages.add(
-                            ScannedPageEntity(
-                                documentId = docId,
-                                pageOrder = nextOrder++,
-                                originalImagePath = frame.rawImagePath,
-                                processedImagePath = outFile.absolutePath,
-                                cornersJson = frame.detectedQuad.toJson(),
-                                filterId = frame.filter.id,
-                                brightness = frame.brightness,
-                                contrast = frame.contrast,
-                                sharpness = frame.sharpness,
-                                rotationDeg = frame.rotationDeg,
-                                ocrText = ocrRes.fullText
+                        val partnerIdx = frame.idCardGroupId?.let { gid ->
+                            frames.indices.firstOrNull { i -> i != idx && frames[i].idCardGroupId == gid }
+                        }
+
+                        if (partnerIdx != null) {
+                            processedIndices.add(idx)
+                            processedIndices.add(partnerIdx)
+                            val partner = frames[partnerIdx]
+                            val frontFrame = if (frame.idCardSide == IdCardSide.FRONT || partner.idCardSide == IdCardSide.BACK) frame else partner
+                            val backFrame = if (frontFrame.id == frame.id) partner else frame
+
+                            val frontRaw = DocumentImageProcessor.decodeSampledBitmap(File(frontFrame.rawImagePath), 4096)
+                            val backRaw = DocumentImageProcessor.decodeSampledBitmap(File(backFrame.rawImagePath), 4096)
+                            if (frontRaw == null || backRaw == null) {
+                                frontRaw?.recycle()
+                                backRaw?.recycle()
+                                return@forEachIndexed
+                            }
+
+                            val finalMerged = withContext(Dispatchers.Default) {
+                                val frontWarped = DocumentImageProcessor.warpPerspective(frontRaw, frontFrame.detectedQuad, 4096)
+                                if (frontRaw !== frontWarped) frontRaw.recycle()
+                                val frontAuto = DocumentImageProcessor.autoEnhanceCapturedDocument(frontWarped, isIdCardMode = true)
+                                if (frontWarped !== frontAuto && !frontWarped.isRecycled) frontWarped.recycle()
+                                val frontFinal = DocumentImageProcessor.applyEnhancements(
+                                    source = frontAuto,
+                                    filter = frame.filter,
+                                    brightness = frame.brightness,
+                                    contrast = frame.contrast,
+                                    sharpness = frame.sharpness,
+                                    rotationDeg = 0
+                                )
+                                if (frontAuto !== frontFinal && !frontAuto.isRecycled) frontAuto.recycle()
+
+                                val backWarped = DocumentImageProcessor.warpPerspective(backRaw, backFrame.detectedQuad, 4096)
+                                if (backRaw !== backWarped) backRaw.recycle()
+                                val backAuto = DocumentImageProcessor.autoEnhanceCapturedDocument(backWarped, isIdCardMode = true)
+                                if (backWarped !== backAuto && !backWarped.isRecycled) backWarped.recycle()
+                                val backFinal = DocumentImageProcessor.applyEnhancements(
+                                    source = backAuto,
+                                    filter = frame.filter,
+                                    brightness = frame.brightness,
+                                    contrast = frame.contrast,
+                                    sharpness = frame.sharpness,
+                                    rotationDeg = 0
+                                )
+                                if (backAuto !== backFinal && !backAuto.isRecycled) backAuto.recycle()
+
+                                val merged = DocumentImageProcessor.mergeIdCardFrontAndBack(frontFinal, backFinal)
+                                if (!frontFinal.isRecycled) frontFinal.recycle()
+                                if (!backFinal.isRecycled) backFinal.recycle()
+                                if (frame.rotationDeg % 360 != 0) {
+                                    val rotated = DocumentImageProcessor.rotateBitmap(merged, frame.rotationDeg.toFloat())
+                                    if (rotated !== merged && !merged.isRecycled) merged.recycle()
+                                    rotated
+                                } else {
+                                    merged
+                                }
+                            }
+
+                            val outFile = File(repository.docsRootDir, "page_${UUID.randomUUID()}.jpg")
+                            DocumentImageProcessor.saveBitmapAsJpeg(finalMerged, outFile, 98)
+                            val ocrRes = OfflineOcrAndBarcodeEngine.extractTextOffline(finalMerged)
+
+                            createdPages.add(
+                                ScannedPageEntity(
+                                    documentId = docId,
+                                    pageOrder = nextOrder++,
+                                    originalImagePath = backFrame.rawImagePath,
+                                    processedImagePath = outFile.absolutePath,
+                                    cornersJson = backFrame.detectedQuad.toJson(),
+                                    filterId = frame.filter.id,
+                                    brightness = frame.brightness,
+                                    contrast = frame.contrast,
+                                    sharpness = frame.sharpness,
+                                    rotationDeg = frame.rotationDeg,
+                                    ocrText = ocrRes.fullText
+                                )
                             )
-                        )
-                        pdfInputs.add(PdfRenderedPageInput(enhanced, ocrRes.lines))
-                        if (rawBmp !== warped) rawBmp.recycle()
-                        warped.recycle()
+                            pdfInputs.add(PdfRenderedPageInput(finalMerged, ocrRes.lines))
+                        } else {
+                            processedIndices.add(idx)
+                            val rawBmp = DocumentImageProcessor.decodeSampledBitmap(File(frame.rawImagePath), 4096)
+                                ?: return@forEachIndexed
+                            val isIdCard = frame.idCardSide != IdCardSide.NONE
+                            val enhanced = withContext(Dispatchers.Default) {
+                                val warped = DocumentImageProcessor.warpPerspective(rawBmp, frame.detectedQuad, 4096)
+                                if (rawBmp !== warped) rawBmp.recycle()
+                                val prepared = if (isIdCard) {
+                                    val auto = DocumentImageProcessor.autoEnhanceCapturedDocument(warped, isIdCardMode = true)
+                                    if (warped !== auto && !warped.isRecycled) warped.recycle()
+                                    auto
+                                } else {
+                                    warped
+                                }
+                                val out = DocumentImageProcessor.applyEnhancements(
+                                    source = prepared,
+                                    filter = frame.filter,
+                                    brightness = frame.brightness,
+                                    contrast = frame.contrast,
+                                    sharpness = frame.sharpness,
+                                    rotationDeg = frame.rotationDeg
+                                )
+                                if (prepared !== out && !prepared.isRecycled) prepared.recycle()
+                                out
+                            }
+                            val outFile = File(repository.docsRootDir, "page_${UUID.randomUUID()}.jpg")
+                            DocumentImageProcessor.saveBitmapAsJpeg(enhanced, outFile, 98)
+                            val ocrRes = OfflineOcrAndBarcodeEngine.extractTextOffline(enhanced)
+
+                            createdPages.add(
+                                ScannedPageEntity(
+                                    documentId = docId,
+                                    pageOrder = nextOrder++,
+                                    originalImagePath = frame.rawImagePath,
+                                    processedImagePath = outFile.absolutePath,
+                                    cornersJson = frame.detectedQuad.toJson(),
+                                    filterId = frame.filter.id,
+                                    brightness = frame.brightness,
+                                    contrast = frame.contrast,
+                                    sharpness = frame.sharpness,
+                                    rotationDeg = frame.rotationDeg,
+                                    ocrText = ocrRes.fullText
+                                )
+                            )
+                            pdfInputs.add(PdfRenderedPageInput(enhanced, ocrRes.lines))
+                        }
                     }
 
                     val defaultTitle = docTitleInput.trim().ifBlank {

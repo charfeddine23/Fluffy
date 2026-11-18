@@ -292,6 +292,12 @@ data class WatermarkConfig(
     }
 }
 
+enum class IdCardSide {
+    NONE,
+    FRONT,
+    BACK
+}
+
 data class BatchCapturedFrame(
     val id: String = UUID.randomUUID().toString(),
     val rawImagePath: String,
@@ -302,7 +308,9 @@ data class BatchCapturedFrame(
     val contrast: Float = 1.05f,
     val sharpness: Float = 0.2f,
     val rotationDeg: Int = 0,
-    val ocrText: String = ""
+    val ocrText: String = "",
+    val idCardGroupId: String? = null,
+    val idCardSide: IdCardSide = IdCardSide.NONE
 )
 
 @Entity(tableName = "scanner_folders")

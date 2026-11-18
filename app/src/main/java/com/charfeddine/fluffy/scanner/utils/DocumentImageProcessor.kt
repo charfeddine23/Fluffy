@@ -42,8 +42,8 @@ object DocumentImageProcessor {
     fun detectDocumentQuadFromImageProxy(imageProxy: ImageProxy): EdgeDetectionFrameResult =
         DocumentEdgeDetector.detectFromImageProxy(imageProxy)
 
-    fun detectQuadFromBitmap(bitmap: Bitmap): DocumentQuad =
-        DocumentEdgeDetector.detectFromBitmap(bitmap)
+    fun detectQuadFromBitmap(bitmap: Bitmap, isIdCardHint: Boolean = false): DocumentQuad =
+        DocumentEdgeDetector.detectFromBitmap(bitmap, isIdCardHint)
 
     /**
      * Maps 4 corner [PointF] coordinates from [PreviewView] space (`previewWidth x previewHeight`)
@@ -744,6 +744,32 @@ object DocumentImageProcessor {
             }
         }
         return Bitmap.createBitmap(outPx, w, h, Bitmap.Config.ARGB_8888)
+    }
+
+    /**
+     * Pre-OCR Arabic & Bilingual Binarization Filter:
+     * Upscales smaller cards/documents via Lanczos4 so Arabic diacritics & dots separate cleanly,
+     * levels uneven shadows with division normalization, and applies adaptive Bradley-Roth
+     * thresholding for ultra-crisp ink-on-white input to Tesseract4Android (`ara.traineddata`).
+     */
+    fun prepareBitmapForArabicOcr(source: Bitmap): Bitmap {
+        val upscaled = upscaleLanczos4IfNeeded(
+            source = source,
+            minLongestEdge = 2200,
+            maxScale = 2.2f
+        )
+        val leveled = applyIlluminationDivisionNormalization(
+            source = upscaled,
+            preserveSkinAndPortrait = false
+        )
+        if (upscaled !== source && !upscaled.isRecycled) {
+            upscaled.recycle()
+        }
+        val binarized = applyAdaptiveBwThreshold(leveled)
+        if (leveled !== binarized && !leveled.isRecycled) {
+            leveled.recycle()
+        }
+        return binarized
     }
 
     /**

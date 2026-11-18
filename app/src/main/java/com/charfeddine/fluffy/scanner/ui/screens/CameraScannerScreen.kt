@@ -126,6 +126,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -205,6 +206,8 @@ fun CameraScannerScreen(
     }
 
     val haptics = LocalHapticFeedback.current
+    val density = LocalDensity.current
+    val idGuideTopOffsetPx = remember(density) { with(density) { 20.dp.toPx() } }
     var flashMode by remember { mutableIntStateOf(FLASH_MODE_OFF) }
     var showGrid by remember { mutableStateOf(true) }
     var autoCaptureEnabled by remember { mutableStateOf(true) }
@@ -329,6 +332,24 @@ fun CameraScannerScreen(
             null
         }
 
+        val idGuidePreviewCornersSnapshot: Array<PointF>? =
+            if (activeMode == ScanMode.ID_CARD && pvWidthSnapshot > 0 && pvHeightSnapshot > 0) {
+                val pw = pvWidthSnapshot.toFloat()
+                val ph = pvHeightSnapshot.toFloat()
+                val cardW = pw * 0.86f
+                val cardH = cardW / 1.586f
+                val left = (pw - cardW) * 0.5f
+                val top = (ph - cardH) * 0.5f - idGuideTopOffsetPx
+                arrayOf(
+                    PointF(left, top),
+                    PointF(left + cardW, top),
+                    PointF(left + cardW, top + cardH),
+                    PointF(left, top + cardH)
+                )
+            } else {
+                null
+            }
+
         val outFile = File(scannerViewModel.repository.docsRootDir, "raw_${UUID.randomUUID()}.jpg")
         val outputOptions = ImageCapture.OutputFileOptions.Builder(outFile).build()
         val mainExecutor = ContextCompat.getMainExecutor(context)
@@ -348,6 +369,7 @@ fun CameraScannerScreen(
                             isArabic = isArabic,
                             capturedQuad = lockedQuadSnapshot,
                             capturedPreviewCorners = previewCornersSnapshot,
+                            idGuidePreviewCorners = idGuidePreviewCornersSnapshot,
                             previewWidth = pvWidthSnapshot,
                             previewHeight = pvHeightSnapshot,
                             analyzerWidth = analyzerW,
@@ -622,7 +644,7 @@ fun CameraScannerScreen(
                             val tracked = stabilityTracker.update(
                                 detection = rawRes,
                                 nowMs = now,
-                                autoCaptureEnabled = latestAutoCapture && !latestIsBusy
+                                autoCaptureEnabled = latestAutoCapture && !latestIsBusy && modeNow != ScanMode.ID_CARD
                             )
                             imageProxy.close()
                             mainExec.execute {
