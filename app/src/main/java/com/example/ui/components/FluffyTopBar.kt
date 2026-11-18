@@ -1,9 +1,23 @@
 package com.example.ui.components
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -11,6 +25,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -39,6 +54,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -48,8 +64,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
@@ -64,6 +89,9 @@ import com.example.data.model.NotesViewMode
 import com.example.ui.glass.liquidGlass
 import com.example.ui.theme.LocalAppThemePreset
 import com.example.ui.theme.tr
+import com.example.update.UpdateUiState
+import kotlin.math.cos
+import kotlin.math.sin
 
 @Composable
 fun FluffyTopBar(
@@ -78,6 +106,8 @@ fun FluffyTopBar(
     onToggleViewMode: () -> Unit,
     onSelectViewMode: (NotesViewMode) -> Unit = { _ -> onToggleViewMode() },
     onOpenStats: () -> Unit,
+    updateState: UpdateUiState = UpdateUiState.Idle,
+    onOpenUpdate: () -> Unit = {},
     onOpenSettings: () -> Unit,
     profilePhotoUrl: String? = null,
     profileAvatarChoice: String = "",
@@ -175,14 +205,43 @@ fun FluffyTopBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // Stats button
-                GlassIconAction(
-                    icon = Icons.Default.Insights,
-                    contentDescription = tr("الإحصائيات", "Statistiques", "Statistics", "Tidaddanin"),
-                    isDark = isDark,
-                    testTag = "stats_button",
-                    onClick = onOpenStats
-                )
+                // Insights button — seamlessly transforms into a luxury update arrow when an update is available
+                val hasAvailableUpdate = when (updateState) {
+                    is UpdateUiState.Available,
+                    is UpdateUiState.Downloading,
+                    is UpdateUiState.ReadyToInstall,
+                    is UpdateUiState.NeedsInstallPermission -> true
+                    is UpdateUiState.Error -> updateState.info != null
+                    else -> false
+                }
+                AnimatedContent(
+                    targetState = hasAvailableUpdate,
+                    transitionSpec = {
+                        (scaleIn(
+                            initialScale = 0.78f,
+                            animationSpec = spring(dampingRatio = 0.72f, stiffness = 420f)
+                        ) + fadeIn(tween(220))) togetherWith
+                            (scaleOut(targetScale = 0.82f, animationSpec = tween(160)) + fadeOut(tween(150)))
+                    },
+                    label = "insights_or_update_slot"
+                ) { updateReady ->
+                    if (updateReady) {
+                        LuxuryUpdateArrowAction(
+                            updateState = updateState,
+                            isDark = isDark,
+                            isArabic = isArabic,
+                            onClick = onOpenUpdate
+                        )
+                    } else {
+                        GlassIconAction(
+                            icon = Icons.Default.Insights,
+                            contentDescription = tr("الإحصائيات", "Statistiques", "Statistics", "Tidaddanin"),
+                            isDark = isDark,
+                            testTag = "stats_button",
+                            onClick = onOpenStats
+                        )
+                    }
+                }
 
                 // View Mode Picker (Grid, List, Gallery View, Magazine View)
                 Box {
@@ -440,5 +499,232 @@ private fun GlassIconAction(
             tint = iconColor,
             modifier = Modifier.size(19.dp)
         )
+    }
+}
+
+@Composable
+private fun LuxuryUpdateArrowAction(
+    updateState: UpdateUiState,
+    isDark: Boolean,
+    isArabic: Boolean,
+    onClick: () -> Unit
+) {
+    val activePreset = LocalAppThemePreset.current
+    val effectiveDark = activePreset.isDark || isDark
+    val primary = activePreset.primary
+    val secondary = activePreset.secondary
+    val tertiary = activePreset.tertiary
+    val isDownloading = updateState is UpdateUiState.Downloading
+    val downloadProgress = (updateState as? UpdateUiState.Downloading)?.progress ?: 0f
+
+    val infiniteTransition = rememberInfiniteTransition(label = "luxury_update_arrow")
+    val arrowFloat by infiniteTransition.animateFloat(
+        initialValue = -2.2f,
+        targetValue = 2.2f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(if (isDownloading) 550 else 1150, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "arrow_float"
+    )
+    val shimmerAngle by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(3200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "border_shimmer"
+    )
+    val haloPulse by infiniteTransition.animateFloat(
+        initialValue = 0.38f,
+        targetValue = 0.88f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1400, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "halo_pulse"
+    )
+
+    val pillShape = RoundedCornerShape(19.dp)
+    val statusLabel = when (updateState) {
+        is UpdateUiState.Downloading -> "${(downloadProgress * 100).toInt().coerceIn(0, 100)}%"
+        is UpdateUiState.ReadyToInstall,
+        is UpdateUiState.NeedsInstallPermission -> tr("تثبيت", "Installer", "Install", "Sebded")
+        else -> tr("تحديث", "MàJ", "Update", "Aleqqem")
+    }
+    val contentDesc = if (isArabic) "تحديث جديد متاح" else "New update available"
+
+    val angleRad = Math.toRadians(shimmerAngle.toDouble())
+    val dirX = cos(angleRad).toFloat()
+    val dirY = sin(angleRad).toFloat()
+
+    Box(
+        modifier = Modifier
+            .minimumInteractiveComponentSize()
+            .testTag("topbar_update_button")
+            .clip(pillShape)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = ripple(bounded = true, color = primary),
+                onClickLabel = contentDesc,
+                onClick = onClick
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .shadow(
+                    elevation = 10.dp,
+                    shape = pillShape,
+                    ambientColor = primary.copy(alpha = 0.45f),
+                    spotColor = secondary.copy(alpha = 0.45f)
+                )
+                .height(38.dp)
+                .clip(pillShape)
+                .background(
+                    brush = Brush.linearGradient(
+                        colors = listOf(
+                            primary.copy(alpha = if (effectiveDark) 0.28f else 0.20f),
+                            secondary.copy(alpha = if (effectiveDark) 0.24f else 0.16f),
+                            tertiary.copy(alpha = if (effectiveDark) 0.20f else 0.14f)
+                        )
+                    )
+                )
+                .border(
+                    width = 1.4.dp,
+                    brush = Brush.linearGradient(
+                        colors = listOf(
+                            primary.copy(alpha = 0.92f),
+                            Color.White.copy(alpha = haloPulse),
+                            secondary.copy(alpha = 0.92f),
+                            tertiary.copy(alpha = 0.85f)
+                        ),
+                        start = Offset(40f + 40f * dirX, 19f + 19f * dirY),
+                        end = Offset(40f - 40f * dirX, 19f - 19f * dirY)
+                    ),
+                    shape = pillShape
+                )
+                .padding(horizontal = 10.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                Box(
+                    modifier = Modifier.size(22.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val cx = size.width / 2f
+                        val cy = size.height / 2f
+                        val r = size.minDimension / 2f
+
+                        // Soft radial jewel halo
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                colors = listOf(
+                                    primary.copy(alpha = 0.34f * haloPulse),
+                                    secondary.copy(alpha = 0.16f * haloPulse),
+                                    Color.Transparent
+                                ),
+                                center = Offset(cx, cy),
+                                radius = r
+                            ),
+                            radius = r,
+                            center = Offset(cx, cy)
+                        )
+
+                        if (isDownloading) {
+                            drawArc(
+                                color = activePreset.onBackground.copy(alpha = 0.18f),
+                                startAngle = -90f,
+                                sweepAngle = 360f,
+                                useCenter = false,
+                                topLeft = Offset(1.5.dp.toPx(), 1.5.dp.toPx()),
+                                size = Size(size.width - 3.dp.toPx(), size.height - 3.dp.toPx()),
+                                style = Stroke(width = 1.8.dp.toPx(), cap = StrokeCap.Round)
+                            )
+                            drawArc(
+                                brush = Brush.sweepGradient(listOf(primary, secondary, tertiary, primary)),
+                                startAngle = -90f,
+                                sweepAngle = 360f * downloadProgress.coerceIn(0.05f, 1f),
+                                useCenter = false,
+                                topLeft = Offset(1.5.dp.toPx(), 1.5.dp.toPx()),
+                                size = Size(size.width - 3.dp.toPx(), size.height - 3.dp.toPx()),
+                                style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
+                            )
+                        } else {
+                            // Sleek bottom cradle arc under the arrow
+                            val trayPath = Path().apply {
+                                moveTo(cx - r * 0.54f, cy + r * 0.38f)
+                                quadraticTo(cx, cy + r * 0.72f, cx + r * 0.54f, cy + r * 0.38f)
+                            }
+                            drawPath(
+                                path = trayPath,
+                                brush = Brush.horizontalGradient(listOf(primary, secondary, tertiary)),
+                                style = Stroke(
+                                    width = 1.9.dp.toPx(),
+                                    cap = StrokeCap.Round,
+                                    join = StrokeJoin.Round
+                                )
+                            )
+                        }
+
+                        // Floating luxury downward arrow
+                        val yOff = arrowFloat.dp.toPx() * 0.68f
+                        val shaftTop = cy - r * 0.52f + yOff
+                        val tipY = cy + r * 0.24f + yOff
+                        val wingDx = r * 0.36f
+                        val wingY = tipY - r * 0.34f
+
+                        val arrowGradient = Brush.verticalGradient(
+                            colors = listOf(Color.White, primary, secondary),
+                            startY = shaftTop,
+                            endY = tipY
+                        )
+
+                        drawLine(
+                            brush = arrowGradient,
+                            start = Offset(cx, shaftTop),
+                            end = Offset(cx, tipY),
+                            strokeWidth = 2.1.dp.toPx(),
+                            cap = StrokeCap.Round
+                        )
+
+                        val headPath = Path().apply {
+                            moveTo(cx - wingDx, wingY)
+                            lineTo(cx, tipY)
+                            lineTo(cx + wingDx, wingY)
+                        }
+                        drawPath(
+                            path = headPath,
+                            brush = arrowGradient,
+                            style = Stroke(
+                                width = 2.1.dp.toPx(),
+                                cap = StrokeCap.Round,
+                                join = StrokeJoin.Round
+                            )
+                        )
+
+                        // Tiny glowing top-end beacon dot
+                        drawCircle(
+                            color = tertiary.copy(alpha = haloPulse),
+                            radius = 2.1.dp.toPx(),
+                            center = Offset(size.width - 2.6.dp.toPx(), 2.6.dp.toPx())
+                        )
+                    }
+                }
+
+                Text(
+                    text = statusLabel,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = activePreset.onBackground,
+                    maxLines = 1
+                )
+            }
+        }
     }
 }

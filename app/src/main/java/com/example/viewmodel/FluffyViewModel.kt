@@ -2204,11 +2204,37 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         snackbarMessage.value = null
     }
 
+    fun openUpdateDialog() {
+        val hasUpdate = when (val current = updateState.value) {
+            is UpdateUiState.Available,
+            is UpdateUiState.Downloading,
+            is UpdateUiState.ReadyToInstall,
+            is UpdateUiState.NeedsInstallPermission -> true
+            is UpdateUiState.Error -> current.info != null
+            else -> false
+        }
+        if (hasUpdate) {
+            showUpdateDialog.value = true
+        }
+    }
+
     fun checkForUpdates(isManual: Boolean) {
-        if (updateState.value is UpdateUiState.Checking || updateState.value is UpdateUiState.Downloading) {
-            if (isManual && updateState.value is UpdateUiState.Downloading) {
+        val current = updateState.value
+        if (current is UpdateUiState.Checking || current is UpdateUiState.Downloading) {
+            if (isManual && current is UpdateUiState.Downloading) {
                 showUpdateDialog.value = true
+                closeSettingsDrawer()
             }
+            return
+        }
+        if (isManual && (
+                current is UpdateUiState.Available ||
+                    current is UpdateUiState.ReadyToInstall ||
+                    current is UpdateUiState.NeedsInstallPermission
+                )
+        ) {
+            showUpdateDialog.value = true
+            closeSettingsDrawer()
             return
         }
 
@@ -2217,8 +2243,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             when (val result = AppUpdateManager.checkForUpdate()) {
                 is AppUpdateManager.CheckResult.UpdateAvailable -> {
                     updateState.value = UpdateUiState.Available(result.info)
-                    showUpdateDialog.value = true
                     if (isManual) {
+                        showUpdateDialog.value = true
                         closeSettingsDrawer()
                     }
                 }

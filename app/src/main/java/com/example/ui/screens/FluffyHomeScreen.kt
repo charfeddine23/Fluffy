@@ -417,6 +417,8 @@ fun FluffyHomeScreen(
                     onToggleViewMode = { viewModel.toggleViewMode() },
                     onSelectViewMode = { mode -> viewModel.setViewMode(mode) },
                     onOpenStats = { viewModel.showStatsSheet.value = true },
+                    updateState = updateState,
+                    onOpenUpdate = { viewModel.openUpdateDialog() },
                     onOpenSettings = { viewModel.openSettingsDrawer() },
                     profilePhotoUrl = currentUser?.photoUrl,
                     profileAvatarChoice = profileAvatarChoice,
