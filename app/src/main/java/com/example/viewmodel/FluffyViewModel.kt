@@ -79,6 +79,15 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     val isVaultLockEnabled = MutableStateFlow(prefs.getBoolean("vault_lock_enabled", false))
     val hasVaultPasskey = MutableStateFlow(!prefs.getString("vault_passkey_hash", "").isNullOrBlank())
     val isVaultUnlockedForSession = MutableStateFlow(false)
+    val vaultSessionId = MutableStateFlow(0L)
+
+    private fun getDeletedVaultIds(): Set<String> =
+        prefs.getStringSet("deleted_vault_item_ids", emptySet())?.toSet() ?: emptySet()
+
+    private fun markVaultIdDeleted(itemId: String) {
+        val updated = getDeletedVaultIds().toMutableSet().apply { add(itemId) }
+        prefs.edit().putStringSet("deleted_vault_item_ids", updated).apply()
+    }
 
     private var openedTrashFromSettings = false
     private var openedArchiveFromSettings = false
@@ -228,10 +237,13 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
-        // Recover any immutable Vault entries persisted on phone storage
+        // Recover any immutable Vault entries persisted on phone storage (excluding explicitly deleted IDs)
+        val deletedVaultIds = getDeletedVaultIds()
         val diskVaultItems = LocalDeviceStorageManager.loadAllLiteralVaultItemsFromDisk(app)
         diskVaultItems.forEach { item ->
-            vaultDao.insertImmutableItem(item)
+            if (item.id !in deletedVaultIds) {
+                vaultDao.insertImmutableItem(item)
+            }
         }
 
         // Recover settings if SharedPreferences were cleared while local snapshot survived
@@ -344,14 +356,17 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                 FirebaseSyncRepository.observeVaultItems(getApplication(), uid)
                     .catch { /* logged inside repository */ }
                     .collect { remotePayloads ->
+                        val deletedVaultIds = getDeletedVaultIds()
                         withContext(Dispatchers.IO) {
                             remotePayloads.forEach { payload ->
-                                val materialized = LocalDeviceStorageManager.restoreVaultRawFileFromBase64WriteOnce(
-                                    context = getApplication(),
-                                    item = payload.item,
-                                    base64Data = payload.rawFileBase64
-                                )
-                                vaultDao.insertImmutableItem(materialized)
+                                if (payload.item.id !in deletedVaultIds) {
+                                    val materialized = LocalDeviceStorageManager.restoreVaultRawFileFromBase64WriteOnce(
+                                        context = getApplication(),
+                                        item = payload.item,
+                                        base64Data = payload.rawFileBase64
+                                    )
+                                    vaultDao.insertImmutableItem(materialized)
+                                }
                             }
                         }
                     }
@@ -414,19 +429,20 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             prefs.edit().putLong("last_remote_settings_at", remoteSettings.updatedAt).apply()
         }
 
-        // Reconcile Immutable Vault Items (bidirectional union; never overwrites existing items)
+        // Reconcile Immutable Vault Items (bidirectional union; skips explicitly deleted IDs)
+        val deletedVaultIds = getDeletedVaultIds()
         val localVault = vaultDao.getAllVaultItemsOnce()
         val remoteVault = FirebaseSyncRepository.fetchVaultItemsOnce(app, uid)
         val localVaultIds = localVault.map { it.id }.toHashSet()
         val remoteVaultIds = remoteVault.map { it.item.id }.toHashSet()
 
         localVault.forEach { item ->
-            if (item.id !in remoteVaultIds && AudioCloudPolicy.canStoreVaultItemInCloud(item)) {
+            if (item.id !in remoteVaultIds && item.id !in deletedVaultIds && AudioCloudPolicy.canStoreVaultItemInCloud(item)) {
                 FirebaseSyncRepository.upsertVaultItemIfAbsent(app, uid, item)
             }
         }
         remoteVault.forEach { payload ->
-            if (payload.item.id !in localVaultIds) {
+            if (payload.item.id !in localVaultIds && payload.item.id !in deletedVaultIds) {
                 val materialized = LocalDeviceStorageManager.restoreVaultRawFileFromBase64WriteOnce(
                     context = app,
                     item = payload.item,
@@ -1787,6 +1803,35 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun deleteVaultItem(item: VaultItemEntity) {
+        viewModelScope.launch {
+            try {
+                markVaultIdDeleted(item.id)
+                vaultDao.deleteVaultItemById(item.id)
+                LocalDeviceStorageManager.deleteVaultItemFromDisk(getApplication(), item)
+                currentUser.value?.uid?.let { uid ->
+                    launch(Dispatchers.IO) {
+                        FirebaseSyncRepository.deleteVaultItem(getApplication(), uid, item.id)
+                    }
+                }
+                showSnackbar(
+                    translateText(
+                        appLanguage.value,
+                        ar = "تم حذف المستند من الـ Vault 🗑️",
+                        fr = "Document supprimé du Vault 🗑️",
+                        en = "Deleted from Vault 🗑️",
+                        tzm = "Yettwakkes seg Vault 🗑️"
+                    )
+                )
+            } catch (e: Exception) {
+                showSnackbar(
+                    if (isArabic.value) "تعذر الحذف: ${e.localizedMessage}"
+                    else "Unable to delete: ${e.localizedMessage}"
+                )
+            }
+        }
+    }
+
     // --- Local Phone Storage Full Literal Export / Import ---
 
     fun exportFullBackupToPhoneUri(destUri: Uri) {
@@ -1997,6 +2042,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     fun openVault() {
         isSettingsDrawerOpen.value = false
         isVaultUnlockedForSession.value = !isVaultLockEnabled.value
+        vaultSessionId.value = vaultSessionId.value + 1L
         isVaultOpen.value = true
     }
 

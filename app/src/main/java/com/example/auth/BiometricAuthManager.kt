@@ -19,6 +19,10 @@ enum class BiometricAvailability {
 
 class BiometricAuthManager(private val activity: FragmentActivity) {
 
+    private var activePrompt: BiometricPrompt? = null
+    private var activePromptTag: String? = null
+    private var activeGeneration: Long = 0L
+
     fun checkAvailability(): BiometricAvailability {
         val biometricManager = BiometricManager.from(activity)
         val authenticators = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -35,22 +39,42 @@ class BiometricAuthManager(private val activity: FragmentActivity) {
         }
     }
 
+    fun cancelPrompt(tag: String? = null) {
+        if (tag == null || tag == activePromptTag) {
+            activeGeneration++
+            runCatching { activePrompt?.cancelAuthentication() }
+            activePrompt = null
+            activePromptTag = null
+        }
+    }
+
     fun promptBiometricAuth(
         title: String,
         subtitle: String,
+        tag: String = "default",
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
+        activeGeneration++
+        val callGen = activeGeneration
+        runCatching { activePrompt?.cancelAuthentication() }
+
         val executor = ContextCompat.getMainExecutor(activity)
 
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                 super.onAuthenticationSucceeded(result)
+                if (callGen != activeGeneration) return
+                activePrompt = null
+                activePromptTag = null
                 onSuccess()
             }
 
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                 super.onAuthenticationError(errorCode, errString)
+                if (callGen != activeGeneration) return
+                activePrompt = null
+                activePromptTag = null
                 onError(errString.toString())
             }
 
@@ -61,6 +85,8 @@ class BiometricAuthManager(private val activity: FragmentActivity) {
         }
 
         val prompt = BiometricPrompt(activity, executor, callback)
+        activePrompt = prompt
+        activePromptTag = tag
 
         val promptInfoBuilder = BiometricPrompt.PromptInfo.Builder()
             .setTitle(title)
@@ -75,7 +101,11 @@ class BiometricAuthManager(private val activity: FragmentActivity) {
         try {
             prompt.authenticate(promptInfoBuilder.build())
         } catch (e: Exception) {
-            onError(e.message ?: "Authentication failed")
+            if (callGen == activeGeneration) {
+                activePrompt = null
+                activePromptTag = null
+                onError(e.message ?: "Authentication failed")
+            }
         }
     }
 }

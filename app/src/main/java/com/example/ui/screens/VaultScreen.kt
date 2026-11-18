@@ -39,6 +39,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Fingerprint
@@ -54,13 +55,19 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -74,8 +81,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.example.data.model.GlassTint
 import com.example.data.model.VaultItemEntity
 import com.example.data.storage.LocalDeviceStorageManager
@@ -96,11 +105,15 @@ fun VaultScreen(
     onSaveLiteralText: (title: String, literalContent: String) -> Unit,
     onSaveFileUri: (Uri) -> Unit,
     onExportItemToUri: (VaultItemEntity, Uri) -> Unit,
+    onDeleteItem: (VaultItemEntity) -> Unit = {},
     onBack: () -> Unit,
     isVaultLockEnabled: Boolean = false,
     isVaultUnlocked: Boolean = true,
     isVaultActive: Boolean = true,
+    vaultSessionId: Long = 0L,
     hasVaultPasskey: Boolean = false,
+    snackbarMessage: String? = null,
+    onClearSnackbar: () -> Unit = {},
     onTriggerBiometricUnlock: () -> Unit = {},
     onVerifyPasskey: (String) -> Boolean = { false },
     modifier: Modifier = Modifier
@@ -117,8 +130,18 @@ fun VaultScreen(
     var draftTitle by remember { mutableStateOf("") }
     var draftContent by remember { mutableStateOf("") }
     var pendingExportItem by remember { mutableStateOf<VaultItemEntity?>(null) }
+    var pendingDeleteItem by remember { mutableStateOf<VaultItemEntity?>(null) }
     var passkeyAttempt by remember { mutableStateOf("") }
     var passkeyError by remember { mutableStateOf(false) }
+    var promptedSessionId by rememberSaveable { mutableLongStateOf(-1L) }
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(snackbarMessage) {
+        if (!snackbarMessage.isNullOrBlank()) {
+            snackbarHostState.showSnackbar(snackbarMessage)
+            onClearSnackbar()
+        }
+    }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -159,8 +182,9 @@ fun VaultScreen(
         label = "vault_float"
     )
 
-    LaunchedEffect(isVaultActive, isVaultLockEnabled, isVaultUnlocked) {
-        if (isVaultActive && isVaultLockEnabled && !isVaultUnlocked) {
+    LaunchedEffect(vaultSessionId, isVaultActive, isVaultLockEnabled, isVaultUnlocked) {
+        if (isVaultActive && isVaultLockEnabled && !isVaultUnlocked && promptedSessionId != vaultSessionId) {
+            promptedSessionId = vaultSessionId
             passkeyAttempt = ""
             passkeyError = false
             onTriggerBiometricUnlock()
@@ -394,6 +418,7 @@ fun VaultScreen(
     }
 
     FrostedBackdrop(isDark = effectiveDark) {
+        Box(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = modifier
                 .fillMaxSize()
@@ -833,8 +858,149 @@ fun VaultScreen(
                                     (item.title.ifBlank { "vault_note_${item.createdAt}" }) + ".txt"
                                 }
                                 exportFileLauncher.launch(suggested)
+                            },
+                            onDeleteClick = {
+                                pendingDeleteItem = item
                             }
                         )
+                    }
+                }
+            }
+        }
+
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .windowInsetsPadding(WindowInsets.navigationBars)
+                .padding(horizontal = 20.dp, vertical = 16.dp)
+        ) { data ->
+            LiquidGlassCard(
+                isDark = effectiveDark,
+                tint = GlassTint.AMETHYST,
+                shape = RoundedCornerShape(18.dp),
+                borderWidth = 1.2.dp
+            ) {
+                Text(
+                    text = data.visuals.message,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = textColor
+                )
+            }
+        }
+        }
+    }
+
+    pendingDeleteItem?.let { itemToDelete ->
+        val displayTitle = itemToDelete.title.ifBlank {
+            itemToDelete.fileName.ifBlank { tr("عنصر Vault", "Élément Vault", "Vault Item", "Aferdis n Vault") }
+        }
+        Dialog(onDismissRequest = { pendingDeleteItem = null }) {
+            LiquidGlassCard(
+                isDark = effectiveDark,
+                tint = GlassTint.ROSE,
+                shape = RoundedCornerShape(28.dp),
+                borderWidth = 1.4.dp,
+                customFill = activePreset.surface.copy(alpha = 0.94f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 380.dp)
+                    .testTag("vault_delete_confirm_dialog")
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(22.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFF43F5E).copy(alpha = 0.16f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DeleteOutline,
+                                contentDescription = null,
+                                tint = Color(0xFFF43F5E),
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Text(
+                            text = tr(
+                                "حذف من الـ Vault",
+                                "Supprimer du Vault",
+                                "Delete from Vault",
+                                "Kkes seg Vault"
+                            ),
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = textColor
+                        )
+                    }
+
+                    Text(
+                        text = tr(
+                            "هل تريد حذف \"$displayTitle\" نهائياً من الـ Vault ومن ذاكرة الجهاز؟ لا يمكن التراجع عن هذا الإجراء.",
+                            "Supprimer définitivement \"$displayTitle\" du Vault et de l'appareil ? Cette action est irréversible.",
+                            "Permanently delete \"$displayTitle\" from Vault and device storage? This cannot be undone.",
+                            "Ad tekkseḍ \"$displayTitle\" i lebda seg Vault akked tkatut n yibenk?"
+                        ),
+                        fontSize = 13.sp,
+                        color = metaColor,
+                        lineHeight = 19.sp
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(
+                            onClick = { pendingDeleteItem = null },
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("vault_delete_cancel_button")
+                        ) {
+                            Text(
+                                text = tr("إلغاء", "Annuler", "Cancel", "Sefsex"),
+                                color = metaColor,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                onDeleteItem(itemToDelete)
+                                pendingDeleteItem = null
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFFE11D48),
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("vault_delete_confirm_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DeleteOutline,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = tr("حذف", "Supprimer", "Delete", "Kkes"),
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
@@ -849,7 +1015,8 @@ private fun VaultEntryCard(
     isArabic: Boolean,
     textColor: Color,
     metaColor: Color,
-    onExportClick: () -> Unit
+    onExportClick: () -> Unit,
+    onDeleteClick: () -> Unit
 ) {
     val isIntegrityValid = remember(item.id, item.sha256, item.localFilePath) {
         LocalDeviceStorageManager.verifyVaultItemIntegrity(item)
@@ -892,24 +1059,73 @@ private fun VaultEntryCard(
                         text = item.title.ifEmpty { item.fileName.ifEmpty { "Vault Note" } },
                         fontSize = 14.5.sp,
                         fontWeight = FontWeight.Bold,
-                        color = textColor
+                        color = textColor,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFF38BDF8).copy(alpha = 0.14f))
-                        .clickable(onClick = onExportClick),
-                    contentAlignment = Alignment.Center
+                Spacer(modifier = Modifier.width(8.dp))
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Download,
-                        contentDescription = if (isArabic) "تصدير إلى الهاتف" else "Export to phone",
-                        tint = Color(0xFF38BDF8),
-                        modifier = Modifier.size(18.dp)
-                    )
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("vault_export_item_${item.id}")
+                            .clip(CircleShape)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = ripple(bounded = true),
+                                onClick = onExportClick
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF38BDF8).copy(alpha = 0.14f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Download,
+                                contentDescription = tr("تصدير إلى الهاتف", "Exporter vers l'appareil", "Export to phone", "Sifeḍ ɣer tiliɣri"),
+                                tint = Color(0xFF38BDF8),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("vault_delete_item_${item.id}")
+                            .clip(CircleShape)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = ripple(bounded = true),
+                                onClick = onDeleteClick
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFF43F5E).copy(alpha = 0.14f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DeleteOutline,
+                                contentDescription = tr("حذف من الـ Vault", "Supprimer du Vault", "Delete from Vault", "Kkes seg Vault"),
+                                tint = Color(0xFFF43F5E),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
                 }
             }
 

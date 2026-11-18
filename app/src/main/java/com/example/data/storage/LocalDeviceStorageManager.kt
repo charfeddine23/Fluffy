@@ -320,6 +320,22 @@ object LocalDeviceStorageManager {
         } ?: throw IllegalStateException("Unable to write to destination")
     }
 
+    suspend fun deleteVaultItemFromDisk(context: Context, item: VaultItemEntity) = withContext(Dispatchers.IO) {
+        runCatching {
+            item.localFilePath.takeIf { it.isNotBlank() }?.let(::File)?.let { file ->
+                if (file.exists()) file.delete()
+            }
+        }
+        runCatching {
+            val rawDir = subDir(context, VAULT_RAW_DIR)
+            rawDir.listFiles { f -> f.isFile && f.name.startsWith("${item.id}_") }?.forEach { it.delete() }
+        }
+        runCatching {
+            val metaFile = File(subDir(context, VAULT_ITEMS_DIR), "${item.id}.json")
+            if (metaFile.exists()) metaFile.delete()
+        }
+    }
+
     suspend fun buildAndPersistFullBackupJson(
         context: Context,
         settings: FluffySettingsSnapshot,

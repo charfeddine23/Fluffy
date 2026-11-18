@@ -24,4 +24,7 @@ interface VaultDao {
 
     @Query("SELECT COUNT(*) FROM vault_items")
     suspend fun getVaultCount(): Int
+
+    @Query("DELETE FROM vault_items WHERE id = :itemId")
+    suspend fun deleteVaultItemById(itemId: String): Int
 }

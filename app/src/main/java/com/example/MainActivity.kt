@@ -91,6 +91,7 @@ class MainActivity : FragmentActivity() {
             val isVaultLockEnabled by viewModel.isVaultLockEnabled.collectAsState()
             val hasVaultPasskey by viewModel.hasVaultPasskey.collectAsState()
             val isVaultUnlockedForSession by viewModel.isVaultUnlockedForSession.collectAsState()
+            val vaultSessionId by viewModel.vaultSessionId.collectAsState()
             val isThemesScreenOpen by viewModel.isThemesScreenOpen.collectAsState()
             val isTrashScreenOpen by viewModel.isTrashScreenOpen.collectAsState()
             val isArchiveScreenOpen by viewModel.isArchiveScreenOpen.collectAsState()
@@ -134,6 +135,12 @@ class MainActivity : FragmentActivity() {
                     window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
                 } else {
                     window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                }
+            }
+
+            LaunchedEffect(isVaultOpen) {
+                if (!isVaultOpen) {
+                    biometricAuthManager.cancelPrompt(tag = "vault")
                 }
             }
 
@@ -418,16 +425,27 @@ class MainActivity : FragmentActivity() {
                                                 onExportItemToUri = { item, destUri ->
                                                     viewModel.exportVaultItemToUri(item, destUri)
                                                 },
-                                                onBack = { viewModel.closeVault() },
+                                                onDeleteItem = { item ->
+                                                    viewModel.deleteVaultItem(item)
+                                                },
+                                                onBack = {
+                                                    biometricAuthManager.cancelPrompt(tag = "vault")
+                                                    viewModel.closeVault()
+                                                },
                                                 isVaultLockEnabled = isVaultLockEnabled,
                                                 isVaultUnlocked = isVaultUnlockedForSession,
                                                 isVaultActive = isVaultOpen,
+                                                vaultSessionId = vaultSessionId,
                                                 hasVaultPasskey = hasVaultPasskey,
+                                                snackbarMessage = snackbarMessage,
+                                                onClearSnackbar = { viewModel.clearSnackbar() },
                                                 onTriggerBiometricUnlock = {
-                                                    if (!viewModel.isVaultOpen.value) return@VaultScreen
+                                                    if (!viewModel.isVaultOpen.value || viewModel.isVaultUnlockedForSession.value) {
+                                                        return@VaultScreen
+                                                    }
                                                     val availability = biometricAuthManager.checkAvailability()
                                                     if (availability == BiometricAvailability.NO_HARDWARE) {
-                                                        if (!hasVaultPasskey) {
+                                                        if (!hasVaultPasskey && viewModel.isVaultOpen.value) {
                                                             viewModel.markVaultUnlocked()
                                                         }
                                                     } else {
@@ -446,7 +464,12 @@ class MainActivity : FragmentActivity() {
                                                                 en = "Confirm your identity to unlock Vault",
                                                                 tzm = "Sentem timagit-ik i wakken ad teldiḍ Vault"
                                                             ),
-                                                            onSuccess = { viewModel.markVaultUnlocked() },
+                                                            tag = "vault",
+                                                            onSuccess = {
+                                                                if (viewModel.isVaultOpen.value) {
+                                                                    viewModel.markVaultUnlocked()
+                                                                }
+                                                            },
                                                             onError = { }
                                                         )
                                                     }

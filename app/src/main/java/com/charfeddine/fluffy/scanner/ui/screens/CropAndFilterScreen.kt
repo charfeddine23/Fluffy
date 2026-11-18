@@ -1821,7 +1821,7 @@ private fun BeforeAfterComparisonViewport(
     val latestSplitFraction by rememberUpdatedState(splitFraction)
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // Force physical LTR coordinate space for the Before/After wipe & A4 paper sheet
+        // Force physical LTR coordinate space for the Before/After wipe & natural-dimension preview
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
             BoxWithConstraints(
                 modifier = Modifier
@@ -1830,15 +1830,16 @@ private fun BeforeAfterComparisonViewport(
                     .onSizeChanged { viewportSize = it },
                 contentAlignment = Alignment.Center
             ) {
-                val a4Aspect = 210f / 297f
+                val imgAspect = (afterBitmap.width.toFloat() / afterBitmap.height.coerceAtLeast(1).toFloat())
+                    .coerceIn(0.18f, 5.5f)
                 val padEdge = 6.dp
                 val availW = (maxWidth - padEdge * 2).coerceAtLeast(1.dp)
                 val availH = (maxHeight - padEdge * 2).coerceAtLeast(1.dp)
                 val containerAspect = availW / availH
-                val (paperW, paperH) = if (containerAspect > a4Aspect) {
-                    (availH * a4Aspect) to availH
+                val (paperW, paperH) = if (containerAspect > imgAspect) {
+                    (availH * imgAspect) to availH
                 } else {
-                    availW to (availW / a4Aspect)
+                    availW to (availW / imgAspect)
                 }
 
                 val paperWpx = with(density) { paperW.toPx() }.coerceAtLeast(1f)
@@ -1966,7 +1967,7 @@ private fun BeforeAfterComparisonViewport(
                             }
                         }
                 ) {
-                    // Zoomable / Pannable Layer holding the Always-A4 Paper Sheet
+                    // Zoomable / Pannable Layer displaying the document in its true natural aspect ratio
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -1982,13 +1983,11 @@ private fun BeforeAfterComparisonViewport(
                         Box(
                             modifier = Modifier
                                 .size(paperW, paperH)
-                                .shadow(14.dp, RoundedCornerShape(6.dp))
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(Color.White)
-                                .padding(6.dp),
+                                .shadow(14.dp, RoundedCornerShape(10.dp))
+                                .clip(RoundedCornerShape(10.dp)),
                             contentAlignment = Alignment.Center
                         ) {
-                            // Full Enhanced (After) Layer fitted on A4 sheet
+                            // Full Enhanced (After) Layer at true dimensions
                             Image(
                                 bitmap = afterImg,
                                 contentDescription = "Enhanced preview",
@@ -1997,7 +1996,7 @@ private fun BeforeAfterComparisonViewport(
                             )
 
                             if (showSplitCompare) {
-                                // Clipped Original (Before) Layer on the physical Left side of the A4 sheet
+                                // Clipped Original (Before) Layer on the physical Left side
                                 Image(
                                     bitmap = beforeImg,
                                     contentDescription = "Original preview",
@@ -2071,7 +2070,7 @@ private fun BeforeAfterComparisonViewport(
                             )
                         }
 
-                        // Before / After Liquid Glass Badges + A4 indicator
+                        // Before / After Liquid Glass Badges
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -2089,18 +2088,6 @@ private fun BeforeAfterComparisonViewport(
                                     text = if (isArabic) "قبل" else "Before",
                                     color = ScannerGlassPalette.TextPrimary,
                                     fontSize = 10.5.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .iosLiquidGlass(CircleShape, fillAlpha = 0.72f)
-                                    .padding(horizontal = 9.dp, vertical = 3.dp)
-                            ) {
-                                Text(
-                                    text = "A4",
-                                    color = ScannerGlassPalette.TextSecondary,
-                                    fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }

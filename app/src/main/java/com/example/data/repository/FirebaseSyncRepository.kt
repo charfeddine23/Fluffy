@@ -518,6 +518,21 @@ object FirebaseSyncRepository {
         }
     }
 
+    suspend fun deleteVaultItem(context: Context, userId: String, itemId: String) {
+        val db = getFirestoreOrNull(context) ?: return
+        val path = "$COLLECTION_USERS/$userId/$COLLECTION_VAULT/$itemId"
+        try {
+            db.collection(COLLECTION_USERS)
+                .document(userId)
+                .collection(COLLECTION_VAULT)
+                .document(itemId)
+                .delete()
+                .await()
+        } catch (e: Exception) {
+            handleFirestoreError(e, "DELETE", path, userId)
+        }
+    }
+
     private fun DocumentSnapshot.toNoteEntityOrNull(): NoteEntity? {
         if (!exists()) return null
         val sid = getString("syncId")?.takeIf { it.isNotBlank() } ?: id

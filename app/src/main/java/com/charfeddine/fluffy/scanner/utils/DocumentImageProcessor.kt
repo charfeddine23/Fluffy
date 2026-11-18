@@ -188,14 +188,21 @@ object DocumentImageProcessor {
         val leftH = hypot((blX - tlX).toDouble(), (blY - tlY).toDouble())
         val rightH = hypot((brX - trX).toDouble(), (brY - trY).toDouble())
 
-        var dstW = max(topW, botW).roundToInt().coerceAtLeast(320)
-        var dstH = max(leftH, rightH).roundToInt().coerceAtLeast(320)
+        var dstW = max(topW, botW).roundToInt().coerceAtLeast(64)
+        var dstH = max(leftH, rightH).roundToInt().coerceAtLeast(64)
+
+        val initialLargest = max(dstW, dstH)
+        if (initialLargest in 1 until 480) {
+            val upScale = 480f / initialLargest.toFloat()
+            dstW = (dstW * upScale).roundToInt().coerceAtLeast(64)
+            dstH = (dstH * upScale).roundToInt().coerceAtLeast(64)
+        }
 
         val largest = max(dstW, dstH)
         if (largest > maxSidePx) {
             val scale = maxSidePx.toFloat() / largest
-            dstW = (dstW * scale).roundToInt().coerceAtLeast(240)
-            dstH = (dstH * scale).roundToInt().coerceAtLeast(240)
+            dstW = (dstW * scale).roundToInt().coerceAtLeast(64)
+            dstH = (dstH * scale).roundToInt().coerceAtLeast(64)
         }
 
         val srcPoly = floatArrayOf(tlX, tlY, trX, trY, brX, brY, blX, blY)
