@@ -156,17 +156,20 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             initialValue = emptyList()
         )
 
-    val vaultNoteMetaMap: StateFlow<Map<String, NoteEntity>> = vaultItems
-        .map {
-            withContext(Dispatchers.IO) {
-                LocalDeviceStorageManager.loadAllVaultNoteMetadata(getApplication())
-            }
+    private val vaultMetaRevision = MutableStateFlow(0L)
+
+    val vaultNoteMetaMap: StateFlow<Map<String, NoteEntity>> = combine(
+        vaultItems,
+        vaultMetaRevision
+    ) { _, _ ->
+        withContext(Dispatchers.IO) {
+            LocalDeviceStorageManager.loadAllVaultNoteMetadata(getApplication())
         }
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
-            initialValue = emptyMap()
-        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyMap()
+    )
 
     val archivedNotes: StateFlow<List<NoteEntity>> = repository.archivedNotes
         .stateIn(
@@ -1765,6 +1768,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                 literalContent = literalContent
             )
             vaultDao.insertImmutableItem(item)
+            vaultMetaRevision.value += 1L
             currentUser.value?.uid?.let { uid ->
                 launch(Dispatchers.IO) {
                     FirebaseSyncRepository.upsertVaultItemIfAbsent(getApplication(), uid, item)
@@ -1774,6 +1778,151 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                 if (isArabic.value) "تم الحفظ حرفياً في الـ Vault وذاكرة الهاتف 🔒"
                 else "Saved verbatim in Vault & phone storage 🔒"
             )
+        }
+    }
+
+    fun createRichNoteInVault(
+        title: String,
+        content: String,
+        pagesJson: String,
+        category: String,
+        colorPreset: String,
+        backgroundId: String,
+        customColorArgb: Long,
+        isPinned: Boolean,
+        checklist: List<ChecklistItem>,
+        audioDurationSec: Int,
+        audioFilePath: String,
+        audioByteSize: Long
+    ) {
+        viewModelScope.launch {
+            try {
+                val app = getApplication<Application>()
+                val now = System.currentTimeMillis()
+                val rawNote = NoteEntity(
+                    title = title,
+                    content = content,
+                    pagesJson = pagesJson,
+                    category = category,
+                    colorPreset = colorPreset,
+                    backgroundId = backgroundId,
+                    customColorArgb = customColorArgb,
+                    isPinned = isPinned,
+                    checklistJson = ChecklistItem.listToJson(checklist),
+                    audioDurationSec = audioDurationSec,
+                    audioFilePath = audioFilePath,
+                    audioByteSize = audioByteSize,
+                    createdAt = now,
+                    updatedAt = now,
+                    syncId = UUID.randomUUID().toString()
+                )
+                val savedVaultItem = withContext(Dispatchers.IO) {
+                    LocalDeviceStorageManager.saveNoteAsVaultItem(app, rawNote)
+                }
+                vaultDao.insertImmutableItem(savedVaultItem)
+                vaultMetaRevision.value += 1L
+
+                if (audioFilePath.isNotBlank() && !audioFilePath.startsWith("content://")) {
+                    withContext(Dispatchers.IO) {
+                        val oldAudio = java.io.File(audioFilePath)
+                        val audioDir = AudioStorageManager.audioDir(app)
+                        if (oldAudio.exists() && oldAudio.parentFile?.absolutePath == audioDir.absolutePath) {
+                            oldAudio.delete()
+                        }
+                    }
+                }
+
+                val allowedInCloud = AudioCloudPolicy.canStoreVaultItemInCloud(savedVaultItem)
+                if (allowedInCloud) {
+                    currentUser.value?.uid?.let { uid ->
+                        launch(Dispatchers.IO) {
+                            FirebaseSyncRepository.upsertVaultItem(app, uid, savedVaultItem)
+                        }
+                    }
+                }
+                val isAudio = audioDurationSec > 0 || audioFilePath.isNotBlank()
+                showSnackbar(
+                    translateText(
+                        appLanguage.value,
+                        ar = if (isAudio) "تم حفظ التسجيل الصوتي في الـ Vault 🎙️🔒" else "تم حفظ المدونة في الـ Vault 📝🔒",
+                        fr = if (isAudio) "Note vocale enregistrée dans le Vault 🎙️🔒" else "Note enregistrée dans le Vault 📝🔒",
+                        en = if (isAudio) "Voice note saved in Vault 🎙️🔒" else "Note saved in Vault 📝🔒",
+                        tzm = if (isAudio) "Tira n yimesli tekles deg Vault 🎙️🔒" else "Tira tekles deg Vault 📝🔒"
+                    )
+                )
+            } catch (e: Exception) {
+                showSnackbar(
+                    if (isArabic.value) "تعذر الحفظ في الـ Vault: ${e.localizedMessage}"
+                    else "Unable to save in Vault: ${e.localizedMessage}"
+                )
+            }
+        }
+    }
+
+    fun updateVaultNoteItem(
+        existingItem: VaultItemEntity,
+        existingMeta: NoteEntity?,
+        title: String,
+        content: String,
+        pagesJson: String,
+        category: String,
+        colorPreset: String,
+        backgroundId: String,
+        customColorArgb: Long,
+        isPinned: Boolean,
+        checklist: List<ChecklistItem>,
+        audioDurationSec: Int,
+        audioFilePath: String,
+        audioByteSize: Long
+    ) {
+        viewModelScope.launch {
+            try {
+                val app = getApplication<Application>()
+                val updated = withContext(Dispatchers.IO) {
+                    LocalDeviceStorageManager.updateVaultNoteAndAudioItem(
+                        context = app,
+                        existingItem = existingItem,
+                        existingMeta = existingMeta,
+                        title = title,
+                        content = content,
+                        pagesJson = pagesJson,
+                        category = category,
+                        colorPreset = colorPreset,
+                        backgroundId = backgroundId,
+                        customColorArgb = customColorArgb,
+                        isPinned = isPinned,
+                        checklist = checklist,
+                        audioDurationSec = audioDurationSec,
+                        audioFilePath = audioFilePath,
+                        audioByteSize = audioByteSize
+                    )
+                }
+                vaultDao.upsertEditedVaultItem(updated)
+                vaultMetaRevision.value += 1L
+
+                if (AudioCloudPolicy.canStoreVaultItemInCloud(updated)) {
+                    currentUser.value?.uid?.let { uid ->
+                        launch(Dispatchers.IO) {
+                            FirebaseSyncRepository.upsertVaultItem(app, uid, updated)
+                        }
+                    }
+                }
+                val isAudio = audioDurationSec > 0 || audioFilePath.isNotBlank()
+                showSnackbar(
+                    translateText(
+                        appLanguage.value,
+                        ar = if (isAudio) "تم تحديث التسجيل الصوتي في الـ Vault ✓" else "تم تحديث المدونة في الـ Vault ✓",
+                        fr = if (isAudio) "Note vocale mise à jour dans le Vault ✓" else "Note mise à jour dans le Vault ✓",
+                        en = if (isAudio) "Voice note updated in Vault ✓" else "Note updated in Vault ✓",
+                        tzm = if (isAudio) "Tira n yimesli ttwaseqdec deg Vault ✓" else "Tira ttwaseqdec deg Vault ✓"
+                    )
+                )
+            } catch (e: Exception) {
+                showSnackbar(
+                    if (isArabic.value) "تعذر التحديث: ${e.localizedMessage}"
+                    else "Update failed: ${e.localizedMessage}"
+                )
+            }
         }
     }
 

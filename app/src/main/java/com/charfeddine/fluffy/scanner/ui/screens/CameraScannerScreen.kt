@@ -32,6 +32,7 @@ import androidx.camera.core.ImageCapture.FLASH_MODE_OFF
 import androidx.camera.core.ImageCapture.FLASH_MODE_ON
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -210,7 +211,7 @@ fun CameraScannerScreen(
     val idGuideTopOffsetPx = remember(density) { with(density) { 20.dp.toPx() } }
     var flashMode by remember { mutableIntStateOf(FLASH_MODE_OFF) }
     var showGrid by remember { mutableStateOf(true) }
-    var autoCaptureEnabled by remember { mutableStateOf(true) }
+    var autoCaptureEnabled by remember { mutableStateOf(false) }
     var edgeState by remember { mutableStateOf(TrackedEdgeState()) }
     var barcodeResult by remember { mutableStateOf<BarcodeScanResult?>(null) }
     var showCapturedBanner by remember { mutableStateOf(false) }
@@ -261,9 +262,12 @@ fun CameraScannerScreen(
     var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
     var cameraProviderRef by remember { mutableStateOf<ProcessCameraProvider?>(null) }
     var focusTapOffset by remember { mutableStateOf<Offset?>(null) }
+    val isDisposed = remember { AtomicBoolean(false) }
+    val isCaptureInFlight = remember { AtomicBoolean(false) }
 
     DisposableEffect(Unit) {
         onDispose {
+            isDisposed.set(true)
             runCatching { cameraProviderRef?.unbindAll() }
             runCatching { cameraExecutor.shutdownNow() }
             stabilityTracker.reset()
@@ -297,7 +301,9 @@ fun CameraScannerScreen(
     }
 
     fun takePhoto(autoGoCrop: Boolean) {
+        if (isDisposed.get()) return
         val cap = imageCapture ?: return
+        if (!isCaptureInFlight.compareAndSet(false, true)) return
         stabilityTracker.markCaptured()
         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
         showCaptureFlash = true
@@ -357,36 +363,48 @@ fun CameraScannerScreen(
         val mainHandler = Handler(Looper.getMainLooper())
 
         val executeShutter = Runnable {
+            if (isDisposed.get()) {
+                isCaptureInFlight.set(false)
+                return@Runnable
+            }
             if (!shutterFired.compareAndSet(false, true)) return@Runnable
-            cap.takePicture(
-                outputOptions,
-                mainExecutor,
-                object : ImageCapture.OnImageSavedCallback {
-                    override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                        scannerViewModel.processCapturedFile(
-                            file = outFile,
-                            appendToDocId = appendToDocId,
-                            isArabic = isArabic,
-                            capturedQuad = lockedQuadSnapshot,
-                            capturedPreviewCorners = previewCornersSnapshot,
-                            idGuidePreviewCorners = idGuidePreviewCornersSnapshot,
-                            previewWidth = pvWidthSnapshot,
-                            previewHeight = pvHeightSnapshot,
-                            analyzerWidth = analyzerW,
-                            analyzerHeight = analyzerH,
-                            autoNavigateToCrop = autoGoCrop
-                        )
-                    }
+            runCatching {
+                cap.takePicture(
+                    outputOptions,
+                    mainExecutor,
+                    object : ImageCapture.OnImageSavedCallback {
+                        override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                            isCaptureInFlight.set(false)
+                            if (isDisposed.get()) return
+                            scannerViewModel.processCapturedFile(
+                                file = outFile,
+                                appendToDocId = appendToDocId,
+                                isArabic = isArabic,
+                                capturedQuad = lockedQuadSnapshot,
+                                capturedPreviewCorners = previewCornersSnapshot,
+                                idGuidePreviewCorners = idGuidePreviewCornersSnapshot,
+                                previewWidth = pvWidthSnapshot,
+                                previewHeight = pvHeightSnapshot,
+                                analyzerWidth = analyzerW,
+                                analyzerHeight = analyzerH,
+                                autoNavigateToCrop = autoGoCrop
+                            )
+                        }
 
-                    override fun onError(exception: ImageCaptureException) {
-                        Toast.makeText(
-                            context,
-                            if (isArabic) "تعذر التقاط الصورة: ${exception.message}" else "Capture failed: ${exception.message}",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        override fun onError(exception: ImageCaptureException) {
+                            isCaptureInFlight.set(false)
+                            if (isDisposed.get()) return
+                            Toast.makeText(
+                                context,
+                                if (isArabic) "تعذر التقاط الصورة: ${exception.message}" else "Capture failed: ${exception.message}",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
                     }
-                }
-            )
+                )
+            }.onFailure {
+                isCaptureInFlight.set(false)
+            }
         }
 
         // Pre-capture FocusMeteringAction locked onto detected document bounding box or frame center
@@ -595,22 +613,31 @@ fun CameraScannerScreen(
                 val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
                 cameraProviderFuture.addListener({
                     val provider = cameraProviderFuture.get()
+                    if (isDisposed.get()) return@addListener
                     cameraProviderRef = provider
-                    val preview = Preview.Builder().build().also {
-                        it.setSurfaceProvider(previewView.surfaceProvider)
-                    }
+                    val previewResolutionSelector = ResolutionSelector.Builder()
+                        .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+                        .build()
+                    val preview = Preview.Builder()
+                        .setResolutionSelector(previewResolutionSelector)
+                        .build()
+                        .also {
+                            it.setSurfaceProvider(previewView.surfaceProvider)
+                        }
                     val captureResolutionSelector = ResolutionSelector.Builder()
+                        .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
                         .setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY)
                         .build()
                     val capture = ImageCapture.Builder()
-                        .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
-                        .setJpegQuality(100)
+                        .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                        .setJpegQuality(95)
                         .setResolutionSelector(captureResolutionSelector)
                         .setFlashMode(flashMode)
                         .build()
                     imageCapture = capture
 
                     val analysisResolutionSelector = ResolutionSelector.Builder()
+                        .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
                         .setResolutionStrategy(
                             ResolutionStrategy(
                                 AndroidSize(640, 480),
@@ -625,6 +652,10 @@ fun CameraScannerScreen(
                         .build()
                     val mainExec = ContextCompat.getMainExecutor(ctx)
                     analysis.setAnalyzer(cameraExecutor) { imageProxy ->
+                        if (isDisposed.get()) {
+                            imageProxy.close()
+                            return@setAnalyzer
+                        }
                         val now = System.currentTimeMillis()
                         val modeNow = latestActiveMode
                         if (modeNow == ScanMode.QR_BARCODE) {
@@ -633,24 +664,30 @@ fun CameraScannerScreen(
                                 val inputImg = InputImage.fromMediaImage(mediaImg, imageProxy.imageInfo.rotationDegrees)
                                 OfflineOcrAndBarcodeEngine.scanBarcodeFromInputImage(
                                     image = inputImg,
-                                    onDetected = { res -> if (res != null) barcodeResult = res },
+                                    onDetected = { res -> if (res != null && !isDisposed.get()) barcodeResult = res },
                                     onComplete = { imageProxy.close() }
                                 )
                             } else {
                                 imageProxy.close()
                             }
                         } else {
-                            val rawRes = DocumentImageProcessor.detectDocumentQuadFromImageProxy(imageProxy)
-                            val tracked = stabilityTracker.update(
-                                detection = rawRes,
-                                nowMs = now,
-                                autoCaptureEnabled = latestAutoCapture && !latestIsBusy && modeNow != ScanMode.ID_CARD
-                            )
+                            val rawRes = runCatching {
+                                DocumentImageProcessor.detectDocumentQuadFromImageProxy(imageProxy)
+                            }.getOrNull()
                             imageProxy.close()
-                            mainExec.execute {
-                                edgeState = tracked
-                                if (tracked.shouldAutoCapture && !latestIsBusy) {
-                                    latestTakePhoto(false)
+                            if (rawRes != null && !isDisposed.get()) {
+                                val tracked = stabilityTracker.update(
+                                    detection = rawRes,
+                                    nowMs = now,
+                                    autoCaptureEnabled = latestAutoCapture && !latestIsBusy && modeNow != ScanMode.ID_CARD
+                                )
+                                mainExec.execute {
+                                    if (!isDisposed.get()) {
+                                        edgeState = tracked
+                                        if (tracked.shouldAutoCapture && !latestIsBusy) {
+                                            latestTakePhoto(false)
+                                        }
+                                    }
                                 }
                             }
                         }

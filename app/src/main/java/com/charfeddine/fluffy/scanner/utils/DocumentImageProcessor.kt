@@ -96,6 +96,71 @@ object DocumentImageProcessor {
     }
 
     /**
+     * Crops [source] from sensor dimensions to match the exact center-cropped aspect ratio shown
+     * inside [PreviewView] (`FILL_CENTER` with dimensions `previewWidth x previewHeight`).
+     * Eliminates zoom-out FOV mismatch ("يبعد الصورة") between live camera preview and `1. Crop`.
+     */
+    fun cropBitmapToPreviewViewport(
+        source: Bitmap,
+        previewWidth: Int,
+        previewHeight: Int
+    ): Bitmap {
+        if (previewWidth <= 0 || previewHeight <= 0 || source.width <= 0 || source.height <= 0) {
+            return source
+        }
+        val targetAspect = previewWidth.toFloat() / previewHeight.toFloat()
+        val srcAspect = source.width.toFloat() / source.height.toFloat()
+        if (abs(targetAspect - srcAspect) < 0.02f) {
+            return source
+        }
+
+        val cropW: Int
+        val cropH: Int
+        val cropX: Int
+        val cropY: Int
+        if (srcAspect > targetAspect) {
+            // Source is wider than preview -> crop horizontally centered
+            cropH = source.height
+            cropW = (source.height * targetAspect).roundToInt().coerceIn(32, source.width)
+            cropX = ((source.width - cropW) * 0.5f).roundToInt().coerceIn(0, source.width - cropW)
+            cropY = 0
+        } else {
+            // Source is taller than preview -> crop vertically centered
+            cropW = source.width
+            cropH = (source.width / targetAspect).roundToInt().coerceIn(32, source.height)
+            cropX = 0
+            cropY = ((source.height - cropH) * 0.5f).roundToInt().coerceIn(0, source.height - cropH)
+        }
+        return runCatching {
+            Bitmap.createBitmap(source, cropX, cropY, cropW, cropH)
+        }.getOrDefault(source)
+    }
+
+    /**
+     * Returns true when [quad] is a real non-fallback convex document boundary.
+     */
+    fun isValidDocumentQuad(quad: DocumentQuad): Boolean {
+        if (quad == DocumentQuad.SAFE_DEFAULT_MARGIN || quad == DocumentQuad.FULL_FRAME) {
+            return false
+        }
+        val pts = quad.asList()
+        if (pts.any { it.x.isNaN() || it.y.isNaN() }) return false
+        var area2 = 0f
+        for (i in 0 until 4) {
+            val a = pts[i]
+            val b = pts[(i + 1) % 4]
+            area2 += a.x * b.y - b.x * a.y
+        }
+        val area = abs(area2) * 0.5f
+        if (area < 0.075f || area > 0.97f) return false
+        val topW = hypot((quad.topRight.x - quad.topLeft.x).toDouble(), (quad.topRight.y - quad.topLeft.y).toDouble())
+        val botW = hypot((quad.bottomRight.x - quad.bottomLeft.x).toDouble(), (quad.bottomRight.y - quad.bottomLeft.y).toDouble())
+        val leftH = hypot((quad.bottomLeft.x - quad.topLeft.x).toDouble(), (quad.bottomLeft.y - quad.topLeft.y).toDouble())
+        val rightH = hypot((quad.bottomRight.x - quad.topRight.x).toDouble(), (quad.bottomRight.y - quad.topRight.y).toDouble())
+        return min(topW, botW) > 0.14 && min(leftH, rightH) > 0.14
+    }
+
+    /**
      * Multiplies normalized [0..1] corner coordinates by the actual [Bitmap] pixel dimensions
      * (`bitmapWidth x bitmapHeight`) to yield exact pixel-space [PointF] coordinates `[TL, TR, BR, BL]`.
      */
@@ -171,7 +236,7 @@ object DocumentImageProcessor {
      * Perspective warp transformation using Matrix.setPolyToPoly (homography warp)
      * to flatten skewed pages into an upright rectangular document bitmap.
      */
-    fun warpPerspective(source: Bitmap, quad: DocumentQuad, maxSidePx: Int = 4096): Bitmap {
+    fun warpPerspective(source: Bitmap, quad: DocumentQuad, maxSidePx: Int = 2400): Bitmap {
         val w = source.width.toFloat()
         val h = source.height.toFloat()
         val tlX = quad.topLeft.x * w
@@ -281,26 +346,32 @@ object DocumentImageProcessor {
         brightness: Float = 0f,
         contrast: Float = 1f,
         sharpness: Float = 0f,
-        rotationDeg: Int = 0
+        rotationDeg: Int = 0,
+        enableSuperRes: Boolean = true
     ): Bitmap {
         val rotated = if (rotationDeg % 360 != 0) rotateBitmap(source, rotationDeg.toFloat()) else source
 
         val filtered = when (filter) {
             ScannerFilterType.ORIGINAL -> rotated.copy(Bitmap.Config.ARGB_8888, true)
             ScannerFilterType.GRAYSCALE -> applyGrayscaleFilter(rotated)
-            ScannerFilterType.MAGIC_COLOR -> applyMagicColorFilter(rotated)
+            ScannerFilterType.MAGIC_COLOR -> applyMagicColorFilter(rotated, enableSuperRes = enableSuperRes)
             ScannerFilterType.BW_DOCUMENT -> applyAdaptiveBwThreshold(rotated)
             ScannerFilterType.SHADOW_GLARE_REMOVAL -> applyShadowGlareRemoval(rotated)
         }
+        if (rotated !== source && !rotated.isRecycled) rotated.recycle()
 
         val adjusted = if (abs(brightness) > 0.5f || abs(contrast - 1f) > 0.02f) {
-            applyBrightnessContrast(filtered, brightness, contrast)
+            applyBrightnessContrast(filtered, brightness, contrast).also {
+                if (it !== filtered && !filtered.isRecycled) filtered.recycle()
+            }
         } else {
             filtered
         }
 
         return if (sharpness > 0.05f) {
-            applySharpen(adjusted, sharpness.coerceIn(0f, 1f))
+            applySharpen(adjusted, sharpness.coerceIn(0f, 1f)).also {
+                if (it !== adjusted && !adjusted.isRecycled) adjusted.recycle()
+            }
         } else {
             adjusted
         }
@@ -354,14 +425,14 @@ object DocumentImageProcessor {
     ): Bitmap {
         val superRes = upscaleLanczos4IfNeeded(
             source = warped,
-            minLongestEdge = 2400,
-            maxScale = 2.6f
+            minLongestEdge = 2000,
+            maxScale = 2.2f
         )
         val normalized = applyIlluminationDivisionNormalization(
             source = superRes,
             preserveSkinAndPortrait = isIdCardMode
         )
-        if (superRes !== warped) {
+        if (superRes !== warped && !superRes.isRecycled) {
             superRes.recycle()
         }
         val sharpened = applyMultiScaleUnsharpMask(
@@ -369,7 +440,7 @@ object DocumentImageProcessor {
             strength = if (isIdCardMode) 0.72f else 0.85f,
             noiseThreshold = if (isIdCardMode) 6.0f else 5.0f
         )
-        if (sharpened !== normalized) {
+        if (sharpened !== normalized && !normalized.isRecycled) {
             normalized.recycle()
         }
         return sharpened
@@ -377,12 +448,12 @@ object DocumentImageProcessor {
 
     /**
      * Separable Lanczos4 (a = 4) adaptive super-resolution upscaler.
-     * Automatically upscales crops/ID cards below [minLongestEdge] (2400px) so text and portraits stay HD.
+     * Enforces an upper pixel budget (~3.8 MP) to guarantee zero OOM crashes on mobile devices.
      */
     fun upscaleLanczos4IfNeeded(
         source: Bitmap,
-        minLongestEdge: Int = 2400,
-        maxScale: Float = 2.6f
+        minLongestEdge: Int = 2000,
+        maxScale: Float = 2.2f
     ): Bitmap {
         val srcW = source.width
         val srcH = source.height
@@ -391,11 +462,20 @@ object DocumentImageProcessor {
             return source
         }
 
-        val desiredScale = (minLongestEdge.toFloat() / longest.toFloat()).coerceIn(1f, maxScale)
+        var desiredScale = (minLongestEdge.toFloat() / longest.toFloat()).coerceIn(1f, maxScale)
         if (desiredScale <= 1.03f) return source
 
-        val dstW = (srcW * desiredScale).roundToInt().coerceAtLeast(srcW + 1)
-        val dstH = (srcH * desiredScale).roundToInt().coerceAtLeast(srcH + 1)
+        var dstW = (srcW * desiredScale).roundToInt().coerceAtLeast(srcW + 1)
+        var dstH = (srcH * desiredScale).roundToInt().coerceAtLeast(srcH + 1)
+        val maxTotalPixels = 3_800_000L
+        val targetPixels = dstW.toLong() * dstH.toLong()
+        if (targetPixels > maxTotalPixels) {
+            val downRatio = kotlin.math.sqrt(maxTotalPixels.toDouble() / targetPixels.toDouble()).toFloat()
+            desiredScale *= downRatio
+            if (desiredScale <= 1.03f) return source
+            dstW = (srcW * desiredScale).roundToInt().coerceAtLeast(srcW + 1)
+            dstH = (srcH * desiredScale).roundToInt().coerceAtLeast(srcH + 1)
+        }
 
         // Precompute 8-tap Lanczos4 weights for each destination column & row (no sin() in pixel loops)
         val a = 4
@@ -534,7 +614,6 @@ object DocumentImageProcessor {
         fullBg.getPixels(bgPx, 0, w, 0, 0, w, h)
         fullBg.recycle()
 
-        val outPx = IntArray(n)
         if (preserveSkinAndPortrait) {
             // Dedicated ID Card illumination leveling: preserves natural skin tones & holographic contrast
             for (i in 0 until n) {
@@ -551,7 +630,7 @@ object DocumentImageProcessor {
                 val nr = (sr * gain).roundToInt().coerceIn(0, 255)
                 val ng = (sg * gain).roundToInt().coerceIn(0, 255)
                 val nb = (sb * gain).roundToInt().coerceIn(0, 255)
-                outPx[i] = (0xFF shl 24) or (nr shl 16) or (ng shl 8) or nb
+                srcPx[i] = (0xFF shl 24) or (nr shl 16) or (ng shl 8) or nb
             }
         } else {
             // Studio-lit Document normalization: luminance + white-balance division erases shadows & yellow cast
@@ -591,10 +670,10 @@ object DocumentImageProcessor {
                     ng = (ng * 0.88f).toInt().coerceIn(0, 255)
                     nb = (nb * 0.88f).toInt().coerceIn(0, 255)
                 }
-                outPx[i] = (0xFF shl 24) or (nr shl 16) or (ng shl 8) or nb
+                srcPx[i] = (0xFF shl 24) or (nr shl 16) or (ng shl 8) or nb
             }
         }
-        return Bitmap.createBitmap(outPx, w, h, Bitmap.Config.ARGB_8888)
+        return Bitmap.createBitmap(srcPx, w, h, Bitmap.Config.ARGB_8888)
     }
 
     /**
@@ -667,7 +746,6 @@ object DocumentImageProcessor {
             }
         }
 
-        val outPx = IntArray(n)
         for (i in 0 until n) {
             val lum = luma[i]
             val detailFine = (lum - fineBlur[i]).toFloat()
@@ -682,27 +760,29 @@ object DocumentImageProcessor {
                 0
             }
 
-            val c = srcPx[i]
-            if (delta == 0) {
-                outPx[i] = c
-            } else {
+            if (delta != 0) {
+                val c = srcPx[i]
                 val r = (((c ushr 16) and 0xFF) + delta).coerceIn(0, 255)
                 val g = (((c ushr 8) and 0xFF) + delta).coerceIn(0, 255)
                 val b = ((c and 0xFF) + delta).coerceIn(0, 255)
-                outPx[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                srcPx[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
             }
         }
-        return Bitmap.createBitmap(outPx, w, h, Bitmap.Config.ARGB_8888)
+        return Bitmap.createBitmap(srcPx, w, h, Bitmap.Config.ARGB_8888)
     }
 
     /**
      * Magic Color: local illumination background division removes shadows and yellow cast
      * while enriching ink clarity and crispness.
      */
-    private fun applyMagicColorFilter(source: Bitmap): Bitmap {
-        val superRes = upscaleLanczos4IfNeeded(source, minLongestEdge = 2400, maxScale = 2.4f)
+    private fun applyMagicColorFilter(source: Bitmap, enableSuperRes: Boolean = true): Bitmap {
+        val superRes = if (enableSuperRes) {
+            upscaleLanczos4IfNeeded(source, minLongestEdge = 2000, maxScale = 2.0f)
+        } else {
+            source
+        }
         val leveled = applyIlluminationDivisionNormalization(superRes, preserveSkinAndPortrait = false)
-        if (superRes !== source) superRes.recycle()
+        if (superRes !== source && !superRes.isRecycled) superRes.recycle()
         return leveled
     }
 
@@ -732,7 +812,6 @@ object DocumentImageProcessor {
         val s2 = (min(w, h) / 16).coerceIn(8, 38)
         val tFactor = 0.86f // Pixels < 86% of local mean become ink black
 
-        val outPx = IntArray(w * h)
         for (y in 0 until h) {
             val y1 = max(0, y - s2)
             val y2 = min(h - 1, y + s2)
@@ -747,10 +826,10 @@ object DocumentImageProcessor {
 
                 val idx = y * w + x
                 val isInk = (luma[idx] * count) < (sum * tFactor)
-                outPx[idx] = if (isInk) Color.rgb(18, 22, 28) else Color.WHITE
+                px[idx] = if (isInk) Color.rgb(18, 22, 28) else Color.WHITE
             }
         }
-        return Bitmap.createBitmap(outPx, w, h, Bitmap.Config.ARGB_8888)
+        return Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
     }
 
     /**
@@ -762,8 +841,8 @@ object DocumentImageProcessor {
     fun prepareBitmapForArabicOcr(source: Bitmap): Bitmap {
         val upscaled = upscaleLanczos4IfNeeded(
             source = source,
-            minLongestEdge = 2200,
-            maxScale = 2.2f
+            minLongestEdge = 2000,
+            maxScale = 2.0f
         )
         val leveled = applyIlluminationDivisionNormalization(
             source = upscaled,
@@ -799,7 +878,6 @@ object DocumentImageProcessor {
         fullBg.getPixels(bgPx, 0, w, 0, 0, w, h)
         fullBg.recycle()
 
-        val outPx = IntArray(w * h)
         for (i in srcPx.indices) {
             val s = srcPx[i]
             val b = bgPx[i]
@@ -808,9 +886,9 @@ object DocumentImageProcessor {
             val r = (Color.red(s) * ratio).toInt().coerceIn(0, 248)
             val g = (Color.green(s) * ratio).toInt().coerceIn(0, 248)
             val bl = (Color.blue(s) * ratio).toInt().coerceIn(0, 248)
-            outPx[i] = Color.rgb(r, g, bl)
+            srcPx[i] = Color.rgb(r, g, bl)
         }
-        return Bitmap.createBitmap(outPx, w, h, Bitmap.Config.ARGB_8888)
+        return Bitmap.createBitmap(srcPx, w, h, Bitmap.Config.ARGB_8888)
     }
 
     private fun applySharpen(source: Bitmap, amount: Float): Bitmap {

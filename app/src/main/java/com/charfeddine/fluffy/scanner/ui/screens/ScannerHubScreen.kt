@@ -5,10 +5,14 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,11 +36,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AddCircleOutline
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GridView
@@ -44,9 +50,10 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PictureAsPdf
-import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.RestoreFromTrash
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
@@ -55,6 +62,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -68,14 +76,20 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -88,14 +102,18 @@ import com.charfeddine.fluffy.scanner.data.model.ScannedDocumentEntity
 import com.charfeddine.fluffy.scanner.data.model.ScannerFolderEntity
 import com.charfeddine.fluffy.scanner.data.model.ScannerTagCatalog
 import com.charfeddine.fluffy.scanner.data.model.SortOption
+import com.charfeddine.fluffy.scanner.data.repository.ScannerLocalStoragePolicy
 import com.charfeddine.fluffy.scanner.domain.ScannerViewModel
 import com.charfeddine.fluffy.scanner.ui.components.PdfToolsSheet
 import com.charfeddine.fluffy.scanner.ui.theme.ScannerDarkLiquidBackdrop
 import com.charfeddine.fluffy.scanner.ui.theme.ScannerGlassPalette
 import com.charfeddine.fluffy.scanner.ui.theme.ScannerLaserIcon
 import com.charfeddine.fluffy.scanner.ui.theme.formatScannerBytes
+import com.charfeddine.fluffy.scanner.ui.theme.iosLiquidGlass
 import com.charfeddine.fluffy.scanner.ui.theme.scannerGlassSurface
 import java.io.File
+import kotlin.math.hypot
+import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
 fun ScannerHubScreen(
@@ -132,12 +150,18 @@ fun ScannerHubScreen(
     var showSortMenu by remember { mutableStateOf(false) }
     var showTagMenu by remember { mutableStateOf(false) }
     var showPdfToolsSheet by remember { mutableStateOf(false) }
+    var contextMenuDoc by remember { mutableStateOf<ScannedDocumentEntity?>(null) }
+    var showAddMoreSourceChoices by remember { mutableStateOf(false) }
+    var docToRename by remember { mutableStateOf<ScannedDocumentEntity?>(null) }
+    var pendingAppendGalleryDocId by remember { mutableStateOf<String?>(null) }
 
     val galleryImportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 15)
     ) { uris: List<Uri> ->
+        val appendDocId = pendingAppendGalleryDocId
+        pendingAppendGalleryDocId = null
         if (uris.isNotEmpty()) {
-            scannerViewModel.importGalleryUris(uris, appendToDocId = null, isArabic = isArabic)
+            scannerViewModel.importGalleryUris(uris, appendToDocId = appendDocId, isArabic = isArabic)
         }
     }
 
@@ -230,20 +254,6 @@ fun ScannerHubScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (!showTrash) {
                             IconButton(
-                                onClick = { scannerViewModel.openCameraScanner(appendToDocId = null) },
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .testTag("hub_pro_camera_btn")
-                                    .scannerGlassSurface(CircleShape)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.QrCodeScanner,
-                                    contentDescription = if (isArabic) "كاميرا Pro / QR / بطاقة" else "Pro Camera / QR / ID",
-                                    tint = ScannerGlassPalette.CyanGlow
-                                )
-                            }
-
-                            IconButton(
                                 onClick = { scannerViewModel.isGridView.value = !isGridView },
                                 modifier = Modifier
                                     .size(48.dp)
@@ -274,6 +284,48 @@ fun ScannerHubScreen(
                 }
 
                 if (showTrash) {
+                    if (trashedDocs.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (isArabic) "${trashedDocs.size} عنصر في السلة" else "${trashedDocs.size} trashed item${if (trashedDocs.size == 1) "" else "s"}",
+                                color = ScannerGlassPalette.TextSecondary,
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("hub_empty_trash_btn")
+                                    .clip(CircleShape)
+                                    .background(ScannerGlassPalette.RoseGlow.copy(alpha = 0.16f))
+                                    .border(1.dp, ScannerGlassPalette.RoseGlow.copy(alpha = 0.65f), CircleShape)
+                                    .clickable { scannerViewModel.emptyTrash(isArabic) }
+                                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.DeleteForever,
+                                    contentDescription = if (isArabic) "مسح الكل" else "Clear All",
+                                    tint = ScannerGlassPalette.RoseGlow,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = if (isArabic) "مسح الكل" else "Clear All",
+                                    color = ScannerGlassPalette.RoseGlow,
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+
                     // Clean Recycle Bin View
                     LazyColumn(
                         modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -388,7 +440,41 @@ fun ScannerHubScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Strict Local-Only Storage Law Notice
+                    if (!ScannerLocalStoragePolicy.ALLOW_CLOUD_SYNC) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .iosLiquidGlass(RoundedCornerShape(14.dp), fillAlpha = 0.56f)
+                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Shield,
+                                contentDescription = null,
+                                tint = ScannerGlassPalette.EmeraldGlow,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(
+                                text = if (isArabic) {
+                                    "تخزين محلي بالهاتف فقط • لا يُنقل لقاعدة البيانات"
+                                } else {
+                                    "Local Device Storage Only • Never Cloud Synced"
+                                },
+                                color = ScannerGlassPalette.TextSecondary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                    } else {
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
 
                     // 3. Structured Scrollable Content
                     LazyColumn(
@@ -738,6 +824,10 @@ fun ScannerHubScreen(
                                                     scannerViewModel.openDocumentDetail(doc.id)
                                                 }
                                             },
+                                            onLongPress = {
+                                                showAddMoreSourceChoices = false
+                                                contextMenuDoc = doc
+                                            },
                                             onToggleStar = { scannerViewModel.toggleStarred(doc) }
                                         )
                                     }
@@ -761,6 +851,10 @@ fun ScannerHubScreen(
                                         } else {
                                             scannerViewModel.openDocumentDetail(doc.id)
                                         }
+                                    },
+                                    onLongPress = {
+                                        showAddMoreSourceChoices = false
+                                        contextMenuDoc = doc
                                     },
                                     onToggleStar = { scannerViewModel.toggleStarred(doc) }
                                 )
@@ -873,6 +967,302 @@ fun ScannerHubScreen(
         onProtectPdf = { uri, pwd, outName -> scannerViewModel.passwordProtectPdf(uri, pwd, outName, isArabic) },
         onDismiss = { showPdfToolsSheet = false }
     )
+
+    // 0.5s Long-Press Luxurious Dark Liquid Glass Context Menu
+    contextMenuDoc?.let { menuDoc ->
+        val isDocUnlocked = !menuDoc.isLocked || menuDoc.id in unlockedIds
+        fun withDocAccess(action: () -> Unit) {
+            if (!isDocUnlocked) {
+                onRequestProtectedAccess(menuDoc.id) {
+                    scannerViewModel.markProtectedUnlocked(menuDoc.id)
+                    action()
+                }
+            } else {
+                action()
+            }
+        }
+
+        Dialog(
+            onDismissRequest = {
+                showAddMoreSourceChoices = false
+                contextMenuDoc = null
+            }
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("doc_context_menu_dialog")
+                    .iosLiquidGlass(RoundedCornerShape(28.dp), glowAccent = true, fillAlpha = 0.94f)
+                    .padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Header card
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(Color(0xFF0A1224))
+                            .border(0.8.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(14.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (!isDocUnlocked) {
+                            Icon(Icons.Default.Lock, contentDescription = null, tint = ScannerGlassPalette.EmeraldGlow)
+                        } else if (menuDoc.coverThumbnailPath.isNotBlank() && File(menuDoc.coverThumbnailPath).exists()) {
+                            Image(
+                                painter = rememberAsyncImagePainter(File(menuDoc.coverThumbnailPath)),
+                                contentDescription = menuDoc.title,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            ScannerLaserIcon(modifier = Modifier.size(28.dp))
+                        }
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = menuDoc.title,
+                            color = ScannerGlassPalette.TextPrimary,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 15.5.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = if (isArabic) {
+                                "${menuDoc.pageCount} صفحات • ${formatScannerBytes(menuDoc.totalSizeBytes, true)}"
+                            } else {
+                                "${menuDoc.pageCount} pages • ${formatScannerBytes(menuDoc.totalSizeBytes, false)}"
+                            },
+                            color = ScannerGlassPalette.TextSecondary,
+                            fontSize = 12.sp
+                        )
+                    }
+
+                    if (menuDoc.isPinned) {
+                        Box(
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(ScannerGlassPalette.CyanGlow.copy(alpha = 0.16f))
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PushPin,
+                                contentDescription = null,
+                                tint = ScannerGlassPalette.CyanGlow,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = Color.White.copy(alpha = 0.10f))
+
+                // 1. Pin / Unpin
+                ContextMenuActionRow(
+                    icon = Icons.Default.PushPin,
+                    label = if (menuDoc.isPinned) {
+                        if (isArabic) "إلغاء التثبيت" else "Unpin"
+                    } else {
+                        if (isArabic) "تثبيت في الأعلى" else "Pin"
+                    },
+                    accent = ScannerGlassPalette.CyanGlow,
+                    testTag = "context_menu_pin_btn",
+                    onClick = {
+                        scannerViewModel.togglePinned(menuDoc, isArabic)
+                        showAddMoreSourceChoices = false
+                        contextMenuDoc = null
+                    }
+                )
+
+                // 2. Rename
+                ContextMenuActionRow(
+                    icon = Icons.Default.Edit,
+                    label = if (isArabic) "إعادة التسمية" else "Rename",
+                    accent = ScannerGlassPalette.VioletGlow,
+                    testTag = "context_menu_rename_btn",
+                    onClick = {
+                        withDocAccess {
+                            showAddMoreSourceChoices = false
+                            contextMenuDoc = null
+                            docToRename = menuDoc
+                        }
+                    }
+                )
+
+                // 3. Add More (Camera or Gallery append)
+                ContextMenuActionRow(
+                    icon = Icons.Default.AddCircleOutline,
+                    label = if (isArabic) "إضافة صفحات المزيد" else "Add More",
+                    accent = ScannerGlassPalette.EmeraldGlow,
+                    testTag = "context_menu_add_more_btn",
+                    onClick = { showAddMoreSourceChoices = !showAddMoreSourceChoices }
+                )
+
+                if (showAddMoreSourceChoices) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .minimumInteractiveComponentSize()
+                                .iosLiquidGlass(RoundedCornerShape(14.dp), glowAccent = true, fillAlpha = 0.80f)
+                                .clickable {
+                                    withDocAccess {
+                                        showAddMoreSourceChoices = false
+                                        contextMenuDoc = null
+                                        scannerViewModel.openCameraScanner(appendToDocId = menuDoc.id)
+                                    }
+                                }
+                                .padding(horizontal = 10.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(Icons.Default.CameraAlt, contentDescription = null, tint = ScannerGlassPalette.CyanGlow, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(if (isArabic) "الكاميرا" else "Camera", color = ScannerGlassPalette.TextPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .minimumInteractiveComponentSize()
+                                .iosLiquidGlass(RoundedCornerShape(14.dp), fillAlpha = 0.72f)
+                                .clickable {
+                                    withDocAccess {
+                                        showAddMoreSourceChoices = false
+                                        contextMenuDoc = null
+                                        pendingAppendGalleryDocId = menuDoc.id
+                                        galleryImportLauncher.launch(
+                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                        )
+                                    }
+                                }
+                                .padding(horizontal = 10.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(Icons.Default.PhotoLibrary, contentDescription = null, tint = ScannerGlassPalette.VioletGlow, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(if (isArabic) "المعرض" else "Gallery", color = ScannerGlassPalette.TextPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+
+                // 4. Delete
+                ContextMenuActionRow(
+                    icon = Icons.Default.DeleteOutline,
+                    label = if (isArabic) "حذف" else "Delete",
+                    accent = ScannerGlassPalette.RoseGlow,
+                    testTag = "context_menu_delete_btn",
+                    onClick = {
+                        withDocAccess {
+                            scannerViewModel.moveToTrash(menuDoc.id, isArabic)
+                            showAddMoreSourceChoices = false
+                            contextMenuDoc = null
+                        }
+                    }
+                )
+            }
+        }
+    }
+
+    // Rename Document Dialog triggered from 0.5s Context Menu
+    docToRename?.let { targetDoc ->
+        var draftTitle by remember(targetDoc.id) { mutableStateOf(targetDoc.title) }
+        Dialog(onDismissRequest = { docToRename = null }) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .iosLiquidGlass(RoundedCornerShape(24.dp), glowAccent = true, fillAlpha = 0.94f)
+                    .padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = if (isArabic) "إعادة تسمية المستند" else "Rename Document",
+                    color = ScannerGlassPalette.TextPrimary,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+                OutlinedTextField(
+                    value = draftTitle,
+                    onValueChange = { draftTitle = it },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = ScannerGlassPalette.CyanGlow,
+                        unfocusedBorderColor = Color.White.copy(alpha = 0.24f),
+                        focusedTextColor = ScannerGlassPalette.TextPrimary,
+                        unfocusedTextColor = ScannerGlassPalette.TextPrimary
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = { docToRename = null }) {
+                        Text(if (isArabic) "إلغاء" else "Cancel", color = ScannerGlassPalette.TextSecondary)
+                    }
+                    Button(
+                        enabled = draftTitle.trim().isNotEmpty(),
+                        colors = ButtonDefaults.buttonColors(containerColor = ScannerGlassPalette.CyanGlow),
+                        onClick = {
+                            scannerViewModel.renameDocument(targetDoc, draftTitle.trim())
+                            docToRename = null
+                        }
+                    ) {
+                        Text(if (isArabic) "حفظ" else "Save", color = Color(0xFF04101B), fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+    }
+}
+
+@Composable
+private fun ContextMenuActionRow(
+    icon: ImageVector,
+    label: String,
+    accent: Color,
+    testTag: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .minimumInteractiveComponentSize()
+            .testTag(testTag)
+            .iosLiquidGlass(RoundedCornerShape(16.dp), glowAccent = false, fillAlpha = 0.72f)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(accent.copy(alpha = 0.16f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = accent,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+        Text(
+            text = label,
+            color = if (accent == ScannerGlassPalette.RoseGlow) ScannerGlassPalette.RoseGlow else ScannerGlassPalette.TextPrimary,
+            fontWeight = FontWeight.Bold,
+            fontSize = 14.sp
+        )
     }
 }
 
@@ -1014,12 +1404,78 @@ private fun DocumentGridCard(
     isUnlocked: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
+    onLongPress: () -> Unit,
     onToggleStar: () -> Unit
 ) {
+    val haptics = LocalHapticFeedback.current
+    val viewConfig = LocalViewConfiguration.current
+    val currentOnClick by rememberUpdatedState(onClick)
+    val currentOnLongPress by rememberUpdatedState(onLongPress)
+    var isPressed by remember { mutableStateOf(false) }
+    val pressScale by animateFloatAsState(
+        targetValue = if (isPressed) 0.96f else 1f,
+        animationSpec = spring(dampingRatio = 0.72f, stiffness = 500f),
+        label = "grid_card_press_scale"
+    )
+
     Column(
         modifier = modifier
-            .scannerGlassSurface(RoundedCornerShape(20.dp))
-            .clickable(onClick = onClick)
+            .graphicsLayer {
+                scaleX = pressScale
+                scaleY = pressScale
+            }
+            .scannerGlassSurface(RoundedCornerShape(20.dp), glowBorder = doc.isPinned)
+            .pointerInput(doc.id) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    isPressed = true
+                    var movedOrConsumed = false
+                    var longPressTriggered = false
+                    try {
+                        val upBeforeTimeout = withTimeoutOrNull(500L) {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id }
+                                    ?: event.changes.firstOrNull()
+                                if (change == null || !change.pressed) {
+                                    return@withTimeoutOrNull change
+                                }
+                                if (change.isConsumed) {
+                                    movedOrConsumed = true
+                                    return@withTimeoutOrNull null
+                                }
+                                val dist = hypot(
+                                    change.position.x - down.position.x,
+                                    change.position.y - down.position.y
+                                )
+                                if (dist > viewConfig.touchSlop) {
+                                    movedOrConsumed = true
+                                    return@withTimeoutOrNull null
+                                }
+                            }
+                            @Suppress("UNREACHABLE_CODE")
+                            null
+                        }
+                        if (!movedOrConsumed && upBeforeTimeout == null) {
+                            longPressTriggered = true
+                            isPressed = false
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            currentOnLongPress()
+                            do {
+                                val event = awaitPointerEvent()
+                                event.changes.forEach { it.consume() }
+                            } while (event.changes.any { it.pressed })
+                        } else if (!movedOrConsumed && upBeforeTimeout != null && !longPressTriggered) {
+                            isPressed = false
+                            if (!upBeforeTimeout.isConsumed) {
+                                currentOnClick()
+                            }
+                        }
+                    } finally {
+                        isPressed = false
+                    }
+                }
+            }
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -1042,6 +1498,24 @@ private fun DocumentGridCard(
                 )
             } else {
                 ScannerLaserIcon(modifier = Modifier.size(40.dp))
+            }
+
+            if (doc.isPinned) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.68f))
+                        .padding(5.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PushPin,
+                        contentDescription = if (isArabic) "مثبت" else "Pinned",
+                        tint = ScannerGlassPalette.CyanGlow,
+                        modifier = Modifier.size(12.dp)
+                    )
+                }
             }
 
             Box(
@@ -1094,13 +1568,79 @@ private fun DocumentListCard(
     isArabic: Boolean,
     isUnlocked: Boolean,
     onClick: () -> Unit,
+    onLongPress: () -> Unit,
     onToggleStar: () -> Unit
 ) {
+    val haptics = LocalHapticFeedback.current
+    val viewConfig = LocalViewConfiguration.current
+    val currentOnClick by rememberUpdatedState(onClick)
+    val currentOnLongPress by rememberUpdatedState(onLongPress)
+    var isPressed by remember { mutableStateOf(false) }
+    val pressScale by animateFloatAsState(
+        targetValue = if (isPressed) 0.97f else 1f,
+        animationSpec = spring(dampingRatio = 0.72f, stiffness = 500f),
+        label = "list_card_press_scale"
+    )
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .scannerGlassSurface(RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick)
+            .graphicsLayer {
+                scaleX = pressScale
+                scaleY = pressScale
+            }
+            .scannerGlassSurface(RoundedCornerShape(18.dp), glowBorder = doc.isPinned)
+            .pointerInput(doc.id) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    isPressed = true
+                    var movedOrConsumed = false
+                    var longPressTriggered = false
+                    try {
+                        val upBeforeTimeout = withTimeoutOrNull(500L) {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id }
+                                    ?: event.changes.firstOrNull()
+                                if (change == null || !change.pressed) {
+                                    return@withTimeoutOrNull change
+                                }
+                                if (change.isConsumed) {
+                                    movedOrConsumed = true
+                                    return@withTimeoutOrNull null
+                                }
+                                val dist = hypot(
+                                    change.position.x - down.position.x,
+                                    change.position.y - down.position.y
+                                )
+                                if (dist > viewConfig.touchSlop) {
+                                    movedOrConsumed = true
+                                    return@withTimeoutOrNull null
+                                }
+                            }
+                            @Suppress("UNREACHABLE_CODE")
+                            null
+                        }
+                        if (!movedOrConsumed && upBeforeTimeout == null) {
+                            longPressTriggered = true
+                            isPressed = false
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            currentOnLongPress()
+                            do {
+                                val event = awaitPointerEvent()
+                                event.changes.forEach { it.consume() }
+                            } while (event.changes.any { it.pressed })
+                        } else if (!movedOrConsumed && upBeforeTimeout != null && !longPressTriggered) {
+                            isPressed = false
+                            if (!upBeforeTimeout.isConsumed) {
+                                currentOnClick()
+                            }
+                        }
+                    } finally {
+                        isPressed = false
+                    }
+                }
+            }
             .padding(10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -1127,14 +1667,28 @@ private fun DocumentListCard(
         }
 
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = doc.title,
-                color = ScannerGlassPalette.TextPrimary,
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                if (doc.isPinned) {
+                    Icon(
+                        imageVector = Icons.Default.PushPin,
+                        contentDescription = if (isArabic) "مثبت" else "Pinned",
+                        tint = ScannerGlassPalette.CyanGlow,
+                        modifier = Modifier.size(13.dp)
+                    )
+                }
+                Text(
+                    text = doc.title,
+                    color = ScannerGlassPalette.TextPrimary,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+            }
             Text(
                 text = if (isArabic) "${doc.pageCount} صفحات • ${formatScannerBytes(doc.totalSizeBytes, true)}" else "${doc.pageCount} pages • ${formatScannerBytes(doc.totalSizeBytes, false)}",
                 color = ScannerGlassPalette.TextSecondary,

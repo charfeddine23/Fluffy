@@ -56,12 +56,14 @@ import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.NoteAdd
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.ViewAgenda
@@ -119,6 +121,7 @@ import com.example.ui.components.AudioPlayerCard
 import com.example.ui.components.VaultGalleryCard
 import com.example.ui.components.VaultMagazineCard
 import com.example.ui.components.VaultNoteStyleCard
+import com.example.ui.components.VoiceRecorderDialog
 import com.example.ui.glass.FrostedBackdrop
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.glass.liquidGlass
@@ -136,7 +139,39 @@ fun VaultScreen(
     viewMode: NotesViewMode = NotesViewMode.GRID,
     onSelectViewMode: (NotesViewMode) -> Unit = {},
     vaultNoteMetaMap: Map<String, NoteEntity> = emptyMap(),
+    isPremium: Boolean = false,
+    onRequestPremiumUpgrade: () -> Unit = {},
     onSaveLiteralText: (title: String, literalContent: String) -> Unit,
+    onCreateRichNote: (
+        title: String,
+        content: String,
+        pagesJson: String,
+        category: String,
+        colorPreset: String,
+        backgroundId: String,
+        customColorArgb: Long,
+        isPinned: Boolean,
+        checklist: List<ChecklistItem>,
+        audioDurationSec: Int,
+        audioFilePath: String,
+        audioByteSize: Long
+    ) -> Unit = { _, _, _, _, _, _, _, _, _, _, _, _ -> },
+    onUpdateVaultNote: (
+        existingItem: VaultItemEntity,
+        existingMeta: NoteEntity?,
+        title: String,
+        content: String,
+        pagesJson: String,
+        category: String,
+        colorPreset: String,
+        backgroundId: String,
+        customColorArgb: Long,
+        isPinned: Boolean,
+        checklist: List<ChecklistItem>,
+        audioDurationSec: Int,
+        audioFilePath: String,
+        audioByteSize: Long
+    ) -> Unit = { _, _, _, _, _, _, _, _, _, _, _, _, _, _ -> },
     onSaveFileUri: (Uri) -> Unit,
     onExportItemToUri: (VaultItemEntity, Uri) -> Unit,
     onMoveToNotes: (VaultItemEntity) -> Unit = {},
@@ -174,6 +209,8 @@ fun VaultScreen(
     var pendingExportItem by remember { mutableStateOf<VaultItemEntity?>(null) }
     var pendingDeleteItem by remember { mutableStateOf<VaultItemEntity?>(null) }
     var previewItem by remember { mutableStateOf<VaultItemEntity?>(null) }
+    var editingTarget by remember { mutableStateOf<Pair<VaultItemEntity?, NoteEntity?>?>(null) }
+    var showVoiceRecorderInVault by remember { mutableStateOf(false) }
     var passkeyAttempt by remember { mutableStateOf("") }
     var passkeyError by remember { mutableStateOf(false) }
     var promptedSessionId by rememberSaveable { mutableLongStateOf(-1L) }
@@ -710,6 +747,91 @@ fun VaultScreen(
                     }
                 }
 
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Quick Action Row 2: Rich Multi-Page Blog/Note & Voice Note inside Vault
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .widthIn(max = 540.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    LiquidGlassCard(
+                        isDark = isDark,
+                        tint = GlassTint.EMERALD,
+                        shape = RoundedCornerShape(18.dp),
+                        borderWidth = 1.2.dp,
+                        onClick = {
+                            playbackController.stop()
+                            editingTarget = null to null
+                        },
+                        testTag = "vault_add_rich_note_button",
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 13.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = null,
+                                tint = Color(0xFF34D399),
+                                modifier = Modifier.size(17.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = tr("مدونة ومهام جديدة", "Note enrichie", "Rich Blog / Note", "Tira tamaynut"),
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = textColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    LiquidGlassCard(
+                        isDark = isDark,
+                        tint = GlassTint.ROSE,
+                        shape = RoundedCornerShape(18.dp),
+                        borderWidth = 1.2.dp,
+                        onClick = {
+                            playbackController.stop()
+                            showVoiceRecorderInVault = true
+                        },
+                        testTag = "vault_add_voice_button",
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 13.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Mic,
+                                contentDescription = null,
+                                tint = Color(0xFFF472B6),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = tr("نوتة صوتية جديدة", "Note vocale", "Record Voice Note", "Imesli amaynut"),
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = textColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+
                 // Literal Immutable Text Composer
                 AnimatedVisibility(visible = showTextComposer) {
                     LiquidGlassCard(
@@ -1126,11 +1248,17 @@ fun VaultScreen(
         }
     }
 
-    // Detail Preview Dialog when tapping any Vault card (includes Audio playback & Move back)
-    previewItem?.let { item ->
+    // Detail Preview Dialog when tapping any Vault card (includes Audio playback, Edit & Move back)
+    previewItem?.let { rawPreviewItem ->
+        val item = vaultItems.firstOrNull { it.id == rawPreviewItem.id } ?: rawPreviewItem
         val metaNote = vaultNoteMetaMap[item.id]
         val isAudio = AudioCloudPolicy.isAudioFile(item.mimeType, item.fileName) ||
             ((metaNote?.audioDurationSec ?: 0) > 0 && item.localFilePath.isNotBlank())
+        val isEditableNoteOrAudio = isAudio ||
+            metaNote != null ||
+            item.mimeType.startsWith("text/") ||
+            item.literalContent.isNotEmpty() ||
+            item.localFilePath.isBlank()
         val checklistItems = remember(metaNote?.checklistJson) {
             metaNote?.let { ChecklistItem.jsonToList(it.checklistJson) }.orEmpty()
         }
@@ -1228,7 +1356,7 @@ fun VaultScreen(
                         )
                         Text(
                             text = if (isIntegrityValid) {
-                                if (isArabic) "محفوظ حرفياً ✓" else "Verbatim & Immutable ✓"
+                                if (isArabic) "محفوظ في الخزنة ✓" else "Vault Verified ✓"
                             } else {
                                 if (isArabic) "نسخة محلية" else "Local Copy"
                             },
@@ -1325,85 +1453,221 @@ fun VaultScreen(
                         }
                     }
 
-                    // Preview Actions: Move back to Notes/Audio, Export, Delete
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Button(
-                            onClick = {
-                                playbackController.stop()
-                                previewItem = null
-                                onMoveToNotes(item)
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF10B981),
-                                contentColor = Color.White
-                            ),
-                            shape = RoundedCornerShape(14.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("vault_preview_move_to_notes")
+                    // Preview Actions: Edit inside Vault, Move back to Notes/Audio, Export, Delete
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.LockOpen,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = if (isAudio) {
-                                    tr("للتسجيلات", "Enregistrements", "To Audio", "I imesli")
-                                } else {
-                                    tr("إرجاع للمسودات", "Vers Notes", "To Notes", "Ɣer tazmilt")
-                                },
-                                fontSize = 12.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-
-                        OutlinedButton(
-                            onClick = {
-                                playbackController.stop()
-                                previewItem = null
-                                pendingExportItem = item
-                                val suggested = item.fileName.ifBlank {
-                                    (item.title.ifBlank { "vault_note_${item.createdAt}" }) + ".txt"
+                            if (isEditableNoteOrAudio) {
+                                Button(
+                                    onClick = {
+                                        playbackController.stop()
+                                        previewItem = null
+                                        editingTarget = item to metaNote
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF8B5CF6),
+                                        contentColor = Color.White
+                                    ),
+                                    shape = RoundedCornerShape(14.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("vault_preview_edit_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = if (isAudio) {
+                                            tr("تعديل والصوت", "Modifier", "Edit / Voice", "Ẓreg")
+                                        } else {
+                                            tr("تعديل", "Modifier", "Edit", "Ẓreg")
+                                        },
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
                                 }
-                                exportFileLauncher.launch(suggested)
-                            },
-                            shape = RoundedCornerShape(14.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Download,
-                                contentDescription = tr("تصدير", "Exporter", "Export", "Sifeḍ"),
-                                tint = Color(0xFF38BDF8),
-                                modifier = Modifier.size(17.dp)
-                            )
+                            }
+
+                            Button(
+                                onClick = {
+                                    playbackController.stop()
+                                    previewItem = null
+                                    onMoveToNotes(item)
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF10B981),
+                                    contentColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("vault_preview_move_to_notes")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.LockOpen,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (isAudio) {
+                                        tr("للتسجيلات", "Enregistrements", "To Audio", "I imesli")
+                                    } else {
+                                        tr("للمسودات", "Vers Notes", "To Notes", "Ɣer tazmilt")
+                                    },
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
 
-                        OutlinedButton(
-                            onClick = {
-                                playbackController.stop()
-                                previewItem = null
-                                pendingDeleteItem = item
-                            },
-                            shape = RoundedCornerShape(14.dp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.DeleteOutline,
-                                contentDescription = tr("حذف", "Supprimer", "Delete", "Kkes"),
-                                tint = Color(0xFFF43F5E),
-                                modifier = Modifier.size(17.dp)
-                            )
+                            OutlinedButton(
+                                onClick = {
+                                    playbackController.stop()
+                                    previewItem = null
+                                    pendingExportItem = item
+                                    val suggested = item.fileName.ifBlank {
+                                        (item.title.ifBlank { "vault_note_${item.createdAt}" }) + ".txt"
+                                    }
+                                    exportFileLauncher.launch(suggested)
+                                },
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Download,
+                                    contentDescription = tr("تصدير", "Exporter", "Export", "Sifeḍ"),
+                                    tint = Color(0xFF38BDF8),
+                                    modifier = Modifier.size(17.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = tr("تصدير", "Exporter", "Export", "Sifeḍ"),
+                                    color = textColor,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    playbackController.stop()
+                                    previewItem = null
+                                    pendingDeleteItem = item
+                                },
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.DeleteOutline,
+                                    contentDescription = tr("حذف", "Supprimer", "Delete", "Kkes"),
+                                    tint = Color(0xFFF43F5E),
+                                    modifier = Modifier.size(17.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = tr("حذف", "Supprimer", "Delete", "Kkes"),
+                                    color = Color(0xFFF43F5E),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
                     }
                 }
             }
         }
+    }
+
+    editingTarget?.let { (editItem, editMeta) ->
+        VaultNoteEditorSheet(
+            existingItem = editItem,
+            existingMeta = editMeta,
+            isDark = effectiveDark,
+            isArabic = isArabic,
+            isPremium = isPremium,
+            onRequestPremiumUpgrade = onRequestPremiumUpgrade,
+            onDismiss = { editingTarget = null },
+            onSave = { title, content, pagesJson, category, colorPreset, backgroundId, customColorArgb, isPinned, checklist, audioDurationSec, audioFilePath, audioByteSize ->
+                if (editItem != null) {
+                    onUpdateVaultNote(
+                        editItem,
+                        editMeta,
+                        title,
+                        content,
+                        pagesJson,
+                        category,
+                        colorPreset,
+                        backgroundId,
+                        customColorArgb,
+                        isPinned,
+                        checklist,
+                        audioDurationSec,
+                        audioFilePath,
+                        audioByteSize
+                    )
+                } else {
+                    onCreateRichNote(
+                        title,
+                        content,
+                        pagesJson,
+                        category,
+                        colorPreset,
+                        backgroundId,
+                        customColorArgb,
+                        isPinned,
+                        checklist,
+                        audioDurationSec,
+                        audioFilePath,
+                        audioByteSize
+                    )
+                }
+                editingTarget = null
+            }
+        )
+    }
+
+    if (showVoiceRecorderInVault) {
+        val voiceTitlePrefix = tr("نوتة صوتية", "Note vocale", "Voice Note", "Imesli")
+        VoiceRecorderDialog(
+            isDark = effectiveDark,
+            isArabic = isArabic,
+            onDismiss = { showVoiceRecorderInVault = false },
+            onSaveVoiceNote = { durSec, path, size ->
+                val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date())
+                val voiceTitle = "$voiceTitlePrefix $stamp"
+                onCreateRichNote(
+                    voiceTitle,
+                    "",
+                    "",
+                    "Audio",
+                    GlassTint.ROSE.name,
+                    "NONE",
+                    0L,
+                    false,
+                    emptyList(),
+                    durSec,
+                    path,
+                    size
+                )
+                showVoiceRecorderInVault = false
+            }
+        )
     }
 
     pendingDeleteItem?.let { itemToDelete ->

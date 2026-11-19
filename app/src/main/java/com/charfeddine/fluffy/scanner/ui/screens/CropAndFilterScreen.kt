@@ -3,6 +3,7 @@ package com.charfeddine.fluffy.scanner.ui.screens
 import android.graphics.Bitmap
 import android.graphics.PointF
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationSpec
@@ -13,7 +14,12 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -76,6 +82,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -167,30 +174,16 @@ fun CropAndFilterScreen(
     var showSplitCompare by remember { mutableStateOf(true) }
     var isAutoFitting by remember(frame.id) { mutableStateOf(false) }
 
-    var rawBitmap by remember(frame.id) { mutableStateOf<Bitmap?>(null) }
+    val rawBitmapCache = remember { mutableStateMapOf<String, Bitmap>() }
+    val rawBitmap = rawBitmapCache[frame.id]
     var warpedBitmap by remember(frame.id) { mutableStateOf<Bitmap?>(null) }
     var enhancedBitmap by remember(frame.id) { mutableStateOf<Bitmap?>(null) }
     var filterThumbnails by remember(frame.id) { mutableStateOf<Map<ScannerFilterType, Bitmap>>(emptyMap()) }
     var isRenderingPreview by remember(frame.id) { mutableStateOf(false) }
 
-    val stageSlideAnim = remember { Animatable(0f) }
-    var stageDragOffsetX by remember { mutableFloatStateOf(0f) }
-    var pendingSlideDirection by remember { mutableIntStateOf(0) }
-    val slideEnterDistPx = with(density) { 140.dp.toPx() }
+    val stageDragAnim = remember { Animatable(0f) }
+    var lastNavDirection by remember { mutableIntStateOf(0) }
     val swipeThresholdPx = with(density) { 52.dp.toPx() }
-
-    LaunchedEffect(frame.id) {
-        stageDragOffsetX = 0f
-        val dir = pendingSlideDirection
-        pendingSlideDirection = 0
-        if (dir != 0) {
-            val startX = if (isArabic) -dir * slideEnterDistPx else dir * slideEnterDistPx
-            stageSlideAnim.snapTo(startX)
-            stageSlideAnim.animateTo(0f, tween(durationMillis = 200))
-        } else {
-            stageSlideAnim.snapTo(0f)
-        }
-    }
 
     LaunchedEffect(activeIdx, batchFrames.size) {
         if (batchFrames.size > 1 && activeIdx in batchFrames.indices) {
@@ -201,7 +194,7 @@ fun CropAndFilterScreen(
     fun navigateBatchPageByDelta(delta: Int) {
         val target = activeIdx + delta
         if (target in batchFrames.indices) {
-            pendingSlideDirection = delta
+            lastNavDirection = delta
             scannerViewModel.activeCropIndex.value = target
         }
     }
@@ -215,9 +208,41 @@ fun CropAndFilterScreen(
         else batchFrames.firstOrNull { it.id != frame.id && it.idCardGroupId == gid }
     }
 
-    LaunchedEffect(frame.id, frame.rawImagePath) {
-        rawBitmap = withContext(Dispatchers.IO) {
-            DocumentImageProcessor.decodeSampledBitmap(File(frame.rawImagePath), 1400)
+    // Decode active frame immediately and pre-cache adjacent frames for instant swipe transitions
+    LaunchedEffect(frame.id, frame.rawImagePath, batchFrames, activeIdx) {
+        if (rawBitmapCache[frame.id] == null) {
+            val decoded = withContext(Dispatchers.IO) {
+                DocumentImageProcessor.decodeSampledBitmap(File(frame.rawImagePath), 1280)
+            }
+            if (decoded != null) {
+                rawBitmapCache[frame.id] = decoded
+            }
+        }
+        val activeIds = batchFrames.map { it.id }.toSet()
+        rawBitmapCache.keys.toList().filter { it !in activeIds }.forEach { rawBitmapCache.remove(it) }
+        val neighbors = listOfNotNull(
+            batchFrames.getOrNull(activeIdx + 1),
+            batchFrames.getOrNull(activeIdx - 1)
+        )
+        for (neighbor in neighbors) {
+            if (rawBitmapCache[neighbor.id] == null) {
+                val nBmp = withContext(Dispatchers.IO) {
+                    DocumentImageProcessor.decodeSampledBitmap(File(neighbor.rawImagePath), 1280)
+                }
+                if (nBmp != null) {
+                    rawBitmapCache[neighbor.id] = nBmp
+                }
+            }
+        }
+        if (rawBitmapCache.size > 5) {
+            val keepIds = setOfNotNull(
+                frame.id,
+                batchFrames.getOrNull(activeIdx - 1)?.id,
+                batchFrames.getOrNull(activeIdx + 1)?.id,
+                batchFrames.getOrNull(activeIdx - 2)?.id,
+                batchFrames.getOrNull(activeIdx + 2)?.id
+            )
+            rawBitmapCache.keys.toList().filter { it !in keepIds }.forEach { rawBitmapCache.remove(it) }
         }
     }
 
@@ -282,7 +307,8 @@ fun CropAndFilterScreen(
                         brightness = 0f,
                         contrast = 1f,
                         sharpness = 0f,
-                        rotationDeg = 0
+                        rotationDeg = 0,
+                        enableSuperRes = false
                     )
                 }
             }
@@ -310,7 +336,7 @@ fun CropAndFilterScreen(
                 withContext(Dispatchers.Default) {
                     if (pairedPartner != null) {
                         val partnerRaw = withContext(Dispatchers.IO) {
-                            DocumentImageProcessor.decodeSampledBitmap(File(pairedPartner.rawImagePath), 1400)
+                            DocumentImageProcessor.decodeSampledBitmap(File(pairedPartner.rawImagePath), 1280)
                         }
                         if (partnerRaw != null) {
                             val isFrameFront = frame.idCardSide == IdCardSide.FRONT || pairedPartner.idCardSide == IdCardSide.BACK
@@ -335,7 +361,8 @@ fun CropAndFilterScreen(
                                 brightness = frame.brightness,
                                 contrast = frame.contrast,
                                 sharpness = frame.sharpness,
-                                rotationDeg = 0
+                                rotationDeg = 0,
+                                enableSuperRes = false
                             )
                             if (fAuto !== fEnh && !fAuto.isRecycled) fAuto.recycle()
 
@@ -345,7 +372,8 @@ fun CropAndFilterScreen(
                                 brightness = frame.brightness,
                                 contrast = frame.contrast,
                                 sharpness = frame.sharpness,
-                                rotationDeg = 0
+                                rotationDeg = 0,
+                                enableSuperRes = false
                             )
                             if (bAuto !== bEnh && !bAuto.isRecycled) bAuto.recycle()
 
@@ -376,7 +404,7 @@ fun CropAndFilterScreen(
                         }
                     }
 
-                    val warped = DocumentImageProcessor.warpPerspective(raw, frame.detectedQuad, 1200)
+                    val warped = DocumentImageProcessor.warpPerspective(raw, frame.detectedQuad, 960)
                     val prepared = if (frame.idCardSide != IdCardSide.NONE) {
                         DocumentImageProcessor.autoEnhanceCapturedDocument(warped, isIdCardMode = true)
                     } else {
@@ -388,7 +416,8 @@ fun CropAndFilterScreen(
                         brightness = frame.brightness,
                         contrast = frame.contrast,
                         sharpness = frame.sharpness,
-                        rotationDeg = frame.rotationDeg
+                        rotationDeg = frame.rotationDeg,
+                        enableSuperRes = false
                     )
                     if (prepared !== warped && !prepared.isRecycled) prepared.recycle()
                     val rotatedBefore = if (frame.rotationDeg % 360 != 0) {
@@ -548,7 +577,7 @@ fun CropAndFilterScreen(
                                 .clip(CircleShape)
                                 .iosLiquidGlass(CircleShape, glowAccent = selected, fillAlpha = if (selected) 0.86f else 0.56f)
                                 .clickable {
-                                    pendingSlideDirection = if (idx > activeIdx) 1 else if (idx < activeIdx) -1 else 0
+                                    lastNavDirection = if (idx > activeIdx) 1 else if (idx < activeIdx) -1 else 0
                                     scannerViewModel.activeCropIndex.value = idx
                                 }
                                 .padding(horizontal = 13.dp, vertical = 7.dp)
@@ -569,10 +598,16 @@ fun CropAndFilterScreen(
             val onStageSwipeDragDelta: (Float) -> Unit = { totalDx ->
                 val isNextDrag = if (isArabic) totalDx > 0f else totalDx < 0f
                 val canMoveInDir = if (isNextDrag) activeIdx < batchFrames.lastIndex else activeIdx > 0
-                stageDragOffsetX = if (canMoveInDir) totalDx * 0.55f else totalDx * 0.16f
+                val targetDx = if (canMoveInDir) totalDx * 0.58f else totalDx * 0.16f
+                uiScope.launch { stageDragAnim.snapTo(targetDx) }
             }
             val onStageSwipeRelease: (Float, Float) -> Unit = { totalDx, totalDy ->
-                stageDragOffsetX = 0f
+                uiScope.launch {
+                    stageDragAnim.animateTo(
+                        targetValue = 0f,
+                        animationSpec = spring(dampingRatio = 0.78f, stiffness = 440f)
+                    )
+                }
                 if (abs(totalDx) >= swipeThresholdPx && abs(totalDx) > abs(totalDy) * 1.15f) {
                     val delta = if (isArabic) {
                         if (totalDx > 0f) 1 else -1
@@ -592,50 +627,83 @@ fun CropAndFilterScreen(
                     .padding(10.dp),
                 contentAlignment = Alignment.Center
             ) {
-                val bmp = rawBitmap
-                if (bmp == null) {
-                    CircularProgressIndicator(color = ScannerGlassPalette.CyanGlow)
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer {
-                                translationX = stageDragOffsetX + stageSlideAnim.value
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (isCropPhase) {
-                            InteractiveCropWithMagnifier(
-                                frameId = frame.id,
-                                bitmap = bmp,
-                                quad = frame.detectedQuad,
-                                canSwipePages = canSwipePages,
-                                onQuadChange = { committedFrameId, newQuad ->
-                                    scannerViewModel.updateFrameQuadById(committedFrameId, newQuad)
-                                },
-                                onSwipeDragDelta = onStageSwipeDragDelta,
-                                onSwipeRelease = onStageSwipeRelease
-                            )
+                AnimatedContent(
+                    targetState = frame.id,
+                    transitionSpec = {
+                        val visualDir = if (lastNavDirection == 0) 0 else if (isArabic) -lastNavDirection else lastNavDirection
+                        if (visualDir == 0) {
+                            (fadeIn(tween(220)) + scaleIn(initialScale = 0.96f, animationSpec = tween(220)))
+                                .togetherWith(fadeOut(tween(180)))
                         } else {
-                            val beforeBmp = warpedBitmap
-                            val afterBmp = enhancedBitmap
-                            if (beforeBmp == null || afterBmp == null) {
-                                CircularProgressIndicator(color = ScannerGlassPalette.CyanGlow)
-                            } else {
-                                BeforeAfterComparisonViewport(
-                                    frameId = frame.id,
-                                    beforeBitmap = beforeBmp,
-                                    afterBitmap = afterBmp,
-                                    splitFraction = splitComparisonX,
-                                    showSplitCompare = showSplitCompare,
-                                    isRenderingPreview = isRenderingPreview,
-                                    isArabic = isArabic,
+                            (slideInHorizontally(
+                                animationSpec = tween(260),
+                                initialOffsetX = { fullWidth -> (visualDir * fullWidth * 0.42f).roundToInt() }
+                            ) + fadeIn(tween(230)) + scaleIn(initialScale = 0.95f, animationSpec = tween(260)))
+                                .togetherWith(
+                                    slideOutHorizontally(
+                                        animationSpec = tween(240),
+                                        targetOffsetX = { fullWidth -> (-visualDir * fullWidth * 0.35f).roundToInt() }
+                                    ) + fadeOut(tween(190)) + scaleOut(targetScale = 0.94f, animationSpec = tween(240))
+                                )
+                        }
+                    },
+                    label = "crop_stage_page_transition",
+                    modifier = Modifier.fillMaxSize()
+                ) { targetFrameId ->
+                    val targetFrame = batchFrames.firstOrNull { it.id == targetFrameId } ?: frame
+                    val bmp = rawBitmapCache[targetFrameId]
+                    if (bmp == null) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(color = ScannerGlassPalette.CyanGlow)
+                        }
+                    } else {
+                        val dragPx = stageDragAnim.value
+                        val dragFraction = (abs(dragPx) / 900f).coerceIn(0f, 1f)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    translationX = dragPx
+                                    val parallaxScale = 1f - dragFraction * 0.045f
+                                    scaleX = parallaxScale
+                                    scaleY = parallaxScale
+                                    alpha = 1f - dragFraction * 0.14f
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (isCropPhase) {
+                                InteractiveCropWithMagnifier(
+                                    frameId = targetFrame.id,
+                                    bitmap = bmp,
+                                    quad = targetFrame.detectedQuad,
                                     canSwipePages = canSwipePages,
-                                    onToggleCompareMode = { showSplitCompare = !showSplitCompare },
-                                    onSplitFractionChange = { splitComparisonX = it },
+                                    onQuadChange = { committedFrameId, newQuad ->
+                                        scannerViewModel.updateFrameQuadById(committedFrameId, newQuad)
+                                    },
                                     onSwipeDragDelta = onStageSwipeDragDelta,
                                     onSwipeRelease = onStageSwipeRelease
                                 )
+                            } else {
+                                val beforeBmp = warpedBitmap
+                                val afterBmp = enhancedBitmap
+                                if (targetFrame.id != frame.id || beforeBmp == null || afterBmp == null) {
+                                    CircularProgressIndicator(color = ScannerGlassPalette.CyanGlow)
+                                } else {
+                                    BeforeAfterComparisonViewport(
+                                        frameId = targetFrame.id,
+                                        beforeBitmap = beforeBmp,
+                                        afterBitmap = afterBmp,
+                                        splitFraction = splitComparisonX,
+                                        showSplitCompare = showSplitCompare,
+                                        isRenderingPreview = isRenderingPreview,
+                                        isArabic = isArabic,
+                                        canSwipePages = canSwipePages,
+                                        onToggleCompareMode = { showSplitCompare = !showSplitCompare },
+                                        onSplitFractionChange = { splitComparisonX = it },
+                                        onSwipeDragDelta = onStageSwipeDragDelta,
+                                        onSwipeRelease = onStageSwipeRelease
+                                    )
+                                }
                             }
                         }
                     }
@@ -1951,12 +2019,136 @@ private fun BeforeAfterComparisonViewport(
     val latestOnSwipeDragDelta by rememberUpdatedState(onSwipeDragDelta)
     val latestOnSwipeRelease by rememberUpdatedState(onSwipeRelease)
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        // Non-overlapping Top Controls Strip (Compare Pill + Render Indicator + Compact Zoom Pill)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp, vertical = 2.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .iosLiquidGlass(CircleShape, glowAccent = showSplitCompare, fillAlpha = 0.82f)
+                    .clickable { onToggleCompareMode() }
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                if (isRenderingPreview) {
+                    CircularProgressIndicator(
+                        color = ScannerGlassPalette.CyanGlow,
+                        modifier = Modifier.size(12.dp),
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(if (showSplitCompare) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.EmeraldGlow)
+                    )
+                }
+                Text(
+                    text = if (showSplitCompare) {
+                        if (isArabic) "مقارنة قبل / بعد" else "Split Compare"
+                    } else {
+                        if (isArabic) "معاينة كاملة" else "Full Preview"
+                    },
+                    color = ScannerGlassPalette.TextPrimary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            val stageCw = viewportSize.width.toFloat().coerceAtLeast(1f)
+            val stageCh = viewportSize.height.toFloat().coerceAtLeast(1f)
+            fun zoomAtCenter(nextScale: Float) {
+                val clampedScale = nextScale.coerceIn(1f, 5f)
+                if (clampedScale <= 1.001f) {
+                    zoomScale = 1f
+                    panOffset = Offset.Zero
+                } else {
+                    val focal = Offset(stageCw * 0.5f, stageCh * 0.5f)
+                    val ratio = clampedScale / zoomScale
+                    val rawPan = focal - (focal - panOffset) * ratio
+                    val minX = stageCw * (1f - clampedScale)
+                    val minY = stageCh * (1f - clampedScale)
+                    zoomScale = clampedScale
+                    panOffset = Offset(rawPan.x.coerceIn(minX, 0f), rawPan.y.coerceIn(minY, 0f))
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .iosLiquidGlass(CircleShape, glowAccent = zoomScale > 1.03f, fillAlpha = 0.78f)
+                    .padding(horizontal = 6.dp, vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .clickable(enabled = zoomScale > 1.02f) {
+                            zoomAtCenter((zoomScale - 0.5f).coerceAtLeast(1f))
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "−",
+                        color = if (zoomScale > 1.02f) ScannerGlassPalette.TextPrimary else ScannerGlassPalette.TextSecondary.copy(alpha = 0.45f),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Text(
+                    text = String.format(Locale.US, "%.1fx", zoomScale),
+                    color = if (zoomScale > 1.03f) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.TextSecondary,
+                    fontSize = 10.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .clickable(enabled = zoomScale > 1.03f) {
+                            zoomScale = 1f
+                            panOffset = Offset.Zero
+                        }
+                        .padding(horizontal = 3.dp)
+                )
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .clickable(enabled = zoomScale < 4.95f) {
+                            zoomAtCenter((zoomScale + 0.5f).coerceAtMost(5f))
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "+",
+                        color = if (zoomScale < 4.95f) ScannerGlassPalette.TextPrimary else ScannerGlassPalette.TextSecondary.copy(alpha = 0.45f),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
         // Force physical LTR coordinate space for the Before/After wipe & natural-dimension preview
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
             BoxWithConstraints(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .weight(1f)
+                    .fillMaxWidth()
                     .clip(RoundedCornerShape(18.dp))
                     .onSizeChanged { viewportSize = it },
                 contentAlignment = Alignment.Center
@@ -2268,110 +2460,7 @@ private fun BeforeAfterComparisonViewport(
                             }
                         }
                     }
-
-                    // Compact Zoom Pill at Top-End when zoomed or interacting
-                    Row(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(top = 42.dp, end = 8.dp)
-                            .iosLiquidGlass(CircleShape, glowAccent = zoomScale > 1.03f, fillAlpha = 0.78f)
-                            .padding(horizontal = 6.dp, vertical = 3.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(24.dp)
-                                .clip(CircleShape)
-                                .clickable(enabled = zoomScale > 1.02f) {
-                                    applyEnhanceZoomAt((zoomScale - 0.5f).coerceAtLeast(1f), Offset(cw * 0.5f, ch * 0.5f))
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "−",
-                                color = if (zoomScale > 1.02f) ScannerGlassPalette.TextPrimary else ScannerGlassPalette.TextSecondary.copy(alpha = 0.45f),
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Text(
-                            text = String.format(Locale.US, "%.1fx", zoomScale),
-                            color = if (zoomScale > 1.03f) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.TextSecondary,
-                            fontSize = 10.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .clickable(enabled = zoomScale > 1.03f) {
-                                    zoomScale = 1f
-                                    panOffset = Offset.Zero
-                                }
-                                .padding(horizontal = 3.dp)
-                        )
-                        Box(
-                            modifier = Modifier
-                                .size(24.dp)
-                                .clip(CircleShape)
-                                .clickable(enabled = zoomScale < 4.95f) {
-                                    applyEnhanceZoomAt((zoomScale + 0.5f).coerceAtMost(5f), Offset(cw * 0.5f, ch * 0.5f))
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "+",
-                                color = if (zoomScale < 4.95f) ScannerGlassPalette.TextPrimary else ScannerGlassPalette.TextSecondary.copy(alpha = 0.45f),
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
                 }
-            }
-        }
-
-        // Floating Top Compare / Full View Mode Pill
-        Row(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 8.dp)
-                .iosLiquidGlass(CircleShape, glowAccent = showSplitCompare, fillAlpha = 0.82f)
-                .clickable { onToggleCompareMode() }
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(7.dp)
-                    .clip(CircleShape)
-                    .background(if (showSplitCompare) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.EmeraldGlow)
-            )
-            Text(
-                text = if (showSplitCompare) {
-                    if (isArabic) "مقارنة قبل / بعد • اضغط للمعاينة الكاملة" else "Split Compare • Tap for Full"
-                } else {
-                    if (isArabic) "معاينة كاملة • اضغط للمقارنة" else "Full Preview • Tap to Compare"
-                },
-                color = ScannerGlassPalette.TextPrimary,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold
-            )
-        }
-
-        if (isRenderingPreview) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(10.dp)
-                    .size(28.dp)
-                    .iosLiquidGlass(CircleShape, fillAlpha = 0.82f),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator(
-                    color = ScannerGlassPalette.CyanGlow,
-                    modifier = Modifier.size(15.dp),
-                    strokeWidth = 2.dp
-                )
             }
         }
     }

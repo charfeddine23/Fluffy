@@ -430,8 +430,44 @@ class MainActivity : FragmentActivity() {
                                                 viewMode = vaultViewMode,
                                                 onSelectViewMode = { mode -> viewModel.setVaultViewMode(mode) },
                                                 vaultNoteMetaMap = vaultNoteMetaMap,
+                                                isPremium = isPremium,
+                                                onRequestPremiumUpgrade = { viewModel.openPremiumUpgradeDialog() },
                                                 onSaveLiteralText = { title, content ->
                                                     viewModel.saveLiteralTextToVault(title, content)
+                                                },
+                                                onCreateRichNote = { title, content, pagesJson, category, colorPreset, backgroundId, customColorArgb, isPinned, checklist, audioDurationSec, audioFilePath, audioByteSize ->
+                                                    viewModel.createRichNoteInVault(
+                                                        title = title,
+                                                        content = content,
+                                                        pagesJson = pagesJson,
+                                                        category = category,
+                                                        colorPreset = colorPreset,
+                                                        backgroundId = backgroundId,
+                                                        customColorArgb = customColorArgb,
+                                                        isPinned = isPinned,
+                                                        checklist = checklist,
+                                                        audioDurationSec = audioDurationSec,
+                                                        audioFilePath = audioFilePath,
+                                                        audioByteSize = audioByteSize
+                                                    )
+                                                },
+                                                onUpdateVaultNote = { existingItem, existingMeta, title, content, pagesJson, category, colorPreset, backgroundId, customColorArgb, isPinned, checklist, audioDurationSec, audioFilePath, audioByteSize ->
+                                                    viewModel.updateVaultNoteItem(
+                                                        existingItem = existingItem,
+                                                        existingMeta = existingMeta,
+                                                        title = title,
+                                                        content = content,
+                                                        pagesJson = pagesJson,
+                                                        category = category,
+                                                        colorPreset = colorPreset,
+                                                        backgroundId = backgroundId,
+                                                        customColorArgb = customColorArgb,
+                                                        isPinned = isPinned,
+                                                        checklist = checklist,
+                                                        audioDurationSec = audioDurationSec,
+                                                        audioFilePath = audioFilePath,
+                                                        audioByteSize = audioByteSize
+                                                    )
                                                 },
                                                 onSaveFileUri = { uri ->
                                                     viewModel.saveFileToVault(uri)

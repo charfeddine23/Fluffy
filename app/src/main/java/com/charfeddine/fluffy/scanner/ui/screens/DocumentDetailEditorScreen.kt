@@ -6,14 +6,20 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -105,10 +111,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -160,6 +170,7 @@ import com.charfeddine.fluffy.scanner.ui.theme.ScannerGlassPalette
 import com.charfeddine.fluffy.scanner.ui.theme.iosLiquidGlass
 import com.charfeddine.fluffy.scanner.ui.theme.scannerGlassSurface
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.abs
@@ -219,38 +230,50 @@ fun DocumentDetailEditorScreen(
         doc.tagsCsv.split(",").map { it.trim() }.filter { it.isNotBlank() }
     }
 
-    var pageBitmap by remember(currentPage?.id, currentPage?.processedImagePath) { mutableStateOf<Bitmap?>(null) }
-    LaunchedEffect(currentPage?.id, currentPage?.processedImagePath, doc.isLocked) {
-        val path = currentPage?.processedImagePath ?: return@LaunchedEffect
-        pageBitmap = withContext(Dispatchers.IO) {
-            scannerViewModel.repository.decodePageBitmap(path)
+    val pageBitmapCache = remember(doc.id, doc.isLocked) { mutableStateMapOf<String, Bitmap>() }
+    LaunchedEffect(currentPage?.id, currentPage?.processedImagePath, doc.isLocked, pages, safePageIndex) {
+        val curr = currentPage ?: return@LaunchedEffect
+        if (pageBitmapCache[curr.id] == null) {
+            val decoded = withContext(Dispatchers.IO) {
+                scannerViewModel.repository.decodePageBitmap(curr.processedImagePath)
+            }
+            if (decoded != null) {
+                pageBitmapCache[curr.id] = decoded
+            }
+        }
+        val activePageIds = pages.map { it.id }.toSet()
+        pageBitmapCache.keys.toList().filter { it !in activePageIds }.forEach { pageBitmapCache.remove(it) }
+        val neighbors = listOfNotNull(
+            pages.getOrNull(safePageIndex + 1),
+            pages.getOrNull(safePageIndex - 1)
+        )
+        for (neighbor in neighbors) {
+            if (pageBitmapCache[neighbor.id] == null) {
+                val nBmp = withContext(Dispatchers.IO) {
+                    scannerViewModel.repository.decodePageBitmap(neighbor.processedImagePath)
+                }
+                if (nBmp != null) {
+                    pageBitmapCache[neighbor.id] = nBmp
+                }
+            }
+        }
+        if (pageBitmapCache.size > 6) {
+            val keepIds = (-2..2).mapNotNull { offset -> pages.getOrNull(safePageIndex + offset)?.id }.toSet()
+            pageBitmapCache.keys.toList().filter { it !in keepIds }.forEach { pageBitmapCache.remove(it) }
         }
     }
 
     val density = LocalDensity.current
-    val stageSlideAnim = remember { Animatable(0f) }
-    var stageDragOffsetX by remember { mutableFloatStateOf(0f) }
-    var pendingSlideDirection by remember { mutableIntStateOf(0) }
-    val slideEnterDistPx = with(density) { 140.dp.toPx() }
+    val uiScope = rememberCoroutineScope()
+    val layoutDirection = LocalLayoutDirection.current
+    val stageDragAnim = remember { Animatable(0f) }
+    var lastNavDirection by remember { mutableIntStateOf(0) }
     val swipeThresholdPx = with(density) { 52.dp.toPx() }
-
-    LaunchedEffect(currentPage?.id) {
-        stageDragOffsetX = 0f
-        val dir = pendingSlideDirection
-        pendingSlideDirection = 0
-        if (dir != 0) {
-            val startX = if (isArabic) -dir * slideEnterDistPx else dir * slideEnterDistPx
-            stageSlideAnim.snapTo(startX)
-            stageSlideAnim.animateTo(0f, tween(durationMillis = 200))
-        } else {
-            stageSlideAnim.snapTo(0f)
-        }
-    }
 
     fun navigatePageByDelta(delta: Int) {
         val target = safePageIndex + delta
         if (target in pages.indices) {
-            pendingSlideDirection = delta
+            lastNavDirection = delta
             activeSignaturePlacementId = null
             activePageIndex = target
         }
@@ -260,10 +283,16 @@ fun DocumentDetailEditorScreen(
     val onStageSwipeDragDelta: (Float) -> Unit = { totalDx ->
         val isNextDrag = if (isArabic) totalDx > 0f else totalDx < 0f
         val canMoveInDir = if (isNextDrag) safePageIndex < pages.lastIndex else safePageIndex > 0
-        stageDragOffsetX = if (canMoveInDir) totalDx * 0.55f else totalDx * 0.16f
+        val targetDx = if (canMoveInDir) totalDx * 0.58f else totalDx * 0.16f
+        uiScope.launch { stageDragAnim.snapTo(targetDx) }
     }
     val onStageSwipeRelease: (Float, Float) -> Unit = { totalDx, totalDy ->
-        stageDragOffsetX = 0f
+        uiScope.launch {
+            stageDragAnim.animateTo(
+                targetValue = 0f,
+                animationSpec = spring(dampingRatio = 0.78f, stiffness = 440f)
+            )
+        }
         if (abs(totalDx) >= swipeThresholdPx && abs(totalDx) > abs(totalDy) * 1.15f) {
             val delta = if (isArabic) {
                 if (totalDx > 0f) 1 else -1
@@ -277,12 +306,12 @@ fun DocumentDetailEditorScreen(
     ScannerDarkLiquidBackdrop {
         Box(modifier = Modifier.fillMaxSize()) {
             // 1. Expansive Document Viewing & Editing Stage (Edge-to-Edge Breathing Room)
-            Box(
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .windowInsetsPadding(WindowInsets.statusBars)
                     .windowInsetsPadding(WindowInsets.navigationBars)
-                    .padding(top = 66.dp, bottom = 92.dp, start = 10.dp, end = 10.dp)
+                    .padding(top = 68.dp, bottom = 92.dp, start = 10.dp, end = 10.dp)
                     .clip(RoundedCornerShape(22.dp))
                     .background(Color(0xFF060A15).copy(alpha = 0.65f))
                     .border(
@@ -296,65 +325,183 @@ fun DocumentDetailEditorScreen(
                     )
                     .clipToBounds()
                     .padding(6.dp),
-                contentAlignment = Alignment.Center
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                val bmp = pageBitmap
-                val p = currentPage
-                if (bmp == null || p == null) {
-                    CircularProgressIndicator(color = ScannerGlassPalette.CyanGlow)
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer {
-                                translationX = stageDragOffsetX + stageSlideAnim.value
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        InteractiveAnnotatedPageCanvas(
-                            pageId = p.id,
-                            bitmap = bmp,
-                            annotations = activeAnnotations,
-                            signatures = activeSignatures,
-                            watermark = activeWatermark,
-                            activeTool = activeTool,
-                            penColorArgb = penColorArgb,
-                            redactionColorArgb = if (redactionBlack) 0xFF000000L else 0xFFFFFFFFL,
-                            activeSignaturePlacementId = activeSignaturePlacementId,
-                            canSwipePages = canSwipePages,
-                            loadSignatureBitmap = { sigId ->
-                                savedSignatures.firstOrNull { it.id == sigId }?.let {
-                                    scannerViewModel.repository.loadEncryptedSignatureBitmap(it)
-                                }
-                            },
-                            onSelectSignature = { activeSignaturePlacementId = it },
-                            onAnnotationsChanged = { updatedAnn ->
-                                scannerViewModel.updatePageMarkups(p, updatedAnn, activeSignatures, activeWatermark)
-                            },
-                            onSignaturesChanged = { updatedSigs ->
-                                scannerViewModel.updatePageMarkups(p, activeAnnotations, updatedSigs, activeWatermark)
-                            },
-                            onSwipeDragDelta = onStageSwipeDragDelta,
-                            onSwipeRelease = onStageSwipeRelease
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .clipToBounds(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AnimatedContent(
+                        targetState = safePageIndex,
+                        transitionSpec = {
+                            val dir = (targetState - initialState).coerceIn(-1, 1)
+                            val visualDir = if (layoutDirection == LayoutDirection.Rtl) -dir else dir
+                            if (visualDir == 0) {
+                                (fadeIn(tween(220)) + scaleIn(initialScale = 0.96f, animationSpec = tween(220)))
+                                    .togetherWith(fadeOut(tween(180)))
+                            } else {
+                                (slideInHorizontally(
+                                    animationSpec = tween(260),
+                                    initialOffsetX = { fullWidth -> (visualDir * fullWidth * 0.42f).roundToInt() }
+                                ) + fadeIn(tween(230)) + scaleIn(initialScale = 0.95f, animationSpec = tween(260)))
+                                    .togetherWith(
+                                        slideOutHorizontally(
+                                            animationSpec = tween(240),
+                                            targetOffsetX = { fullWidth -> (-visualDir * fullWidth * 0.35f).roundToInt() }
+                                        ) + fadeOut(tween(190)) + scaleOut(targetScale = 0.94f, animationSpec = tween(240))
+                                    )
+                            }
+                        },
+                        label = "detail_stage_page_transition",
+                        modifier = Modifier.fillMaxSize()
+                    ) { targetIdx ->
+                        val targetPage = pages.getOrNull(targetIdx)
+                        val targetBmp = targetPage?.let { pageBitmapCache[it.id] }
+                        if (targetBmp == null || targetPage == null) {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(color = ScannerGlassPalette.CyanGlow)
+                            }
+                        } else {
+                            val dragPx = stageDragAnim.value
+                            val dragFraction = (abs(dragPx) / 900f).coerceIn(0f, 1f)
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer {
+                                        translationX = dragPx
+                                        val parallaxScale = 1f - dragFraction * 0.045f
+                                        scaleX = parallaxScale
+                                        scaleY = parallaxScale
+                                        alpha = 1f - dragFraction * 0.14f
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                InteractiveAnnotatedPageCanvas(
+                                    pageId = targetPage.id,
+                                    bitmap = targetBmp,
+                                    annotations = PageAnnotations.fromJson(targetPage.annotationsJson),
+                                    signatures = SignaturePlacement.listFromJson(targetPage.signaturesJson),
+                                    watermark = WatermarkConfig.fromJson(targetPage.watermarkJson),
+                                    activeTool = if (targetIdx == safePageIndex) activeTool else AnnotationTool.NONE,
+                                    penColorArgb = penColorArgb,
+                                    redactionColorArgb = if (redactionBlack) 0xFF000000L else 0xFFFFFFFFL,
+                                    activeSignaturePlacementId = activeSignaturePlacementId,
+                                    canSwipePages = canSwipePages,
+                                    loadSignatureBitmap = { sigId ->
+                                        savedSignatures.firstOrNull { it.id == sigId }?.let {
+                                            scannerViewModel.repository.loadEncryptedSignatureBitmap(it)
+                                        }
+                                    },
+                                    onSelectSignature = { activeSignaturePlacementId = it },
+                                    onAnnotationsChanged = { updatedAnn ->
+                                        scannerViewModel.updatePageMarkups(targetPage, updatedAnn, activeSignatures, activeWatermark)
+                                    },
+                                    onSignaturesChanged = { updatedSigs ->
+                                        scannerViewModel.updatePageMarkups(targetPage, activeAnnotations, updatedSigs, activeWatermark)
+                                    },
+                                    onSwipeDragDelta = onStageSwipeDragDelta,
+                                    onSwipeRelease = onStageSwipeRelease
+                                )
+                            }
+                        }
+                    }
+
+                    // Selected Placed Signature Floating Resize / Rotate / Delete Pill (TopCenter, never collides)
+                    val p = currentPage
+                    val selPlacement = activeSignatures.firstOrNull { it.placementId == activeSignaturePlacementId }
+                    if (selPlacement != null && p != null) {
+                        Row(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = 8.dp)
+                                .shadow(14.dp, CircleShape)
+                                .iosLiquidGlass(CircleShape, glowAccent = true, fillAlpha = 0.85f)
+                                .padding(horizontal = 12.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "S-",
+                                color = ScannerGlassPalette.EdgeOverlayCyan,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier
+                                    .clickable {
+                                        val next = activeSignatures.map {
+                                            if (it.placementId == selPlacement.placementId) it.copy(scale = (it.scale - 0.15f).coerceAtLeast(0.45f)) else it
+                                        }
+                                        scannerViewModel.updatePageMarkups(p, activeAnnotations, next, activeWatermark)
+                                    }
+                                    .padding(6.dp)
+                            )
+                            Text(
+                                "S+",
+                                color = ScannerGlassPalette.EdgeOverlayCyan,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier
+                                    .clickable {
+                                        val next = activeSignatures.map {
+                                            if (it.placementId == selPlacement.placementId) it.copy(scale = (it.scale + 0.15f).coerceAtMost(2.5f)) else it
+                                        }
+                                        scannerViewModel.updatePageMarkups(p, activeAnnotations, next, activeWatermark)
+                                    }
+                                    .padding(6.dp)
+                            )
+                            Text(
+                                "↻15°",
+                                color = ScannerGlassPalette.VioletGlow,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier
+                                    .clickable {
+                                        val next = activeSignatures.map {
+                                            if (it.placementId == selPlacement.placementId) it.copy(rotationDeg = (it.rotationDeg + 15f) % 360f) else it
+                                        }
+                                        scannerViewModel.updatePageMarkups(p, activeAnnotations, next, activeWatermark)
+                                    }
+                                    .padding(6.dp)
+                            )
+                            IconButton(
+                                onClick = {
+                                    val next = activeSignatures.filterNot { it.placementId == selPlacement.placementId }
+                                    activeSignaturePlacementId = null
+                                    scannerViewModel.updatePageMarkups(p, activeAnnotations, next, activeWatermark)
+                                },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.DeleteOutline,
+                                    contentDescription = if (isArabic) "حذف التوقيع" else "Remove signature",
+                                    tint = ScannerGlassPalette.RoseGlow,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    if (isBusy) {
+                        CircularProgressIndicator(
+                            color = ScannerGlassPalette.EdgeOverlayCyan,
+                            modifier = Modifier.align(Alignment.Center)
                         )
                     }
                 }
 
-                // Multi-page Quick Navigation Pill floating on top-end of canvas when > 1 page
+                // Non-overlapping Multi-page Quick Navigation Pill docked cleanly below the canvas
                 if (pages.size > 1 && activeTool == AnnotationTool.NONE) {
+                    Spacer(modifier = Modifier.height(6.dp))
                     Row(
                         modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(8.dp)
-                            .iosLiquidGlass(CircleShape, fillAlpha = 0.78f)
-                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                            .iosLiquidGlass(CircleShape, fillAlpha = 0.80f)
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         IconButton(
                             onClick = { navigatePageByDelta(-1) },
                             enabled = safePageIndex > 0,
-                            modifier = Modifier.size(32.dp)
+                            modifier = Modifier.size(34.dp)
                         ) {
                             Icon(
                                 Icons.Default.ArrowBackIosNew,
@@ -367,15 +514,16 @@ fun DocumentDetailEditorScreen(
                             text = "${safePageIndex + 1} / ${pages.size}",
                             color = ScannerGlassPalette.EdgeOverlayCyan,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 11.5.sp,
+                            fontSize = 12.sp,
                             modifier = Modifier
+                                .clip(CircleShape)
                                 .clickable { showPagesSheet = true }
-                                .padding(horizontal = 4.dp)
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
                         )
                         IconButton(
                             onClick = { navigatePageByDelta(1) },
                             enabled = safePageIndex < pages.lastIndex,
-                            modifier = Modifier.size(32.dp)
+                            modifier = Modifier.size(34.dp)
                         ) {
                             Icon(
                                 Icons.Default.ArrowForwardIos,
@@ -385,83 +533,7 @@ fun DocumentDetailEditorScreen(
                             )
                         }
                     }
-                }
-
-                // Selected Placed Signature Floating Resize / Rotate / Delete Pill
-                val selPlacement = activeSignatures.firstOrNull { it.placementId == activeSignaturePlacementId }
-                if (selPlacement != null && p != null) {
-                    Row(
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .padding(top = 8.dp)
-                            .shadow(14.dp, CircleShape)
-                            .iosLiquidGlass(CircleShape, glowAccent = true, fillAlpha = 0.85f)
-                            .padding(horizontal = 12.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            "S-",
-                            color = ScannerGlassPalette.EdgeOverlayCyan,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier
-                                .clickable {
-                                    val next = activeSignatures.map {
-                                        if (it.placementId == selPlacement.placementId) it.copy(scale = (it.scale - 0.15f).coerceAtLeast(0.45f)) else it
-                                    }
-                                    scannerViewModel.updatePageMarkups(p, activeAnnotations, next, activeWatermark)
-                                }
-                                .padding(6.dp)
-                        )
-                        Text(
-                            "S+",
-                            color = ScannerGlassPalette.EdgeOverlayCyan,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier
-                                .clickable {
-                                    val next = activeSignatures.map {
-                                        if (it.placementId == selPlacement.placementId) it.copy(scale = (it.scale + 0.15f).coerceAtMost(2.5f)) else it
-                                    }
-                                    scannerViewModel.updatePageMarkups(p, activeAnnotations, next, activeWatermark)
-                                }
-                                .padding(6.dp)
-                        )
-                        Text(
-                            "↻15°",
-                            color = ScannerGlassPalette.VioletGlow,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier
-                                .clickable {
-                                    val next = activeSignatures.map {
-                                        if (it.placementId == selPlacement.placementId) it.copy(rotationDeg = (it.rotationDeg + 15f) % 360f) else it
-                                    }
-                                    scannerViewModel.updatePageMarkups(p, activeAnnotations, next, activeWatermark)
-                                }
-                                .padding(6.dp)
-                        )
-                        IconButton(
-                            onClick = {
-                                val next = activeSignatures.filterNot { it.placementId == selPlacement.placementId }
-                                activeSignaturePlacementId = null
-                                scannerViewModel.updatePageMarkups(p, activeAnnotations, next, activeWatermark)
-                            },
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.DeleteOutline,
-                                contentDescription = if (isArabic) "حذف التوقيع" else "Remove signature",
-                                tint = ScannerGlassPalette.RoseGlow,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-                }
-
-                if (isBusy) {
-                    CircularProgressIndicator(
-                        color = ScannerGlassPalette.EdgeOverlayCyan,
-                        modifier = Modifier.align(Alignment.Center)
-                    )
+                    Spacer(modifier = Modifier.height(2.dp))
                 }
             }
 

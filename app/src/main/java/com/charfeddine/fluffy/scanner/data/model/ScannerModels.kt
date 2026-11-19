@@ -331,6 +331,7 @@ data class ScannedDocumentEntity(
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val tagsCsv: String = "",
+    val isPinned: Boolean = false,
     val isStarred: Boolean = false,
     val isLocked: Boolean = false,
     val isTrashed: Boolean = false,

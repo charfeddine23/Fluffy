@@ -484,6 +484,53 @@ object FirebaseSyncRepository {
         }
     }
 
+    /**
+     * Updates an edited Vault note or voice note in Cloud Firestore (when within 900MB audio policy).
+     * Note: Scanner files are strictly excluded from cloud sync per ScannerLocalStoragePolicy.
+     */
+    suspend fun upsertVaultItem(context: Context, userId: String, item: VaultItemEntity) {
+        if (!AudioCloudPolicy.canStoreVaultItemInCloud(item)) return
+
+        val db = getFirestoreOrNull(context) ?: return
+        val path = "$COLLECTION_USERS/$userId/$COLLECTION_VAULT/${item.id}"
+        try {
+            val ref = db.collection(COLLECTION_USERS)
+                .document(userId)
+                .collection(COLLECTION_VAULT)
+                .document(item.id)
+
+            var inlineFileB64: String? = null
+            if (item.fileName.isNotEmpty() && item.localFilePath.isNotBlank()) {
+                val file = File(item.localFilePath)
+                if (file.exists() && file.length() <= MAX_FIRESTORE_INLINE_BYTES) {
+                    inlineFileB64 = Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)
+                }
+            }
+
+            val noteMetaJson = LocalDeviceStorageManager.loadVaultNoteMetaJson(context, item.id)
+                ?.takeIf { it.toByteArray(Charsets.UTF_8).size <= MAX_FIRESTORE_INLINE_BYTES }
+
+            val data = hashMapOf(
+                "id" to item.id,
+                "userId" to userId,
+                "title" to item.title,
+                "literalContent" to item.literalContent,
+                "fileName" to item.fileName,
+                "mimeType" to item.mimeType,
+                "byteSize" to item.byteSize,
+                "sha256" to item.sha256,
+                "createdAt" to item.createdAt,
+                "isImmutable" to item.isImmutable,
+                "rawFileBase64" to (inlineFileB64 ?: ""),
+                "noteMetaJson" to (noteMetaJson ?: ""),
+                "serverUpdatedAt" to FieldValue.serverTimestamp()
+            )
+            ref.set(data, SetOptions.merge()).await()
+        } catch (e: Exception) {
+            handleFirestoreError(e, "WRITE", path, userId)
+        }
+    }
+
     suspend fun fetchVaultItemsOnce(context: Context, userId: String): List<RemoteVaultItemPayload> {
         val db = getFirestoreOrNull(context) ?: return emptyList()
         val path = "$COLLECTION_USERS/$userId/$COLLECTION_VAULT"

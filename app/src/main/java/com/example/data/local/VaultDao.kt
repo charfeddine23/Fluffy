@@ -16,11 +16,16 @@ interface VaultDao {
     suspend fun getAllVaultItemsOnce(): List<VaultItemEntity>
 
     /**
-     * IGNORE conflict strategy guarantees an already-saved immutable Vault entry
-     * can never be overwritten or altered once stored.
+     * IGNORE conflict strategy guarantees initial import/restore never overwrites existing entries.
      */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertImmutableItem(item: VaultItemEntity): Long
+
+    /**
+     * Explicit user-initiated update for notes and voice notes edited inside the Vault.
+     */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertEditedVaultItem(item: VaultItemEntity): Long
 
     @Query("SELECT COUNT(*) FROM vault_items")
     suspend fun getVaultCount(): Int

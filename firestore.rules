@@ -28,13 +28,20 @@ service cloud.firestore {
       allow delete: if isOwner(userId);
     }
 
-    // Per-user Immutable Vault Items (Write-Once: never altered or deleted once sealed)
+    // Per-user Vault Items (Readable, creatable, editable, and deletable strictly by owner)
     match /users/{userId}/vault/{vaultId} {
-      allow read: if isOwner(userId);
-      allow create: if isOwner(userId)
-        && request.resource.data.userId == request.auth.uid
-        && request.resource.data.isImmutable == true;
-      allow update, delete: if false;
+      allow read, delete: if isOwner(userId);
+      allow create, update: if isOwner(userId)
+        && request.resource.data.userId == request.auth.uid;
+    }
+
+    // Scanner Local-Only Policy:
+    // Scanned documents, pages, PDFs, and signatures MUST remain strictly on-device and never sync to cloud DB.
+    match /users/{userId}/scanner/{document=**} {
+      allow read, write: if false;
+    }
+    match /users/{userId}/scanned_documents/{document=**} {
+      allow read, write: if false;
     }
   }
 }

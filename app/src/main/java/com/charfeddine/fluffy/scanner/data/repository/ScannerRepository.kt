@@ -17,6 +17,18 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.UUID
 
+/**
+ * Explicit architecture & privacy policy for the Doc Scanner:
+ * All scanned documents, pages, PDFs, signatures, and OCR text remain strictly
+ * device-local inside app storage & local Room DB and MUST NEVER be transferred to any cloud database.
+ */
+object ScannerLocalStoragePolicy {
+    const val ALLOW_CLOUD_SYNC = false
+    const val STORAGE_MODE = "DEVICE_LOCAL_ONLY"
+
+    fun isCloudUploadPermitted(): Boolean = ALLOW_CLOUD_SYNC
+}
+
 class ScannerRepository(
     private val context: Context,
     private val dao: ScannerDao
@@ -120,6 +132,12 @@ class ScannerRepository(
         doc?.pdfPath?.takeIf { it.isNotBlank() }?.let { runCatching { File(it).delete() } }
         dao.deleteAllPagesForDocument(docId)
         dao.deleteDocumentPermanently(docId)
+    }
+
+    suspend fun emptyTrash(): Int = withContext(Dispatchers.IO) {
+        val trashed = dao.getTrashedDocumentsOnce()
+        trashed.forEach { deleteDocumentPermanently(it.id) }
+        trashed.size
     }
 
     suspend fun purgeExpiredTrash(retentionMillis: Long = THIRTY_DAYS_MS) = withContext(Dispatchers.IO) {

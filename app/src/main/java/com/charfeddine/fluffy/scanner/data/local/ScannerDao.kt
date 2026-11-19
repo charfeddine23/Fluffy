@@ -66,6 +66,9 @@ interface ScannerDao {
     @Query("SELECT * FROM scanned_documents WHERE isTrashed = 1 AND trashedAt > 0 AND trashedAt < :cutoffMs")
     suspend fun getExpiredTrashedDocuments(cutoffMs: Long): List<ScannedDocumentEntity>
 
+    @Query("SELECT * FROM scanned_documents WHERE isTrashed = 1")
+    suspend fun getTrashedDocumentsOnce(): List<ScannedDocumentEntity>
+
     // Pages
     @Query("SELECT * FROM scanned_pages WHERE documentId = :documentId ORDER BY pageOrder ASC")
     fun observePagesForDocument(documentId: String): Flow<List<ScannedPageEntity>>

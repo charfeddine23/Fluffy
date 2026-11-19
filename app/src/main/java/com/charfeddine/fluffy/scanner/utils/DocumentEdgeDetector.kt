@@ -1721,7 +1721,7 @@ object DocumentEdgeDetector {
         val norm = corners.map { FloatPt(it.x / wf, it.y / hf) }
 
         val areaFrac = polygonArea(norm)
-        val minArea = if (isIdCardHint) 0.025f else 0.055f
+        val minArea = if (isIdCardHint) 0.025f else 0.09f
         if (areaFrac < minArea || areaFrac > 0.96f) return -1f
         if (!isConvexAndValidAnglesPx(norm)) return -1f
         if (!hasValidAspectRatioPx(norm, isIdCardHint)) return -1f
@@ -1755,8 +1755,8 @@ object DocumentEdgeDetector {
             0f
         }
 
-        val cappedAreaScore = (areaFrac / 0.65f).coerceIn(0f, 1f)
-        return (edgeSupport * 0.62f) + (rectScore * 0.22f) + (cappedAreaScore * 0.12f) + idAspectBonus - borderPenalty
+        val cappedAreaScore = (areaFrac / 0.70f).coerceIn(0f, 1f)
+        return (edgeSupport * 0.56f) + (rectScore * 0.24f) + (cappedAreaScore * 0.20f) + idAspectBonus - borderPenalty
     }
 
     private fun isBorderHuggingQuad(quad: DocumentQuad): Boolean {
