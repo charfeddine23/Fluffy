@@ -60,8 +60,4 @@ class NoteRepository(private val noteDao: NoteDao) {
     suspend fun toggleFavorite(note: NoteEntity) {
         noteDao.updateNote(note.copy(isFavorite = !note.isFavorite, updatedAt = System.currentTimeMillis()))
     }
-
-    suspend fun clearSampleNotesIfPresent() {
-        noteDao.clearSampleNotes()
-    }
 }

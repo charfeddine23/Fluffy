@@ -19,7 +19,6 @@ import com.example.data.storage.AudioCloudPolicy
 import com.example.data.storage.AudioStorageManager
 import com.example.data.storage.FluffySettingsSnapshot
 import com.example.data.storage.LocalDeviceStorageManager
-import com.example.drive.DriveAutoBackupWorker
 import com.example.ui.theme.AppLanguage
 import com.example.ui.theme.AppThemePreset
 import com.example.ui.theme.AppThemeRegistry
@@ -106,7 +105,6 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     val isTrashScreenOpen = MutableStateFlow(false)
     val isArchiveScreenOpen = MutableStateFlow(false)
     val isAccountScreenOpen = MutableStateFlow(false)
-    val isAudioPlayerScreenOpen = MutableStateFlow(false)
     val isScannerHubOpen = MutableStateFlow(false)
 
     // Filter and Search
@@ -141,9 +139,6 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     val profileLastName = MutableStateFlow(prefs.getString("profile_last_name", "") ?: "")
     val profileAvatarChoice = MutableStateFlow(prefs.getString("profile_avatar_choice", "") ?: "")
     val useGoogleAccountName = MutableStateFlow(prefs.getBoolean("use_google_account_name", false))
-    val isAutoDriveBackupEnabled = MutableStateFlow(
-        prefs.getBoolean(DriveAutoBackupWorker.KEY_AUTO_BACKUP_24H, false)
-    )
 
     private var cloudSyncJob: Job? = null
     private var lastAppliedRemoteSettingsAt = prefs.getLong("last_remote_settings_at", 0L)
@@ -516,15 +511,6 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         notes.size
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
-    val audioNotes: StateFlow<List<NoteEntity>> = combine(
-        repository.allNotes,
-        archivedNotes
-    ) { active, archived ->
-        (active + archived)
-            .filter { !it.isDeleted && (it.audioDurationSec > 0 || it.audioFilePath.isNotBlank()) }
-            .sortedByDescending { it.updatedAt }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
     fun toggleDarkMode() {
         val next = !isDarkMode.value
         isDarkMode.value = next
@@ -563,7 +549,6 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         isTrashScreenOpen.value = false
         isArchiveScreenOpen.value = false
         isAccountScreenOpen.value = false
-        isAudioPlayerScreenOpen.value = false
         isThemesScreenOpen.value = true
     }
 
@@ -586,7 +571,6 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         isThemesScreenOpen.value = false
         isArchiveScreenOpen.value = false
         isAccountScreenOpen.value = false
-        isAudioPlayerScreenOpen.value = false
         isTrashScreenOpen.value = true
         viewModelScope.launch {
             purgeExpiredTrashNotes()
@@ -607,7 +591,6 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         isThemesScreenOpen.value = false
         isTrashScreenOpen.value = false
         isAccountScreenOpen.value = false
-        isAudioPlayerScreenOpen.value = false
         isArchiveScreenOpen.value = true
     }
 
@@ -623,7 +606,6 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         isThemesScreenOpen.value = false
         isTrashScreenOpen.value = false
         isArchiveScreenOpen.value = false
-        isAudioPlayerScreenOpen.value = false
         isAccountScreenOpen.value = false
         requestedSettingsPage.value = "ACCOUNT_CLOUD"
         isSettingsDrawerOpen.value = true
@@ -633,27 +615,12 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         isAccountScreenOpen.value = false
     }
 
-    fun openAudioPlayerScreen() {
-        isSettingsDrawerOpen.value = false
-        isThemesScreenOpen.value = false
-        isTrashScreenOpen.value = false
-        isArchiveScreenOpen.value = false
-        isAccountScreenOpen.value = false
-        isScannerHubOpen.value = false
-        isAudioPlayerScreenOpen.value = true
-    }
-
-    fun closeAudioPlayerScreen() {
-        isAudioPlayerScreenOpen.value = false
-    }
-
     fun openScannerHub() {
         isSettingsDrawerOpen.value = false
         isThemesScreenOpen.value = false
         isTrashScreenOpen.value = false
         isArchiveScreenOpen.value = false
         isAccountScreenOpen.value = false
-        isAudioPlayerScreenOpen.value = false
         isScannerHubOpen.value = true
     }
 
@@ -834,24 +801,6 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                     else "Unable to load selected image"
                 )
             }
-        }
-    }
-
-    fun toggleAutoDriveBackup(enabled: Boolean) {
-        isAutoDriveBackupEnabled.value = enabled
-        prefs.edit().putBoolean(DriveAutoBackupWorker.KEY_AUTO_BACKUP_24H, enabled).apply()
-        if (enabled) {
-            DriveAutoBackupWorker.scheduleEvery24Hours(getApplication())
-            showSnackbar(
-                if (isArabic.value) "تم تفعيل النسخ الاحتياطي التلقائي كل 24 ساعة"
-                else "24h automatic backup enabled"
-            )
-        } else {
-            DriveAutoBackupWorker.cancelScheduledBackup(getApplication())
-            showSnackbar(
-                if (isArabic.value) "تم إيقاف النسخ الاحتياطي التلقائي"
-                else "Automatic backup paused"
-            )
         }
     }
 
@@ -1502,13 +1451,6 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                 else "Guest Mode active — notes saved locally on your device 👤"
             }
         )
-    }
-
-    fun returnToWelcomeScreen() {
-        isSettingsDrawerOpen.value = false
-        showAuthDialog.value = false
-        isGuestMode.value = false
-        prefs.edit().putBoolean("is_guest_mode", false).apply()
     }
 
     fun clearAuthMessages() {

@@ -43,7 +43,6 @@ import com.example.data.model.ChecklistItem
 import com.example.data.model.GlassTint
 import com.example.data.model.NoteEntity
 import com.example.ui.glass.LiquidGlassCard
-import com.example.ui.glass.liquidGlass
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

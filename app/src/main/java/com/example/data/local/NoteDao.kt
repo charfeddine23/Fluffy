@@ -71,9 +71,6 @@ interface NoteDao {
     @Query("DELETE FROM notes WHERE syncId = :syncId")
     suspend fun deleteBySyncId(syncId: String)
 
-    @Query("DELETE FROM notes WHERE title IN ('مرحباً بك في Fluffy ✨', 'قائمة مهام الأسبوع 🎯', 'خاطرة إبداعية: انعكاس الضوء 🌈', 'Liquid Glass Architecture 💎')")
-    suspend fun clearSampleNotes()
-
     @Query("""
         SELECT * FROM notes 
         WHERE isArchived = 0 AND isDeleted = 0

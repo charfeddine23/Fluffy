@@ -15,7 +15,6 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -42,7 +41,6 @@ import com.example.ui.components.PremiumUpgradeDialog
 import com.example.ui.components.UpdateAvailableDialog
 import com.example.ui.screens.AccountProfileScreen
 import com.example.ui.screens.ArchiveScreen
-import com.example.ui.screens.AudioRecordingsScreen
 import com.example.ui.screens.AuthWelcomeScreen
 import com.example.ui.screens.BiometricLockScreen
 import com.example.ui.screens.FluffyHomeScreen
@@ -65,7 +63,6 @@ private sealed interface FluffyScreenState {
     data object Trash : FluffyScreenState
     data object Archive : FluffyScreenState
     data object Account : FluffyScreenState
-    data object AudioPlayer : FluffyScreenState
     data object ScannerHub : FluffyScreenState
     data class Editor(val note: NoteEntity) : FluffyScreenState
     data object Vault : FluffyScreenState
@@ -96,11 +93,9 @@ class MainActivity : FragmentActivity() {
             val isTrashScreenOpen by viewModel.isTrashScreenOpen.collectAsState()
             val isArchiveScreenOpen by viewModel.isArchiveScreenOpen.collectAsState()
             val isAccountScreenOpen by viewModel.isAccountScreenOpen.collectAsState()
-            val isAudioPlayerScreenOpen by viewModel.isAudioPlayerScreenOpen.collectAsState()
             val isScannerHubOpen by viewModel.isScannerHubOpen.collectAsState()
             val trashedNotes by viewModel.trashedNotes.collectAsState()
             val archivedNotes by viewModel.archivedNotes.collectAsState()
-            val audioNotes by viewModel.audioNotes.collectAsState()
             val isAppLocked by viewModel.isAppLocked.collectAsState()
             val editingNote by viewModel.editingNote.collectAsState()
             val isCreatingNew by viewModel.isCreatingNew.collectAsState()
@@ -206,7 +201,6 @@ class MainActivity : FragmentActivity() {
                                 isScannerHubOpen -> FluffyScreenState.ScannerHub
                                 editingNote != null -> FluffyScreenState.Editor(editingNote!!)
                                 isAccountScreenOpen -> FluffyScreenState.Account
-                                isAudioPlayerScreenOpen -> FluffyScreenState.AudioPlayer
                                 isTrashScreenOpen -> FluffyScreenState.Trash
                                 isArchiveScreenOpen -> FluffyScreenState.Archive
                                 isThemesScreenOpen -> FluffyScreenState.Themes
@@ -224,7 +218,6 @@ class MainActivity : FragmentActivity() {
                                             FluffyScreenState.Trash -> "trash"
                                             FluffyScreenState.Archive -> "archive"
                                             FluffyScreenState.Account -> "account"
-                                            FluffyScreenState.AudioPlayer -> "audio_player"
                                             FluffyScreenState.ScannerHub -> "scanner_hub"
                                             FluffyScreenState.Vault -> "vault"
                                             is FluffyScreenState.Editor -> "editor"
@@ -248,7 +241,6 @@ class MainActivity : FragmentActivity() {
                                                 targetState is FluffyScreenState.Trash ||
                                                 targetState is FluffyScreenState.Archive ||
                                                 targetState is FluffyScreenState.Account ||
-                                                targetState is FluffyScreenState.AudioPlayer ||
                                                 targetState is FluffyScreenState.ScannerHub -> {
                                                 (slideInHorizontally { width -> if (appLanguage.isRtl) -width else width } + fadeIn())
                                                     .togetherWith(slideOutHorizontally { width -> if (appLanguage.isRtl) width else -width } + fadeOut())
@@ -371,33 +363,6 @@ class MainActivity : FragmentActivity() {
                                                 snackbarMessage = snackbarMessage,
                                                 onClearSnackbar = { viewModel.clearSnackbar() },
                                                 onBack = { viewModel.closeAccountScreen() }
-                                            )
-                                        }
-                                        FluffyScreenState.AudioPlayer -> {
-                                            AudioRecordingsScreen(
-                                                audioNotes = audioNotes,
-                                                vaultItems = vaultItems,
-                                                isDark = isDark,
-                                                isArabic = isArabic,
-                                                onCreateAudioNote = { title, duration, filePath, byteSize ->
-                                                    viewModel.createAudioRecordingNote(title, duration, filePath, byteSize)
-                                                },
-                                                onImportAudioUri = { uri ->
-                                                    viewModel.importAudioFileAsNote(uri)
-                                                },
-                                                onOpenNote = { note ->
-                                                    viewModel.closeAudioPlayerScreen()
-                                                    viewModel.openExistingNote(note)
-                                                },
-                                                onMoveNoteToVault = { note ->
-                                                    viewModel.moveNoteToVault(note)
-                                                },
-                                                onMoveVaultAudioToRecordings = { vaultItem ->
-                                                    viewModel.moveVaultItemToNotes(vaultItem)
-                                                },
-                                                snackbarMessage = snackbarMessage,
-                                                onClearSnackbar = { viewModel.clearSnackbar() },
-                                                onBack = { viewModel.closeAudioPlayerScreen() }
                                             )
                                         }
                                         FluffyScreenState.ScannerHub -> {
