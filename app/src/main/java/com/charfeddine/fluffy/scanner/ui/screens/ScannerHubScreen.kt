@@ -120,6 +120,7 @@ fun ScannerHubScreen(
     scannerViewModel: ScannerViewModel,
     isArabic: Boolean,
     onLaunchSmartScan: () -> Unit = { scannerViewModel.openCameraScanner(appendToDocId = null) },
+    onAddMoreCamera: (String) -> Unit = { docId -> scannerViewModel.openCameraScanner(appendToDocId = docId) },
     onRequestProtectedAccess: (targetId: String, onUnlocked: () -> Unit) -> Unit,
     onExitEcosystem: () -> Unit
 ) {
@@ -1119,7 +1120,7 @@ fun ScannerHubScreen(
                                     withDocAccess {
                                         showAddMoreSourceChoices = false
                                         contextMenuDoc = null
-                                        scannerViewModel.openCameraScanner(appendToDocId = menuDoc.id)
+                                        onAddMoreCamera(menuDoc.id)
                                     }
                                 }
                                 .padding(horizontal = 10.dp, vertical = 10.dp),

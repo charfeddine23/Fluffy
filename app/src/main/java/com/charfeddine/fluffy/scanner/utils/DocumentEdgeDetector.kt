@@ -41,16 +41,17 @@ data class TrackedEdgeState(
  * 100% Offline, Multi-Stage Computer Vision Document Boundary & Line-Intersection Engine.
  *
  * Designed for BOTH:
- *  - Real-time CameraX ImageAnalysis frames (fast ~192px path + Temporal Stability Tracker).
- *  - High-accuracy Static / Gallery Photos (`detectFromBitmap`):
+ *  - Real-time CameraX ImageAnalysis frames (reusable-buffer CLAHE + Morphology + Line-Intersection + Temporal Smoothing).
+ *  - High-accuracy EXIF-Normalized Static / Gallery Photos (`detectFromBitmap`):
  *      1. Temporary downscaled working copy (max dimension ~800px) with exact `scaleX` / `scaleY`
  *         coordinate mapping back to original full-resolution dimensions.
  *      2. Pass 1 (Standard Contrast): Grayscale -> CLAHE -> 5x5 Gaussian Blur ->
- *         Separable Morphological Closing -> Adaptive Canny Edge Detection.
+ *         Separable Morphological Closing -> Adaptive Edge Hysteresis.
  *      3. Pass 2 (White-on-Light / Low-Contrast Fallback): HSV Saturation/Value + Border Chroma
- *         contrast -> Integral-Image Adaptive Thresholding Mask Perimeter + Sensitive Canny.
- *      4. Smart Quadrilateral Fitting via PCA Orthogonal Line Regression & Geometric Intersections
- *         (reconstructs sharp 4 corners even on rounded ID cards or folded document corners).
+ *         contrast -> Integral-Image Adaptive Thresholding Mask Perimeter + Sensitive Hysteresis.
+ *      4. Pure Line-Intersection Quadrilateral Reconstruction via trimmed 2x2 PCA orthogonal line
+ *         regression, multi-angle + PCA-oriented corner seeding, and geometric line intersections
+ *         sorted strictly `[Top-Left, Top-Right, Bottom-Right, Bottom-Left]`.
  *      5. Graceful 8% inset fallback ([DocumentQuad.SAFE_DEFAULT_MARGIN]) if no document is found.
  */
 object DocumentEdgeDetector {
@@ -78,6 +79,8 @@ object DocumentEdgeDetector {
         val visited = BooleanArray(maxPixels)
         val stack = IntArray(maxPixels)
         val histBins = IntArray(256)
+        val claheHist = IntArray(HIST_BINS)
+        val claheLuts = Array(CLAHE_TILES_Y) { Array(CLAHE_TILES_X) { IntArray(HIST_BINS) } }
     }
 
     private val liveWorkspaceLocal = object : ThreadLocal<LiveWorkspace>() {
@@ -93,9 +96,8 @@ object DocumentEdgeDetector {
     private data class OrthoLine(val a: Double, val b: Double, val c: Double)
 
     /**
-     * Ultra-fast, zero-allocation real-time CameraX Y-plane analyzer (<15ms at 640x480 YUV_420_888).
-     * Extracts raw luminance directly from planes[0], applies 2x2 noise-averaging downsampling
-     * into reusable buffers, stretches contrast, blurs, closes text noise, and fits sharp 4 corners.
+     * Real-time zero-allocation CameraX Y-plane analyzer with upright axis normalization,
+     * tile CLAHE local contrast enhancement, morphological text suppression, and line-intersection corners.
      */
     fun detectFromImageProxy(imageProxy: ImageProxy): EdgeDetectionFrameResult {
         val plane = imageProxy.planes.firstOrNull()
@@ -129,9 +131,7 @@ object DocumentEdgeDetector {
         val sampleStepX = max(1, srcW / (gridW * 2))
         val sampleStepY = max(1, srcH / (gridH * 2))
 
-        // Extract raw Y-plane luminance with fast 2x2 neighborhood averaging to suppress sensor grain
-        var minLum = 255
-        var maxLum = 0
+        // Extract raw Y-plane luminance rotated into upright display axes with 2x2 noise-averaging
         for (gy in 0 until gridH) {
             val v = gy / ghMinus1
             val gridRow = gy * gridW
@@ -172,19 +172,14 @@ object DocumentEdgeDetector {
                 val y01 = if (i01 in 0 until limit) buffer.get(i01).toInt() and 0xFF else y00
                 val y11 = if (i11 in 0 until limit) buffer.get(i11).toInt() and 0xFF else y00
 
-                val avg = (y00 + y10 + y01 + y11) shr 2
-                luma[gridRow + gx] = avg
-                if (avg < minLum) minLum = avg
-                if (avg > maxLum) maxLum = avg
+                luma[gridRow + gx] = (y00 + y10 + y01 + y11) shr 2
             }
         }
 
         val res = runLiveFastPass(
             ws = ws,
             w = gridW,
-            h = gridH,
-            minLum = minLum,
-            maxLum = maxLum
+            h = gridH
         )
         return res.copy(
             frameAspectRatio = rotAspect,
@@ -194,26 +189,27 @@ object DocumentEdgeDetector {
     }
 
     /**
-     * Sub-15ms live Y-plane pipeline using zero-allocation reusable workspace arrays:
-     * Percentile Contrast Stretch -> 5x5 Gaussian -> 3x3 Morphological Close -> Canny -> Line-Intersection Quad.
+     * Real-time zero-allocation live Y-plane pipeline:
+     * Tile CLAHE -> 5x5 Gaussian -> 3x3 Morphological Close -> Edge Hysteresis -> Line-Intersection Quad.
      */
     private fun runLiveFastPass(
         ws: LiveWorkspace,
         w: Int,
-        h: Int,
-        minLum: Int,
-        maxLum: Int
+        h: Int
     ): EdgeDetectionFrameResult {
         val n = w * h
         val luma = ws.luma
         val stretched = ws.stretched
 
-        // 1. Fast global + local contrast stretch (replaces heavy 8x8 tile CLAHE on live 60fps stream)
-        val range = (maxLum - minLum).coerceAtLeast(16)
-        val scaleLut = 255f / range.toFloat()
-        for (i in 0 until n) {
-            stretched[i] = ((luma[i] - minLum) * scaleLut).toInt().coerceIn(0, 255)
-        }
+        // 1. Zero-allocation 8x8 tile CLAHE separates low-contrast documents & ID cards from busy desks
+        applyClaheInPlace(
+            src = luma,
+            dst = stretched,
+            w = w,
+            h = h,
+            hist = ws.claheHist,
+            luts = ws.claheLuts
+        )
 
         // 2. Separable 5x5 Gaussian Blur (zero-alloc into ws.temp -> ws.blurred)
         val temp = ws.temp
@@ -944,13 +940,25 @@ object DocumentEdgeDetector {
      * Contrast Limited Adaptive Histogram Equalization (CLAHE) with bilinear tile interpolation.
      */
     private fun applyClahe(src: IntArray, w: Int, h: Int): IntArray {
+        val out = IntArray(w * h)
+        val hist = IntArray(HIST_BINS)
+        val luts = Array(CLAHE_TILES_Y) { Array(CLAHE_TILES_X) { IntArray(HIST_BINS) } }
+        applyClaheInPlace(src, out, w, h, hist, luts)
+        return out
+    }
+
+    private fun applyClaheInPlace(
+        src: IntArray,
+        dst: IntArray,
+        w: Int,
+        h: Int,
+        hist: IntArray,
+        luts: Array<Array<IntArray>>
+    ) {
         val tilesX = CLAHE_TILES_X
         val tilesY = CLAHE_TILES_Y
         val tileW = max(4f, w.toFloat() / tilesX)
         val tileH = max(4f, h.toFloat() / tilesY)
-
-        val luts = Array(tilesY) { Array(tilesX) { IntArray(HIST_BINS) } }
-        val hist = IntArray(HIST_BINS)
 
         for (ty in 0 until tilesY) {
             val yStart = (ty * tileH).toInt().coerceIn(0, h - 1)
@@ -993,7 +1001,6 @@ object DocumentEdgeDetector {
             }
         }
 
-        val out = IntArray(w * h)
         for (y in 0 until h) {
             val fty = (y / tileH) - 0.5f
             val ty0 = fty.toInt().coerceIn(0, tilesY - 1)
@@ -1014,10 +1021,9 @@ object DocumentEdgeDetector {
 
                 val top = v00 + (v10 - v00) * wx
                 val bot = v01 + (v11 - v01) * wx
-                out[rowOff + x] = (top + (bot - top) * wy).roundToInt().coerceIn(0, 255)
+                dst[rowOff + x] = (top + (bot - top) * wy).roundToInt().coerceIn(0, 255)
             }
         }
-        return out
     }
 
     /**
@@ -1380,24 +1386,13 @@ object DocumentEdgeDetector {
             if (hull.size < 4) continue
             val mergePenalty = if (isMergedCloud) 0.06f else 0f
 
-            // Candidate A: Line-Intersection Quadrilateral Reconstruction (handles rounded / folded corners)
+            // Line-Intersection Quadrilateral Reconstruction (handles rounded ID cards, skewed pages, and bent edges)
             val lineCorners = reconstructQuadByLineIntersections(hull, cloud, edges, w, h)
             if (lineCorners != null) {
                 val score = evaluateCandidateWorkQuad(lineCorners, edges, w, h, isIdCardHint) - mergePenalty
                 if (score > bestScore) {
                     bestScore = score
                     bestWorkCorners = lineCorners
-                }
-            }
-
-            // Candidate B: Adaptive Douglas-Peucker cross-check
-            val polyCorners = fitFourPointPolygonPx(hull)
-            if (polyCorners != null) {
-                val floatPoly = polyCorners.map { FloatPt(it.x.toFloat(), it.y.toFloat()) }
-                val score = evaluateCandidateWorkQuad(floatPoly, edges, w, h, isIdCardHint) - mergePenalty
-                if (score > bestScore) {
-                    bestScore = score
-                    bestWorkCorners = floatPoly
                 }
             }
         }
@@ -1427,8 +1422,8 @@ object DocumentEdgeDetector {
     /**
      * Reconstructs 4 sharp corner intersections by extracting the 4 dominant outer side
      * edge point sets (excluding corner-turn arcs where rounded or folded corners happen),
-     * fitting orthogonal PCA lines (`a*x + b*y + c = 0`), intersecting adjacent lines,
-     * and running 1 refinement pass on raw thin edge pixels.
+     * fitting outlier-resistant orthogonal PCA lines (`a*x + b*y + c = 0`), intersecting adjacent lines,
+     * and running 1 refinement pass on raw thin edge pixels sorted `[TL, TR, BR, BL]`.
      */
     private fun reconstructQuadByLineIntersections(
         hull: List<PxPt>,
@@ -1439,15 +1434,19 @@ object DocumentEdgeDetector {
     ): List<FloatPt>? {
         if (hull.size < 4) return null
 
-        // Try standard diagonal extrema + 22.5-degree rotated extrema seeds so angled documents work cleanly
-        val seedAnglesDeg = floatArrayOf(0f, 22.5f)
+        val pcaRad = estimatePrincipalAxisRad(hull)
+        val seedRadians = buildList {
+            add(0.0)
+            add(Math.toRadians(15.0))
+            add(Math.toRadians(30.0))
+            if (pcaRad != null) add(pcaRad)
+        }
         var bestReconstructed: List<FloatPt>? = null
         var bestSupport = -1f
 
         val distTol = max(3.5f, min(w, h) * 0.015f)
 
-        for (deg in seedAnglesDeg) {
-            val rad = Math.toRadians(deg.toDouble())
+        for (rad in seedRadians) {
             val cosA = cos(rad)
             val sinA = sin(rad)
 
@@ -1510,7 +1509,7 @@ object DocumentEdgeDetector {
                 }
 
                 val fitted = if (sideInliers.size >= 6) {
-                    fitOrthogonalLine(sideInliers)
+                    fitRobustOrthogonalLine(sideInliers)
                 } else {
                     lineThroughTwoPoints(a, b)
                 }
@@ -1550,7 +1549,6 @@ object DocumentEdgeDetector {
                             val px = sx + ox
                             if (px !in 2 until w - 2) continue
                             if (edges[row + px]) {
-                                // Only keep points close perpendicular to line
                                 val d = abs((px - a.x) * (-uy) + (py - a.y) * ux)
                                 if (d <= refineTol) {
                                     refinedPts.add(FloatPt(px.toFloat(), py.toFloat()))
@@ -1559,7 +1557,7 @@ object DocumentEdgeDetector {
                         }
                     }
                 }
-                val rLine = if (refinedPts.size >= 8) fitOrthogonalLine(refinedPts) else lines[side]
+                val rLine = if (refinedPts.size >= 8) fitRobustOrthogonalLine(refinedPts) else lines[side]
                 refinedLines.add(rLine ?: lines[side])
             }
 
@@ -1572,6 +1570,50 @@ object DocumentEdgeDetector {
         }
 
         return bestReconstructed
+    }
+
+    private fun estimatePrincipalAxisRad(pts: List<PxPt>): Double? {
+        if (pts.size < 4) return null
+        var mx = 0.0
+        var my = 0.0
+        for (p in pts) {
+            mx += p.x
+            my += p.y
+        }
+        mx /= pts.size
+        my /= pts.size
+        var sxx = 0.0
+        var syy = 0.0
+        var sxy = 0.0
+        for (p in pts) {
+            val dx = p.x - mx
+            val dy = p.y - my
+            sxx += dx * dx
+            syy += dy * dy
+            sxy += dx * dy
+        }
+        if (sxx + syy < 1e-4) return null
+        return -0.5 * atan2(2.0 * sxy, sxx - syy)
+    }
+
+    /**
+     * Two-pass outlier-trimmed 2x2 PCA Orthogonal Line Regression (`a*x + b*y + c = 0`, `a^2 + b^2 = 1`).
+     * Filters background speckles or rounded-corner curvature residuals before computing the final line.
+     */
+    private fun fitRobustOrthogonalLine(pts: List<FloatPt>): OrthoLine? {
+        val initial = fitOrthogonalLine(pts) ?: return null
+        if (pts.size < 10) return initial
+        val dists = DoubleArray(pts.size) { i ->
+            abs(initial.a * pts[i].x + initial.b * pts[i].y + initial.c)
+        }
+        val sortedDists = dists.sortedArray()
+        val medianErr = sortedDists[sortedDists.size / 2]
+        val cut = max(1.6, medianErr * 2.2)
+        val filtered = ArrayList<FloatPt>(pts.size)
+        for (i in pts.indices) {
+            if (dists[i] <= cut) filtered.add(pts[i])
+        }
+        return if (filtered.size >= 6) fitOrthogonalLine(filtered) ?: initial else initial
     }
 
     /**
@@ -1796,94 +1838,6 @@ object DocumentEdgeDetector {
             (b.y - a.y).toLong() * (c.x - a.x).toLong()
     }
 
-    private fun fitFourPointPolygonPx(hull: List<PxPt>): List<PxPt>? {
-        if (hull.size < 4) return null
-        val perimeter = computeClosedPerimeter(hull)
-        if (perimeter < 20f) return null
-
-        val epsFractions = floatArrayOf(0.02f, 0.03f, 0.045f, 0.06f, 0.08f, 0.11f)
-        for (frac in epsFractions) {
-            val approx = approxClosedPolyDP(hull, perimeter * frac)
-            if (approx.size == 4) {
-                return orderFourPxCornersClockwise(approx)
-            }
-        }
-        return null
-    }
-
-    private fun orderFourPxCornersClockwise(pts: List<PxPt>): List<PxPt> {
-        val tl = pts.minBy { it.x + it.y }
-        val br = pts.maxBy { it.x + it.y }
-        val remaining = pts.filter { it !== tl && it !== br }
-        if (remaining.size < 2) return pts
-        val tr = remaining.maxBy { it.x - it.y }
-        val bl = remaining.minBy { it.x - it.y }
-        return listOf(tl, tr, br, bl)
-    }
-
-    private fun computeClosedPerimeter(pts: List<PxPt>): Float {
-        var sum = 0f
-        for (i in pts.indices) {
-            val a = pts[i]
-            val b = pts[(i + 1) % pts.size]
-            sum += hypot((b.x - a.x).toFloat(), (b.y - a.y).toFloat())
-        }
-        return sum
-    }
-
-    private fun approxClosedPolyDP(hull: List<PxPt>, epsilon: Float): List<PxPt> {
-        if (hull.size <= 4) return hull
-        var idxB = hull.size / 2
-        var maxD = -1f
-        for (i in hull.indices) {
-            val d = hypot((hull[i].x - hull[0].x).toFloat(), (hull[i].y - hull[0].y).toFloat())
-            if (d > maxD) {
-                maxD = d
-                idxB = i
-            }
-        }
-        val firstHalf = hull.subList(0, idxB + 1)
-        val secondHalf = hull.subList(idxB, hull.size) + hull[0]
-
-        val simp1 = douglasPeuckerOpen(firstHalf, epsilon)
-        val simp2 = douglasPeuckerOpen(secondHalf, epsilon)
-
-        val combined = ArrayList<PxPt>(simp1.size + simp2.size)
-        combined.addAll(simp1.dropLast(1))
-        combined.addAll(simp2.dropLast(1))
-        return combined
-    }
-
-    private fun douglasPeuckerOpen(pts: List<PxPt>, epsilon: Float): List<PxPt> {
-        if (pts.size < 3) return pts
-        val start = pts.first()
-        val end = pts.last()
-        var maxDist = 0f
-        var maxIdx = 0
-        for (i in 1 until pts.lastIndex) {
-            val d = perpDistance(pts[i], start, end)
-            if (d > maxDist) {
-                maxDist = d
-                maxIdx = i
-            }
-        }
-        return if (maxDist > epsilon) {
-            val left = douglasPeuckerOpen(pts.subList(0, maxIdx + 1), epsilon)
-            val right = douglasPeuckerOpen(pts.subList(maxIdx, pts.size), epsilon)
-            left.dropLast(1) + right
-        } else {
-            listOf(start, end)
-        }
-    }
-
-    private fun perpDistance(p: PxPt, a: PxPt, b: PxPt): Float {
-        val dx = (b.x - a.x).toFloat()
-        val dy = (b.y - a.y).toFloat()
-        val len = hypot(dx, dy)
-        if (len < 1e-4f) return hypot((p.x - a.x).toFloat(), (p.y - a.y).toFloat())
-        return abs(dy * p.x - dx * p.y + b.x * a.y - b.y * a.x) / len
-    }
-
     private fun polygonArea(pts: List<FloatPt>): Float {
         var sum = 0f
         for (i in 0 until 4) {
@@ -1980,6 +1934,7 @@ class CornerStabilityTracker(
     private val buffer = ArrayDeque<DocumentQuad>(windowSize)
     private var lastSmoothed: DocumentQuad? = null
     private var missedStreak = 0
+    private var jumpStreak = 0
     private var steadyStartMs = 0L
     private var lastCaptureMs = 0L
 
@@ -1990,6 +1945,7 @@ class CornerStabilityTracker(
     ): TrackedEdgeState {
         if (!detection.isLocked) {
             missedStreak++
+            jumpStreak = 0
             if (missedStreak >= 4) {
                 buffer.clear()
                 lastSmoothed = null
@@ -2027,16 +1983,38 @@ class CornerStabilityTracker(
         }
 
         missedStreak = 0
+        val prevHeld = lastSmoothed
+        if (prevHeld != null && maxCornerMovement(prevHeld, detection.quad) > 0.24f) {
+            // Suppress single-frame outlier jumps; snap cleanly if the camera genuinely moved to a new doc
+            jumpStreak++
+            if (jumpStreak < 2) {
+                return TrackedEdgeState(
+                    quad = prevHeld,
+                    confidence = detection.confidence * 0.85f,
+                    isLocked = true,
+                    stabilityProgress = 0f,
+                    shouldAutoCapture = false,
+                    frameAspectRatio = detection.frameAspectRatio,
+                    frameWidth = detection.frameWidth,
+                    frameHeight = detection.frameHeight
+                )
+            }
+            buffer.clear()
+            jumpStreak = 0
+            steadyStartMs = nowMs
+        } else {
+            jumpStreak = 0
+        }
+
         if (buffer.size >= windowSize) {
             buffer.removeFirst()
         }
         buffer.addLast(detection.quad)
 
         val smoothed = computeWeightedAverageQuad()
-        val prev = lastSmoothed
         lastSmoothed = smoothed
 
-        val maxDelta = if (prev != null) maxCornerMovement(prev, smoothed) else 1f
+        val maxDelta = if (prevHeld != null) maxCornerMovement(prevHeld, smoothed) else 1f
         if (maxDelta <= jitterThresholdNorm) {
             if (steadyStartMs == 0L) steadyStartMs = nowMs
         } else {
@@ -2072,6 +2050,7 @@ class CornerStabilityTracker(
         buffer.clear()
         lastSmoothed = null
         missedStreak = 0
+        jumpStreak = 0
         steadyStartMs = 0L
     }
 

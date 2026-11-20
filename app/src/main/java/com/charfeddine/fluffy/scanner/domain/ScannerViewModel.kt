@@ -25,6 +25,7 @@ import com.charfeddine.fluffy.scanner.data.model.WatermarkConfig
 import com.charfeddine.fluffy.scanner.data.repository.ScannerRepository
 import com.charfeddine.fluffy.scanner.utils.CryptoVaultHelper
 import com.charfeddine.fluffy.scanner.utils.DocumentImageProcessor
+import com.charfeddine.fluffy.scanner.utils.MlKitScanPayload
 import com.charfeddine.fluffy.scanner.utils.OfflineOcrAndBarcodeEngine
 import com.charfeddine.fluffy.scanner.utils.PdfEngine
 import com.charfeddine.fluffy.scanner.utils.PdfRenderedPageInput
@@ -525,6 +526,146 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                 } else {
                     statusMessage.value = if (isArabic) "تعذر استيراد الصورة" else "Unable to import image"
                 }
+            } finally {
+                isBusy.value = false
+            }
+        }
+    }
+
+    fun importMlKitScanResult(
+        payload: MlKitScanPayload,
+        appendToDocId: String?,
+        isArabic: Boolean
+    ) {
+        if (payload.pageImageUris.isEmpty() && payload.pdfUri == null) return
+        viewModelScope.launch {
+            isBusy.value = true
+            try {
+                val targetDocId = withContext(Dispatchers.IO) {
+                    val now = System.currentTimeMillis()
+                    val existingDoc = appendToDocId?.let { repository.getDocumentOnce(it) }
+                    val docId = existingDoc?.id ?: UUID.randomUUID().toString()
+                    val existingPages = if (existingDoc != null) repository.getPagesOnce(docId) else emptyList()
+                    var nextOrder = existingPages.size
+                    val resolver = getApplication<Application>().contentResolver
+
+                    val createdPages = mutableListOf<ScannedPageEntity>()
+                    val pdfInputs = mutableListOf<PdfRenderedPageInput>()
+
+                    payload.pageImageUris.forEach { pageUri ->
+                        val orientedBmp = DocumentImageProcessor.decodeOrientedBitmapFromUri(
+                            contentResolver = resolver,
+                            uri = pageUri,
+                            maxSide = 2560
+                        ) ?: return@forEach
+
+                        val rawFile = File(repository.docsRootDir, "mlk_raw_${UUID.randomUUID()}.jpg")
+                        val procFile = File(repository.docsRootDir, "mlk_page_${UUID.randomUUID()}.jpg")
+                        DocumentImageProcessor.saveBitmapAsJpeg(orientedBmp, rawFile, 95)
+                        DocumentImageProcessor.saveBitmapAsJpeg(orientedBmp, procFile, 95)
+
+                        val ocrRes = withContext(Dispatchers.Default) {
+                            OfflineOcrAndBarcodeEngine.extractTextOffline(orientedBmp)
+                        }
+
+                        if (existingDoc == null) {
+                            val pdfScale = 1650f / kotlin.math.max(orientedBmp.width, orientedBmp.height).coerceAtLeast(1)
+                            val pdfBmp = if (pdfScale < 0.98f) {
+                                Bitmap.createScaledBitmap(
+                                    orientedBmp,
+                                    (orientedBmp.width * pdfScale).toInt().coerceAtLeast(64),
+                                    (orientedBmp.height * pdfScale).toInt().coerceAtLeast(64),
+                                    true
+                                )
+                            } else {
+                                orientedBmp.copy(Bitmap.Config.ARGB_8888, false)
+                            }
+                            pdfInputs.add(PdfRenderedPageInput(pdfBmp, ocrRes.lines))
+                        }
+
+                        if (!orientedBmp.isRecycled) orientedBmp.recycle()
+
+                        createdPages.add(
+                            ScannedPageEntity(
+                                documentId = docId,
+                                pageOrder = nextOrder++,
+                                originalImagePath = rawFile.absolutePath,
+                                processedImagePath = procFile.absolutePath,
+                                cornersJson = DocumentQuad.FULL_FRAME.toJson(),
+                                filterId = ScannerFilterType.ORIGINAL.id,
+                                brightness = 0f,
+                                contrast = 1f,
+                                sharpness = 0f,
+                                rotationDeg = 0,
+                                ocrText = ocrRes.fullText
+                            )
+                        )
+                    }
+
+                    if (createdPages.isEmpty() && payload.pdfUri == null) {
+                        return@withContext null
+                    }
+
+                    if (existingDoc == null) {
+                        val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(now))
+                        val defaultTitle = if (isArabic) "مستند $stamp" else "Scan $stamp"
+                        val pdfFile = File(repository.docsRootDir, "doc_$docId.pdf")
+
+                        if (pdfInputs.isNotEmpty()) {
+                            PdfEngine.buildPdfFromBitmaps(
+                                destFile = pdfFile,
+                                pages = pdfInputs,
+                                pageSizePreset = PdfPageSizePreset.A4,
+                                searchableOcr = true
+                            )
+                            pdfInputs.forEach { if (!it.bitmap.isRecycled) it.bitmap.recycle() }
+                        } else if (payload.pdfUri != null) {
+                            runCatching {
+                                resolver.openInputStream(payload.pdfUri)?.use { input ->
+                                    pdfFile.outputStream().use { output -> input.copyTo(output) }
+                                }
+                            }
+                        }
+
+                        val totalSize = createdPages.sumOf { File(it.processedImagePath).length() } +
+                            (pdfFile.takeIf { it.exists() }?.length() ?: 0L)
+                        val docEntity = ScannedDocumentEntity(
+                            id = docId,
+                            folderId = currentFolderId.value,
+                            title = defaultTitle,
+                            createdAt = now,
+                            updatedAt = now,
+                            pageCount = createdPages.size,
+                            totalSizeBytes = totalSize,
+                            coverThumbnailPath = createdPages.firstOrNull()?.processedImagePath.orEmpty(),
+                            pdfPath = pdfFile.absolutePath,
+                            ocrFullText = createdPages.mapNotNull { it.ocrText.takeIf(String::isNotBlank) }.joinToString("\n\n"),
+                            isSearchablePdf = true
+                        )
+                        repository.upsertDocument(docEntity)
+                        if (createdPages.isNotEmpty()) {
+                            repository.upsertPages(createdPages)
+                        }
+                    } else {
+                        pdfInputs.forEach { if (!it.bitmap.isRecycled) it.bitmap.recycle() }
+                        if (createdPages.isNotEmpty()) {
+                            repository.upsertPages(createdPages)
+                            repository.syncDocumentStats(docId)
+                        }
+                    }
+                    docId
+                }
+
+                if (targetDocId != null) {
+                    currentRoute.value = ScannerSubRoute.DocumentDetail(targetDocId)
+                    statusMessage.value = if (isArabic) "تم حفظ المستند في الهاتف بنجاح ✨" else "Document saved locally ✨"
+                } else {
+                    statusMessage.value = if (isArabic) "تعذر استيراد نتيجة المسح" else "Unable to import scan result"
+                }
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                throw ce
+            } catch (_: Throwable) {
+                statusMessage.value = if (isArabic) "تعذر معالجة المسح، حاول مجدداً" else "Unable to process scan, please retry"
             } finally {
                 isBusy.value = false
             }
