@@ -2,8 +2,12 @@ package com.charfeddine.fluffy.scanner.domain
 
 import android.app.Application
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.PointF
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.charfeddine.fluffy.scanner.data.local.ScannerDatabase
@@ -13,6 +17,7 @@ import com.charfeddine.fluffy.scanner.data.model.DocumentQuad
 import com.charfeddine.fluffy.scanner.data.model.IdCardSide
 import com.charfeddine.fluffy.scanner.data.model.PageAnnotations
 import com.charfeddine.fluffy.scanner.data.model.PdfPageSizePreset
+import com.charfeddine.fluffy.scanner.data.model.PointNorm
 import com.charfeddine.fluffy.scanner.data.model.SavedSignatureEntity
 import com.charfeddine.fluffy.scanner.data.model.ScanMode
 import com.charfeddine.fluffy.scanner.data.model.ScannedDocumentEntity
@@ -73,7 +78,7 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
     val hasPinConfigured = MutableStateFlow(CryptoVaultHelper.hasPinConfigured(application))
 
     // Active Capture / Batch / Crop Pipeline State
-    val activeScanMode = MutableStateFlow(ScanMode.SINGLE)
+    val activeScanMode = MutableStateFlow(ScanMode.ID_CARD)
     val batchFrames = MutableStateFlow<List<BatchCapturedFrame>>(emptyList())
     val idCardFrontRawPath = MutableStateFlow<String?>(null)
     private var idCardFrontQuad: DocumentQuad? = null
@@ -241,9 +246,9 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                         DocumentImageProcessor.decodeSampledBitmap(file, 2560)
                     } ?: return@withContext emptyList()
 
-                    // Crop raw captured bitmap to match PreviewView's FILL_CENTER viewport in SINGLE/BOOK
-                    // so `1. Crop` never shows a zoomed-out frame ("يبعد الصورة") or misaligned edges.
-                    val rawBmp = if ((mode == ScanMode.SINGLE || mode == ScanMode.BOOK) &&
+                    // Crop raw captured bitmap to match PreviewView's FILL_CENTER viewport in BOOK
+                    // so `1. Crop` never shows a zoomed-out frame or misaligned edges.
+                    val rawBmp = if (mode == ScanMode.BOOK &&
                         previewWidth > 0 && previewHeight > 0
                     ) {
                         val cropped = DocumentImageProcessor.cropBitmapToPreviewViewport(
@@ -432,32 +437,7 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                             )
                         }
 
-                        else -> {
-                            // Prefer the exact locked live quad the user saw in viewfinder!
-                            val quad = if (mappedLiveQuad != null && DocumentImageProcessor.isValidDocumentQuad(mappedLiveQuad)) {
-                                mappedLiveQuad
-                            } else {
-                                val detectedOnPhoto = DocumentImageProcessor.detectQuadFromBitmap(rawBmp)
-                                if (DocumentImageProcessor.isValidDocumentQuad(detectedOnPhoto)) detectedOnPhoto
-                                else DocumentQuad.SAFE_DEFAULT_MARGIN
-                            }
-                            // Fast shutter-time thumbnail warp (900px) — full-res enhancement runs cleanly during Commit
-                            val warpedPreview = DocumentImageProcessor.warpPerspective(rawBmp, quad, 900)
-                            if (warpedPreview !== rawBmp && !rawBmp.isRecycled) rawBmp.recycle()
-                            val warpedFile = File(repository.docsRootDir, "warp_${UUID.randomUUID()}.jpg")
-                            withContext(Dispatchers.IO) {
-                                DocumentImageProcessor.saveBitmapAsJpeg(warpedPreview, warpedFile, 90)
-                            }
-                            if (!warpedPreview.isRecycled) warpedPreview.recycle()
-                            listOf(
-                                BatchCapturedFrame(
-                                    rawImagePath = file.absolutePath,
-                                    processedImagePath = warpedFile.absolutePath,
-                                    detectedQuad = quad,
-                                    filter = ScannerFilterType.MAGIC_COLOR
-                                )
-                            )
-                        }
+                        ScanMode.QR_BARCODE -> emptyList()
                     }
                 }
 
@@ -491,40 +471,97 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun importGalleryUris(uris: List<Uri>, appendToDocId: String?, isArabic: Boolean) {
+        importDeviceFiles(uris, appendToDocId, isArabic)
+    }
+
+    fun importDeviceFiles(uris: List<Uri>, appendToDocId: String?, isArabic: Boolean) {
         if (uris.isEmpty()) return
         viewModelScope.launch {
             isBusy.value = true
             try {
                 val imported = withContext(Dispatchers.IO) {
                     val resolver = getApplication<Application>().contentResolver
-                    uris.mapNotNull { uri ->
-                        runCatching {
-                            val bmp = DocumentImageProcessor.decodeOrientedBitmapFromUri(
-                                contentResolver = resolver,
-                                uri = uri,
-                                maxSide = 2560
-                            ) ?: return@mapNotNull null
-                            val rawFile = File(repository.docsRootDir, "imp_${UUID.randomUUID()}.jpg")
-                            DocumentImageProcessor.saveBitmapAsJpeg(bmp, rawFile, 94)
-                            val quad = withContext(Dispatchers.Default) {
-                                DocumentImageProcessor.detectQuadFromBitmap(bmp)
+                    val frames = mutableListOf<BatchCapturedFrame>()
+                    uris.forEach { uri ->
+                        val mimeType = resolver.getType(uri).orEmpty().lowercase(Locale.US)
+                        val displayName = runCatching {
+                            resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                                if (c.moveToFirst()) c.getString(0) else null
                             }
-                            bmp.recycle()
-                            BatchCapturedFrame(
-                                rawImagePath = rawFile.absolutePath,
-                                processedImagePath = rawFile.absolutePath,
-                                detectedQuad = quad,
-                                filter = ScannerFilterType.MAGIC_COLOR
-                            )
-                        }.getOrNull()
+                        }.getOrNull().orEmpty().lowercase(Locale.US)
+                        val isPdf = mimeType.contains("pdf") || displayName.endsWith(".pdf")
+
+                        if (isPdf) {
+                            runCatching {
+                                resolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                                    val renderer = PdfRenderer(pfd)
+                                    try {
+                                        val limit = renderer.pageCount.coerceAtMost(30)
+                                        for (pageIndex in 0 until limit) {
+                                            val page = renderer.openPage(pageIndex)
+                                            val maxSide = kotlin.math.max(page.width, page.height).coerceAtLeast(1)
+                                            val scale = 2000f / maxSide
+                                            val renderW = (page.width * scale).toInt().coerceIn(480, 2200)
+                                            val renderH = (page.height * scale).toInt().coerceIn(480, 2800)
+                                            val bmp = Bitmap.createBitmap(renderW, renderH, Bitmap.Config.ARGB_8888)
+                                            Canvas(bmp).drawColor(Color.WHITE)
+                                            page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                                            page.close()
+
+                                            val rawFile = File(repository.docsRootDir, "imp_pdf_${UUID.randomUUID()}.jpg")
+                                            DocumentImageProcessor.saveBitmapAsJpeg(bmp, rawFile, 94)
+                                            bmp.recycle()
+                                            frames.add(
+                                                BatchCapturedFrame(
+                                                    rawImagePath = rawFile.absolutePath,
+                                                    processedImagePath = rawFile.absolutePath,
+                                                    detectedQuad = DocumentQuad(
+                                                        PointNorm(0.01f, 0.01f),
+                                                        PointNorm(0.99f, 0.01f),
+                                                        PointNorm(0.99f, 0.99f),
+                                                        PointNorm(0.01f, 0.99f)
+                                                    ),
+                                                    filter = ScannerFilterType.ORIGINAL
+                                                )
+                                            )
+                                        }
+                                    } finally {
+                                        renderer.close()
+                                    }
+                                }
+                            }
+                        } else {
+                            runCatching {
+                                val bmp = DocumentImageProcessor.decodeOrientedBitmapFromUri(
+                                    contentResolver = resolver,
+                                    uri = uri,
+                                    maxSide = 2560
+                                ) ?: return@runCatching
+                                val rawFile = File(repository.docsRootDir, "imp_${UUID.randomUUID()}.jpg")
+                                DocumentImageProcessor.saveBitmapAsJpeg(bmp, rawFile, 94)
+                                val quad = withContext(Dispatchers.Default) {
+                                    DocumentImageProcessor.detectQuadFromBitmap(bmp)
+                                }
+                                bmp.recycle()
+                                frames.add(
+                                    BatchCapturedFrame(
+                                        rawImagePath = rawFile.absolutePath,
+                                        processedImagePath = rawFile.absolutePath,
+                                        detectedQuad = quad,
+                                        filter = ScannerFilterType.MAGIC_COLOR
+                                    )
+                                )
+                            }
+                        }
                     }
+                    frames
                 }
                 if (imported.isNotEmpty()) {
                     batchFrames.value = batchFrames.value + imported
                     activeCropIndex.value = (batchFrames.value.size - imported.size).coerceAtLeast(0)
                     currentRoute.value = ScannerSubRoute.CropAndFilter(appendToDocId)
                 } else {
-                    statusMessage.value = if (isArabic) "تعذر استيراد الصورة" else "Unable to import image"
+                    statusMessage.value = if (isArabic) "تعذر استيراد الملف المحدد" else "Unable to import selected file"
                 }
             } finally {
                 isBusy.value = false

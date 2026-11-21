@@ -3,7 +3,6 @@ package com.charfeddine.fluffy.scanner.ui.screens
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -37,18 +36,20 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddCircleOutline
+import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
-import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.RestoreFromTrash
@@ -98,6 +99,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import coil.compose.rememberAsyncImagePainter
+import com.charfeddine.fluffy.scanner.data.model.ScanMode
 import com.charfeddine.fluffy.scanner.data.model.ScannedDocumentEntity
 import com.charfeddine.fluffy.scanner.data.model.ScannerFolderEntity
 import com.charfeddine.fluffy.scanner.data.model.ScannerTagCatalog
@@ -119,8 +121,9 @@ import kotlinx.coroutines.withTimeoutOrNull
 fun ScannerHubScreen(
     scannerViewModel: ScannerViewModel,
     isArabic: Boolean,
-    onLaunchSmartScan: () -> Unit = { scannerViewModel.openCameraScanner(appendToDocId = null) },
-    onAddMoreCamera: (String) -> Unit = { docId -> scannerViewModel.openCameraScanner(appendToDocId = docId) },
+    onLaunchPrimaryScan: () -> Unit = { scannerViewModel.openCameraScanner(appendToDocId = null, initialMode = ScanMode.ID_CARD) },
+    onLaunchAppIdScanner: () -> Unit = { scannerViewModel.openCameraScanner(appendToDocId = null, initialMode = ScanMode.ID_CARD) },
+    onAddMoreCamera: (String) -> Unit = { docId -> scannerViewModel.openCameraScanner(appendToDocId = docId, initialMode = ScanMode.ID_CARD) },
     onRequestProtectedAccess: (targetId: String, onUnlocked: () -> Unit) -> Unit,
     onExitEcosystem: () -> Unit
 ) {
@@ -156,13 +159,13 @@ fun ScannerHubScreen(
     var docToRename by remember { mutableStateOf<ScannedDocumentEntity?>(null) }
     var pendingAppendGalleryDocId by remember { mutableStateOf<String?>(null) }
 
-    val galleryImportLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 15)
+    val fileImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris: List<Uri> ->
         val appendDocId = pendingAppendGalleryDocId
         pendingAppendGalleryDocId = null
         if (uris.isNotEmpty()) {
-            scannerViewModel.importGalleryUris(uris, appendToDocId = appendDocId, isArabic = isArabic)
+            scannerViewModel.importDeviceFiles(uris, appendToDocId = appendDocId, isArabic = isArabic)
         }
     }
 
@@ -480,7 +483,7 @@ fun ScannerHubScreen(
                     // 3. Structured Scrollable Content
                     LazyColumn(
                         modifier = Modifier.weight(1f).fillMaxWidth(),
-                        contentPadding = PaddingValues(bottom = 96.dp),
+                        contentPadding = PaddingValues(bottom = 112.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         // Quick Actions Bento Row (shown cleanly at top when not searching)
@@ -491,27 +494,25 @@ fun ScannerHubScreen(
                                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
                                     HubQuickActionTile(
-                                        icon = Icons.Default.CameraAlt,
-                                        label = if (isArabic) "تصوير مستند" else "Scan",
+                                        icon = Icons.Default.Badge,
+                                        label = if (isArabic) "ماسح ID" else "ID Scanner",
                                         accentColor = ScannerGlassPalette.CyanGlow,
-                                        highlighted = true,
+                                        highlighted = false,
                                         modifier = Modifier
                                             .weight(1f)
                                             .testTag("hub_open_camera_scanner_btn"),
-                                        onClick = onLaunchSmartScan
+                                        onClick = onLaunchAppIdScanner
                                     )
                                     HubQuickActionTile(
-                                        icon = Icons.Default.PhotoLibrary,
-                                        label = if (isArabic) "من المعرض" else "Import",
+                                        icon = Icons.Default.FolderOpen,
+                                        label = if (isArabic) "ملفات الهاتف" else "Import",
                                         accentColor = ScannerGlassPalette.VioletGlow,
                                         highlighted = false,
                                         modifier = Modifier
                                             .weight(1f)
                                             .testTag("hub_import_gallery_btn"),
                                         onClick = {
-                                            galleryImportLauncher.launch(
-                                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                            )
+                                            fileImportLauncher.launch(arrayOf("image/*", "application/pdf"))
                                         }
                                     )
                                     HubQuickActionTile(
@@ -865,31 +866,38 @@ fun ScannerHubScreen(
                 }
             }
 
-            // Single Sleek Floating Scan FAB in corner when inside a subfolder or scrolling docs
-            if (!showTrash && (currentFolderId != null || visibleDocs.isNotEmpty())) {
+            // Primary Flagship Bottom Scan Button (Google ML Kit Document Scanner)
+            if (!showTrash) {
                 Row(
                     modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(horizontal = 18.dp, vertical = 16.dp)
-                        .height(54.dp)
+                        .align(Alignment.BottomCenter)
+                        .padding(horizontal = 24.dp, vertical = 16.dp)
+                        .height(56.dp)
                         .minimumInteractiveComponentSize()
+                        .testTag("hub_primary_scan_btn")
                         .clip(CircleShape)
                         .background(
                             Brush.horizontalGradient(
                                 listOf(ScannerGlassPalette.CyanGlow, ScannerGlassPalette.VioletGlow)
                             )
                         )
-                        .clickable { onLaunchSmartScan() }
-                        .padding(horizontal = 20.dp),
+                        .border(1.2.dp, Color.White.copy(alpha = 0.42f), CircleShape)
+                        .clickable { onLaunchPrimaryScan() }
+                        .padding(horizontal = 30.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Icon(Icons.Default.CameraAlt, contentDescription = null, tint = Color(0xFF04101B))
+                    Icon(
+                        imageVector = Icons.Default.DocumentScanner,
+                        contentDescription = if (isArabic) "مسح مستند" else "Scan",
+                        tint = Color(0xFF04101B),
+                        modifier = Modifier.size(22.dp)
+                    )
                     Text(
-                        text = if (isArabic) "مسح" else "Scan",
+                        text = if (isArabic) "مسح مستند" else "Scan",
                         color = Color(0xFF04101B),
                         fontWeight = FontWeight.ExtraBold,
-                        fontSize = 14.sp
+                        fontSize = 15.5.sp
                     )
                 }
             }
@@ -1141,18 +1149,16 @@ fun ScannerHubScreen(
                                         showAddMoreSourceChoices = false
                                         contextMenuDoc = null
                                         pendingAppendGalleryDocId = menuDoc.id
-                                        galleryImportLauncher.launch(
-                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                        )
+                                        fileImportLauncher.launch(arrayOf("image/*", "application/pdf"))
                                     }
                                 }
                                 .padding(horizontal = 10.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.Center
                         ) {
-                            Icon(Icons.Default.PhotoLibrary, contentDescription = null, tint = ScannerGlassPalette.VioletGlow, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Default.FolderOpen, contentDescription = null, tint = ScannerGlassPalette.VioletGlow, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text(if (isArabic) "المعرض" else "Gallery", color = ScannerGlassPalette.TextPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                            Text(if (isArabic) "ملفات الهاتف" else "Files", color = ScannerGlassPalette.TextPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }

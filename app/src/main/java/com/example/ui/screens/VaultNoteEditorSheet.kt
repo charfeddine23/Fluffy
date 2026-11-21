@@ -91,7 +91,6 @@ import com.example.data.storage.AudioStorageManager
 import com.example.ui.components.AudioPlayerCard
 import com.example.ui.components.DocumentStyleBottomSheet
 import com.example.ui.components.InlineTablesPreviewSection
-import com.example.ui.components.NotionFormattingToolbar
 import com.example.ui.components.TableEditorDialog
 import com.example.ui.components.VoiceRecorderDialog
 import com.example.ui.glass.FrostedBackdrop
@@ -282,34 +281,6 @@ fun VaultNoteEditorSheet(
             nextVal.selection.start.coerceIn(0, nextVal.text.length),
             nextVal.selection.end.coerceIn(0, nextVal.text.length)
         )
-        pageCompositions[pageIdx] = null
-    }
-
-    fun undoOnPage(pageIdx: Int) {
-        val stack = undoStacks[pageIdx] ?: return
-        if (stack.isEmpty() || pageIdx !in pages.indices) return
-        val curText = pages[pageIdx]
-        val curSel = (pageSelections[pageIdx] ?: TextRange(curText.length)).let {
-            TextRange(it.start.coerceIn(0, curText.length), it.end.coerceIn(0, curText.length))
-        }
-        redoStacks.getOrPut(pageIdx) { mutableListOf() }.add(TextFieldValue(curText, curSel))
-        val restored = stack.removeAt(stack.lastIndex)
-        pages[pageIdx] = restored.text
-        pageSelections[pageIdx] = restored.selection
-        pageCompositions[pageIdx] = null
-    }
-
-    fun redoOnPage(pageIdx: Int) {
-        val stack = redoStacks[pageIdx] ?: return
-        if (stack.isEmpty() || pageIdx !in pages.indices) return
-        val curText = pages[pageIdx]
-        val curSel = (pageSelections[pageIdx] ?: TextRange(curText.length)).let {
-            TextRange(it.start.coerceIn(0, curText.length), it.end.coerceIn(0, curText.length))
-        }
-        undoStacks.getOrPut(pageIdx) { mutableListOf() }.add(TextFieldValue(curText, curSel))
-        val restored = stack.removeAt(stack.lastIndex)
-        pages[pageIdx] = restored.text
-        pageSelections[pageIdx] = restored.selection
         pageCompositions[pageIdx] = null
     }
 
@@ -819,10 +790,10 @@ fun VaultNoteEditorSheet(
                                         if (activePageText.isEmpty()) {
                                             Text(
                                                 text = tr(
-                                                    "اكتب أو عدّل محتوى المدونة هنا... استخدم شريط التنسيق بالأسفل",
-                                                    "Écrivez ici... utilisez la barre Notion ci-dessous",
-                                                    "Write or edit here... use the Notion toolbar below",
-                                                    "Aru da... seqdec afeggag n umeslay ddaw-a"
+                                                    "اكتب أو عدّل محتوى المدونة هنا...",
+                                                    "Écrivez ou modifiez ici...",
+                                                    "Write or edit here...",
+                                                    "Aru da..."
                                                 ),
                                                 color = metaColor.copy(alpha = 0.65f),
                                                 fontSize = writingFontSizeSp.sp,
@@ -957,47 +928,6 @@ fun VaultNoteEditorSheet(
 
                         Spacer(modifier = Modifier.height(10.dp))
                     }
-
-                    // Docked Notion Formatting Toolbar for Vault Editor
-                    val toolbarBody = pages.getOrElse(safePageIdx) { "" }
-                    val toolbarSel = (pageSelections[safePageIdx] ?: TextRange(toolbarBody.length)).let {
-                        TextRange(it.start.coerceIn(0, toolbarBody.length), it.end.coerceIn(0, toolbarBody.length))
-                    }
-                    val activeStyles = remember(toolbarBody, toolbarSel) {
-                        RichTextCodec.inspectActiveStyles(toolbarBody, toolbarSel)
-                    }
-                    NotionFormattingToolbar(
-                        activeStyles = activeStyles,
-                        canUndo = undoStacks[safePageIdx]?.isNotEmpty() == true,
-                        canRedo = redoStacks[safePageIdx]?.isNotEmpty() == true,
-                        isDark = effectiveDark,
-                        isArabic = isArabic,
-                        accentColor = accentColor,
-                        textColor = textColor,
-                        metaColor = metaColor,
-                        pillFill = surfaceColors.pillFill,
-                        onAction = { action ->
-                            val curVal = TextFieldValue(
-                                text = toolbarBody,
-                                selection = toolbarSel,
-                                composition = pageCompositions[safePageIdx]
-                            )
-                            val transformed = RichTextCodec.applyRichAction(curVal, action)
-                            applyRichFieldValue(safePageIdx, transformed, recordUndo = true)
-                        },
-                        onUndo = { undoOnPage(safePageIdx) },
-                        onRedo = { redoOnPage(safePageIdx) },
-                        onInsertTableClick = {
-                            editingTableTarget = null
-                            showTableDialog = true
-                        },
-                        onDecreaseFontSize = {
-                            writingFontSizeSp = (writingFontSizeSp - 1.5f).coerceIn(12f, 28f)
-                        },
-                        onIncreaseFontSize = {
-                            writingFontSizeSp = (writingFontSizeSp + 1.5f).coerceIn(12f, 28f)
-                        }
-                    )
                 }
             }
         }

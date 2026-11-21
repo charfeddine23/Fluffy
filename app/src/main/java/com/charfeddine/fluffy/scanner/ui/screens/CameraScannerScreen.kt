@@ -18,7 +18,6 @@ import android.util.Size as AndroidSize
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.camera.core.Camera
@@ -197,10 +196,10 @@ fun CameraScannerScreen(
     }
 
     val galleryPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 15)
+        contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
         if (uris.isNotEmpty()) {
-            scannerViewModel.importGalleryUris(uris, appendToDocId, isArabic)
+            scannerViewModel.importDeviceFiles(uris, appendToDocId, isArabic)
         }
     }
 
@@ -456,14 +455,6 @@ fun CameraScannerScreen(
     val latestIsBusy by rememberUpdatedState(isBusy)
     val latestTakePhoto by rememberUpdatedState<(Boolean) -> Unit>({ goCrop -> takePhoto(goCrop) })
 
-    val animTlX by animateFloatAsState(edgeState.quad.topLeft.x, spring(stiffness = 260f, dampingRatio = 0.85f), label = "tlx")
-    val animTlY by animateFloatAsState(edgeState.quad.topLeft.y, spring(stiffness = 260f, dampingRatio = 0.85f), label = "tly")
-    val animTrX by animateFloatAsState(edgeState.quad.topRight.x, spring(stiffness = 260f, dampingRatio = 0.85f), label = "trx")
-    val animTrY by animateFloatAsState(edgeState.quad.topRight.y, spring(stiffness = 260f, dampingRatio = 0.85f), label = "try")
-    val animBrX by animateFloatAsState(edgeState.quad.bottomRight.x, spring(stiffness = 260f, dampingRatio = 0.85f), label = "brx")
-    val animBrY by animateFloatAsState(edgeState.quad.bottomRight.y, spring(stiffness = 260f, dampingRatio = 0.85f), label = "bry")
-    val animBlX by animateFloatAsState(edgeState.quad.bottomLeft.x, spring(stiffness = 260f, dampingRatio = 0.85f), label = "blx")
-    val animBlY by animateFloatAsState(edgeState.quad.bottomLeft.y, spring(stiffness = 260f, dampingRatio = 0.85f), label = "bly")
     val animStability by animateFloatAsState(edgeState.stabilityProgress, spring(stiffness = 240f), label = "stability_ring")
 
     val infiniteTransition = rememberInfiniteTransition(label = "scanner_pulse")
@@ -542,14 +533,12 @@ fun CameraScannerScreen(
                                 .height(48.dp)
                                 .scannerGlassSurface(RoundedCornerShape(14.dp))
                                 .clickable {
-                                    galleryPickerLauncher.launch(
-                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                    )
+                                    galleryPickerLauncher.launch(arrayOf("image/*", "application/pdf"))
                                 },
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = if (isArabic) "استيراد من المعرض" else "Import Gallery",
+                                text = if (isArabic) "استيراد ملفات" else "Import Files",
                                 color = ScannerGlassPalette.CyanGlow,
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 13.sp
@@ -850,109 +839,10 @@ fun CameraScannerScreen(
                         style = Stroke(width = 2.5.dp.toPx())
                     )
                 }
-
-                ScanMode.SINGLE -> {
-                    if (edgeState.isLocked) {
-                        val camAspect = edgeState.frameAspectRatio.coerceIn(0.4f, 2.5f)
-                        val scale = max(w / camAspect, h / 1f)
-                        val renderedW = camAspect * scale
-                        val renderedH = scale
-                        val offX = (w - renderedW) / 2f
-                        val offY = (h - renderedH) / 2f
-
-                        fun project(nx: Float, ny: Float) = Offset(
-                            (offX + nx * renderedW).coerceIn(6f, w - 6f),
-                            (offY + ny * renderedH).coerceIn(6f, h - 6f)
-                        )
-
-                        val tl = project(animTlX, animTlY)
-                        val tr = project(animTrX, animTrY)
-                        val br = project(animBrX, animBrY)
-                        val bl = project(animBlX, animBlY)
-
-                        val polyPath = Path().apply {
-                            moveTo(tl.x, tl.y)
-                            lineTo(tr.x, tr.y)
-                            lineTo(br.x, br.y)
-                            lineTo(bl.x, bl.y)
-                            close()
-                        }
-
-                        val neonBrush = Brush.linearGradient(
-                            colors = listOf(
-                                ScannerGlassPalette.EdgeOverlayCyan,
-                                ScannerGlassPalette.EdgeOverlayPurple
-                            )
-                        )
-                        val fillAlpha = if (edgeState.stabilityProgress > 0.25f) 0.16f else 0.09f
-                        drawPath(
-                            path = polyPath,
-                            brush = Brush.linearGradient(
-                                colors = listOf(
-                                    ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = fillAlpha),
-                                    ScannerGlassPalette.EdgeOverlayPurple.copy(alpha = fillAlpha)
-                                )
-                            )
-                        )
-                        drawPath(
-                            path = polyPath,
-                            brush = Brush.linearGradient(
-                                colors = listOf(
-                                    ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.34f),
-                                    ScannerGlassPalette.EdgeOverlayPurple.copy(alpha = 0.34f)
-                                )
-                            ),
-                            style = Stroke(width = 9.dp.toPx(), join = StrokeJoin.Round)
-                        )
-                        drawPath(
-                            path = polyPath,
-                            brush = neonBrush,
-                            style = Stroke(width = 2.8.dp.toPx(), join = StrokeJoin.Round)
-                        )
-
-                        listOf(tl, tr, br, bl).forEach { pt ->
-                            drawCircle(ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.38f), radius = 11.dp.toPx(), center = pt)
-                            drawCircle(ScannerGlassPalette.EdgeOverlayCyan, radius = 6.dp.toPx(), center = pt)
-                            drawCircle(Color.White, radius = 2.8.dp.toPx(), center = pt)
-                        }
-                    } else {
-                        // Subtle breathing corner framing reticles + sleek laser sweep while searching
-                        val marginX = w * 0.10f
-                        val topY = h * 0.20f
-                        val botY = h * 0.72f
-                        val len = 26.dp.toPx()
-                        val reticleColor = ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = pulseAlpha * 0.65f)
-                        val st = 2.2.dp.toPx()
-                        drawLine(reticleColor, Offset(marginX, topY + len), Offset(marginX, topY), st, StrokeCap.Round)
-                        drawLine(reticleColor, Offset(marginX, topY), Offset(marginX + len, topY), st, StrokeCap.Round)
-                        drawLine(reticleColor, Offset(w - marginX - len, topY), Offset(w - marginX, topY), st, StrokeCap.Round)
-                        drawLine(reticleColor, Offset(w - marginX, topY), Offset(w - marginX, topY + len), st, StrokeCap.Round)
-                        drawLine(reticleColor, Offset(marginX, botY - len), Offset(marginX, botY), st, StrokeCap.Round)
-                        drawLine(reticleColor, Offset(marginX, botY), Offset(marginX + len, botY), st, StrokeCap.Round)
-                        drawLine(reticleColor, Offset(w - marginX - len, botY), Offset(w - marginX, botY), st, StrokeCap.Round)
-                        drawLine(reticleColor, Offset(w - marginX, botY), Offset(w - marginX, botY - len), st, StrokeCap.Round)
-
-                        val sweepY = h * scanSweepFraction
-                        drawLine(
-                            brush = Brush.horizontalGradient(
-                                colors = listOf(
-                                    Color.Transparent,
-                                    ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.28f),
-                                    ScannerGlassPalette.EdgeOverlayPurple.copy(alpha = 0.28f),
-                                    Color.Transparent
-                                )
-                            ),
-                            start = Offset(marginX + 12.dp.toPx(), sweepY),
-                            end = Offset(w - marginX - 12.dp.toPx(), sweepY),
-                            strokeWidth = 1.6.dp.toPx(),
-                            cap = StrokeCap.Round
-                        )
-                    }
-                }
             }
 
-            // Overhead Top-Down Horizon Bubble Leveler (visible in Document & Book modes)
-            if (activeMode == ScanMode.SINGLE || activeMode == ScanMode.BOOK) {
+            // Overhead Top-Down Horizon Bubble Leveler (visible in Book Split mode)
+            if (activeMode == ScanMode.BOOK) {
                 val center = Offset(w * 0.5f, h * 0.46f)
                 val ringRadius = 18.dp.toPx()
                 val maxBubbleShift = 15.dp.toPx()
@@ -1143,7 +1033,7 @@ fun CameraScannerScreen(
 
                 // Centered Sleek Real-Time Status Guidance Pill
                 val isHoldingSteady = edgeState.isLocked && !showCapturedBanner &&
-                    (activeMode == ScanMode.SINGLE || activeMode == ScanMode.BOOK)
+                    activeMode == ScanMode.BOOK
                 Row(
                     modifier = Modifier
                         .shadow(10.dp, CircleShape)
@@ -1371,13 +1261,11 @@ fun CameraScannerScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Left: Floating Gallery Import
+                    // Left: Floating File Import
                     Box(modifier = Modifier.width(96.dp), contentAlignment = Alignment.CenterStart) {
                         IconButton(
                             onClick = {
-                                galleryPickerLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                )
+                                galleryPickerLauncher.launch(arrayOf("image/*", "application/pdf"))
                             },
                             modifier = Modifier
                                 .size(52.dp)
@@ -1404,7 +1292,7 @@ fun CameraScannerScreen(
                     )
                     val isDocumentActive = activeMode != ScanMode.QR_BARCODE
                     val showSteadyRing = edgeState.isLocked && autoCaptureEnabled &&
-                        (activeMode == ScanMode.SINGLE || activeMode == ScanMode.BOOK)
+                        activeMode == ScanMode.BOOK
 
                     Box(
                         modifier = Modifier

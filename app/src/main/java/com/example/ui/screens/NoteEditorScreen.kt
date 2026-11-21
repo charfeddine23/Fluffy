@@ -135,13 +135,11 @@ import com.example.data.model.NoteBackgroundCanvas
 import com.example.data.model.NoteBackgroundCatalog
 import com.example.data.model.NoteEntity
 import com.example.data.model.NotePagesCodec
-import com.example.data.model.RichFormatAction
 import com.example.data.model.RichTextCodec
 import com.example.data.storage.AudioCloudPolicy
 import com.example.ui.components.AudioPlayerCard
 import com.example.ui.components.DocumentStyleBottomSheet
 import com.example.ui.components.InlineTablesPreviewSection
-import com.example.ui.components.NotionFormattingToolbar
 import com.example.ui.components.RichContentView
 import com.example.ui.components.TableEditorDialog
 import com.example.ui.components.VoiceRecorderDialog
@@ -496,36 +494,6 @@ fun NoteEditorScreen(
             TextRange(nextVal.selection.start.coerceIn(0, appliedLen), nextVal.selection.end.coerceIn(0, appliedLen))
         }
         pageCompositions[pageIndex] = if (nextVal.text == curText) nextVal.composition else null
-    }
-
-    fun undoOnPage(pageIndex: Int) {
-        val stack = undoStacks[pageIndex] ?: return
-        if (stack.isEmpty() || pageIndex !in pages.indices) return
-        val curText = pages[pageIndex]
-        val curSel = (pageSelections[pageIndex] ?: TextRange(curText.length)).let {
-            TextRange(it.start.coerceIn(0, curText.length), it.end.coerceIn(0, curText.length))
-        }
-        redoStacks.getOrPut(pageIndex) { mutableListOf() }.add(TextFieldValue(curText, curSel))
-        val prev = stack.removeAt(stack.lastIndex)
-        updatePageTextBounded(pageIndex, prev.text)
-        val len = pages[pageIndex].length
-        pageSelections[pageIndex] = TextRange(prev.selection.start.coerceIn(0, len), prev.selection.end.coerceIn(0, len))
-        pageCompositions[pageIndex] = null
-    }
-
-    fun redoOnPage(pageIndex: Int) {
-        val stack = redoStacks[pageIndex] ?: return
-        if (stack.isEmpty() || pageIndex !in pages.indices) return
-        val curText = pages[pageIndex]
-        val curSel = (pageSelections[pageIndex] ?: TextRange(curText.length)).let {
-            TextRange(it.start.coerceIn(0, curText.length), it.end.coerceIn(0, curText.length))
-        }
-        undoStacks.getOrPut(pageIndex) { mutableListOf() }.add(TextFieldValue(curText, curSel))
-        val next = stack.removeAt(stack.lastIndex)
-        updatePageTextBounded(pageIndex, next.text)
-        val len = pages[pageIndex].length
-        pageSelections[pageIndex] = TextRange(next.selection.start.coerceIn(0, len), next.selection.end.coerceIn(0, len))
-        pageCompositions[pageIndex] = null
     }
 
     fun triggerImmediateSaveIfViewMode() {
@@ -1715,7 +1683,7 @@ fun NoteEditorScreen(
                                             if (pageText.isEmpty()) {
                                                 Text(
                                                     text = if (pageIndex == 0) {
-                                                        if (isArabic) "اكتب أفكارك وملاحظاتك هنا بحرية... أو نسّق النص من الشريط بالأسفل" else "Write freely... use the Notion bar below to style or add tables"
+                                                        if (isArabic) "اكتب أفكارك وملاحظاتك هنا بحرية..." else "Write your thoughts and notes freely..."
                                                     } else {
                                                         if (isArabic) "اكتب محتوى الصفحة ${pageIndex + 1} هنا..." else "Write page ${pageIndex + 1} here..."
                                                     },
@@ -1872,62 +1840,19 @@ fun NoteEditorScreen(
                 }
             }
 
-            // 3. Notion-Style Rich Formatting Dock + Bottom Action Toolbar (visible only in Writing Mode)
+            // 3. Bottom Action Toolbar (visible only in Writing Mode)
             AnimatedVisibility(
                 visible = isEditMode,
                 enter = expandVertically(expandFrom = Alignment.Bottom) + fadeIn(),
                 exit = shrinkVertically(shrinkTowards = Alignment.Bottom) + fadeOut()
             ) {
-                val activePageIdx = pagerState.currentPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
-                val activePageBody = pages.getOrElse(activePageIdx) { "" }
-                val activeSel = (pageSelections[activePageIdx] ?: TextRange(activePageBody.length)).let {
-                    TextRange(it.start.coerceIn(0, activePageBody.length), it.end.coerceIn(0, activePageBody.length))
-                }
-                val activeStyles = remember(activePageBody, activeSel) {
-                    RichTextCodec.inspectActiveStyles(activePageBody, activeSel)
-                }
-
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    NotionFormattingToolbar(
-                        activeStyles = activeStyles,
-                        canUndo = undoStacks[activePageIdx]?.isNotEmpty() == true,
-                        canRedo = redoStacks[activePageIdx]?.isNotEmpty() == true,
-                        isDark = effectiveDark,
-                        isArabic = isArabic,
-                        accentColor = accentColor,
-                        textColor = textColor,
-                        metaColor = metaColor,
-                        pillFill = pillFill,
-                        onAction = { action ->
-                            val curVal = TextFieldValue(
-                                text = activePageBody,
-                                selection = activeSel,
-                                composition = pageCompositions[activePageIdx]
-                            )
-                            val transformed = RichTextCodec.applyRichAction(curVal, action)
-                            applyRichFieldValue(activePageIdx, transformed, recordUndo = true)
-                        },
-                        onUndo = { undoOnPage(activePageIdx) },
-                        onRedo = { redoOnPage(activePageIdx) },
-                        onInsertTableClick = {
-                            editingTableTarget = null
-                            showTableDialog = true
-                        },
-                        onDecreaseFontSize = {
-                            writingFontSizeSp = (writingFontSizeSp - 1.5f).coerceIn(12f, 32f)
-                        },
-                        onIncreaseFontSize = {
-                            writingFontSizeSp = (writingFontSizeSp + 1.5f).coerceIn(12f, 32f)
-                        }
-                    )
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -2212,7 +2137,6 @@ fun NoteEditorScreen(
                             }
                         }
                     }
-                }
                 }
             }
         }

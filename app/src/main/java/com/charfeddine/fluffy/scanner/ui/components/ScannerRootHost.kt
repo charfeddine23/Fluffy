@@ -10,8 +10,11 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -75,13 +78,13 @@ fun ScannerRootHost(
             } else {
                 scannerViewModel.openCameraScanner(
                     appendToDocId = appendTarget,
-                    initialMode = ScanMode.SINGLE
+                    initialMode = ScanMode.ID_CARD
                 )
             }
         }
     }
 
-    fun launchPrimaryScanner(appendToDocId: String?) {
+    fun launchGoogleScanner(appendToDocId: String?) {
         pendingScanAppendDocId = appendToDocId
         MlKitDocumentScannerHelper.launch(
             context = context,
@@ -90,7 +93,7 @@ fun ScannerRootHost(
                 pendingScanAppendDocId = null
                 scannerViewModel.openCameraScanner(
                     appendToDocId = appendToDocId,
-                    initialMode = ScanMode.SINGLE
+                    initialMode = ScanMode.ID_CARD
                 )
             }
         )
@@ -117,8 +120,14 @@ fun ScannerRootHost(
                     ScannerHubScreen(
                         scannerViewModel = scannerViewModel,
                         isArabic = isArabic,
-                        onLaunchSmartScan = { launchPrimaryScanner(appendToDocId = null) },
-                        onAddMoreCamera = { docId -> launchPrimaryScanner(appendToDocId = docId) },
+                        onLaunchPrimaryScan = { launchGoogleScanner(appendToDocId = null) },
+                        onLaunchAppIdScanner = {
+                            scannerViewModel.openCameraScanner(
+                                appendToDocId = null,
+                                initialMode = ScanMode.ID_CARD
+                            )
+                        },
+                        onAddMoreCamera = { docId -> launchGoogleScanner(appendToDocId = docId) },
                         onRequestProtectedAccess = { targetId, onUnlocked ->
                             pendingUnlockTarget = targetId to onUnlocked
                         },
@@ -159,7 +168,7 @@ fun ScannerRootHost(
                         documentId = current.documentId,
                         isArabic = isArabic,
                         onAddMorePages = {
-                            launchPrimaryScanner(appendToDocId = current.documentId)
+                            launchGoogleScanner(appendToDocId = current.documentId)
                         },
                         onBackToHub = { scannerViewModel.navigateBackToHub() }
                     )
@@ -172,6 +181,7 @@ fun ScannerRootHost(
             hostState = snackbarHostState,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
+                .windowInsetsPadding(WindowInsets.navigationBars)
                 .padding(bottom = 86.dp, start = 18.dp, end = 18.dp)
         ) { data ->
             Box(
