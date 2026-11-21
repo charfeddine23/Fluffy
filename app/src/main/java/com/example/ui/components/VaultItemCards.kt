@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.PushPin
@@ -131,7 +132,7 @@ private fun rememberVaultVisuals(
     }
     val totalPages = pages.size
     val totalWords = remember(pages) {
-        pages.sumOf { p -> if (p.isBlank()) 0 else p.trim().split("\\s+".toRegex()).size }
+        NotePagesCodec.countWords(pages)
     }
     val effectiveAudioBytes = remember(item.byteSize, item.localFilePath) {
         AudioCloudPolicy.effectiveAudioByteSize(item.byteSize, item.localFilePath)
@@ -150,7 +151,10 @@ private fun rememberVaultVisuals(
             if (isArabic) "عنصر Vault" else "Vault Note"
         }
     }
-    val displayBody = metaNote?.content?.takeIf { it.isNotBlank() } ?: item.literalContent
+    val rawDisplayBody = metaNote?.content?.takeIf { it.isNotBlank() } ?: item.literalContent
+    val displayBody = remember(rawDisplayBody) {
+        NotePagesCodec.plainTextSnippet(rawDisplayBody)
+    }
 
     return ResolvedVaultVisuals(
         glassTint = glassTint,
@@ -178,6 +182,7 @@ fun VaultNoteStyleCard(
     isDark: Boolean,
     isArabic: Boolean,
     onClick: () -> Unit,
+    onEditClick: (() -> Unit)? = null,
     onMoveToNotesClick: () -> Unit,
     onExportClick: () -> Unit,
     onDeleteClick: () -> Unit,
@@ -468,6 +473,7 @@ fun VaultNoteStyleCard(
                 VaultFooterActions(
                     itemId = item.id,
                     isAudio = visuals.isAudio,
+                    onEditClick = onEditClick,
                     onMoveToNotesClick = onMoveToNotesClick,
                     onExportClick = onExportClick,
                     onDeleteClick = onDeleteClick
@@ -484,6 +490,7 @@ fun VaultGalleryCard(
     isDark: Boolean,
     isArabic: Boolean,
     onClick: () -> Unit,
+    onEditClick: (() -> Unit)? = null,
     onMoveToNotesClick: () -> Unit,
     onExportClick: () -> Unit,
     onDeleteClick: () -> Unit,
@@ -670,6 +677,7 @@ fun VaultGalleryCard(
                     VaultFooterActions(
                         itemId = item.id,
                         isAudio = visuals.isAudio,
+                        onEditClick = onEditClick,
                         onMoveToNotesClick = onMoveToNotesClick,
                         onExportClick = onExportClick,
                         onDeleteClick = onDeleteClick
@@ -689,6 +697,7 @@ fun VaultMagazineCard(
     isDark: Boolean,
     isArabic: Boolean,
     onClick: () -> Unit,
+    onEditClick: (() -> Unit)? = null,
     onMoveToNotesClick: () -> Unit,
     onExportClick: () -> Unit,
     onDeleteClick: () -> Unit,
@@ -849,6 +858,7 @@ fun VaultMagazineCard(
                         VaultFooterActions(
                             itemId = item.id,
                             isAudio = visuals.isAudio,
+                            onEditClick = onEditClick,
                             onMoveToNotesClick = onMoveToNotesClick,
                             onExportClick = onExportClick,
                             onDeleteClick = onDeleteClick
@@ -1009,6 +1019,7 @@ fun VaultMagazineCard(
                         VaultFooterActions(
                             itemId = item.id,
                             isAudio = visuals.isAudio,
+                            onEditClick = onEditClick,
                             onMoveToNotesClick = onMoveToNotesClick,
                             onExportClick = onExportClick,
                             onDeleteClick = onDeleteClick
@@ -1024,6 +1035,7 @@ fun VaultMagazineCard(
 private fun VaultFooterActions(
     itemId: String,
     isAudio: Boolean,
+    onEditClick: (() -> Unit)? = null,
     onMoveToNotesClick: () -> Unit,
     onExportClick: () -> Unit,
     onDeleteClick: () -> Unit
@@ -1032,6 +1044,15 @@ private fun VaultFooterActions(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(2.dp)
     ) {
+        if (onEditClick != null) {
+            CompactVaultActionIcon(
+                icon = Icons.Default.Edit,
+                contentDescription = tr("تعديل في الـ Vault", "Modifier", "Edit in Vault", "Ẓreg"),
+                tint = Color(0xFFC084FC),
+                testTag = "vault_edit_item_$itemId",
+                onClick = onEditClick
+            )
+        }
         CompactVaultActionIcon(
             icon = Icons.Default.LockOpen,
             contentDescription = if (isAudio) {

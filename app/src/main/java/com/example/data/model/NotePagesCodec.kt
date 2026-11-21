@@ -7,12 +7,60 @@ import java.util.Locale
  * Codec and policy helpers for multi-page note drafts.
  * - Page 1 is stored in [NoteEntity.content] for zero-overhead previews & backwards compatibility.
  * - Pages 2..100 are stored as a JSON array string in [NoteEntity.pagesJson].
+ * - Optional per-page titles are encoded cleanly inside each page entry so they persist
+ *   across Room, local JSON backups, Vault transfers, and Firebase sync without schema changes.
  * - Hard limits per single note: up to 100 pages OR total UTF-8 size <= 900 KB (921,600 bytes).
  */
 object NotePagesCodec {
     const val MAX_FREE_NOTE_PAGES = 5
     const val MAX_NOTE_PAGES = 100
     const val MAX_NOTE_BYTES = 900L * 1024L // 921,600 bytes (900 KB)
+
+    private const val PAGE_TITLE_PREFIX = "[[FLUFFY_PAGE_TITLE:"
+    private const val PAGE_TITLE_SUFFIX = "]]"
+
+    data class DraftPage(
+        val title: String = "",
+        val body: String = ""
+    )
+
+    fun extractPageTitle(rawPage: String): String {
+        if (!rawPage.startsWith(PAGE_TITLE_PREFIX)) return ""
+        val firstNewline = rawPage.indexOf('\n')
+        val header = if (firstNewline >= 0) rawPage.substring(0, firstNewline) else rawPage
+        if (!header.endsWith(PAGE_TITLE_SUFFIX)) return ""
+        val encoded = header.substring(PAGE_TITLE_PREFIX.length, header.length - PAGE_TITLE_SUFFIX.length)
+        return unescapeTitle(encoded)
+    }
+
+    fun extractPageBody(rawPage: String): String {
+        if (!rawPage.startsWith(PAGE_TITLE_PREFIX)) return rawPage
+        val firstNewline = rawPage.indexOf('\n')
+        val header = if (firstNewline >= 0) rawPage.substring(0, firstNewline) else rawPage
+        if (!header.endsWith(PAGE_TITLE_SUFFIX)) return rawPage
+        return if (firstNewline >= 0 && firstNewline + 1 <= rawPage.length) {
+            rawPage.substring(firstNewline + 1)
+        } else {
+            ""
+        }
+    }
+
+    fun encodePageEntry(title: String, body: String): String {
+        val cleanTitle = title.trim()
+        if (cleanTitle.isEmpty()) return body
+        val header = "$PAGE_TITLE_PREFIX${escapeTitle(cleanTitle)}$PAGE_TITLE_SUFFIX"
+        return if (body.isEmpty()) "$header\n" else "$header\n$body"
+    }
+
+    private fun escapeTitle(raw: String): String = raw
+        .replace("\\", "\\\\")
+        .replace("\n", " ")
+        .replace("\r", "")
+        .replace("]]", "\\]\\]")
+
+    private fun unescapeTitle(encoded: String): String = encoded
+        .replace("\\]\\]", "]]")
+        .replace("\\\\", "\\")
 
     fun maxPagesForTier(isPremium: Boolean): Int =
         if (isPremium) MAX_NOTE_PAGES else MAX_FREE_NOTE_PAGES
@@ -34,6 +82,15 @@ object NotePagesCodec {
         return listOf(content) + extra
     }
 
+    fun decodeDraftPages(content: String, pagesJson: String): List<DraftPage> {
+        return decodePages(content, pagesJson).map { raw ->
+            DraftPage(
+                title = extractPageTitle(raw),
+                body = extractPageBody(raw)
+            )
+        }
+    }
+
     fun encodeExtraPages(pages: List<String>): String {
         if (pages.size <= 1) return ""
         val arr = JSONArray()
@@ -44,22 +101,123 @@ object NotePagesCodec {
         return arr.toString()
     }
 
+    fun encodeDraftPages(pages: List<DraftPage>): Pair<String, String> {
+        if (pages.isEmpty()) return "" to ""
+        val encoded = pages.map { encodePageEntry(it.title, it.body) }
+        return encoded.first() to encodeExtraPages(encoded)
+    }
+
+    /**
+     * Pure deterministic helper for removing a page at [index] without dropping below 1 page.
+     * Returns updated list + safe next active page index.
+     */
+    fun <T> removePageSafely(
+        pages: List<T>,
+        index: Int,
+        currentPage: Int
+    ): Pair<List<T>, Int> {
+        if (pages.size <= 1 || index !in pages.indices) {
+            return pages to currentPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
+        }
+        val mutable = pages.toMutableList()
+        mutable.removeAt(index)
+        val nextPage = when {
+            currentPage == index -> (index - 1).coerceAtLeast(0)
+            currentPage > index -> currentPage - 1
+            else -> currentPage
+        }.coerceIn(0, mutable.lastIndex)
+        return mutable to nextPage
+    }
+
     fun pageCount(note: NoteEntity): Int {
         return decodePages(note.content, note.pagesJson).size
     }
 
     fun hasAnyContent(content: String, pagesJson: String): Boolean {
-        if (content.isNotEmpty()) return true
-        return decodePages(content, pagesJson).any { it.isNotEmpty() }
+        if (extractPageTitle(content).isNotEmpty() || extractPageBody(content).isNotEmpty()) return true
+        return decodeDraftPages(content, pagesJson).any { it.title.isNotEmpty() || it.body.isNotEmpty() }
     }
 
     fun hasAnyContent(pages: List<String>): Boolean {
-        return pages.any { it.isNotEmpty() }
+        return pages.any { extractPageTitle(it).isNotEmpty() || extractPageBody(it).isNotEmpty() }
     }
 
     fun searchableBody(note: NoteEntity): String {
-        if (note.pagesJson.isBlank()) return note.content
-        return decodePages(note.content, note.pagesJson).joinToString("\n")
+        val decoded = decodeDraftPages(note.content, note.pagesJson)
+        return decoded.joinToString("\n") { page ->
+            val parts = listOfNotNull(
+                page.title.takeIf { it.isNotBlank() },
+                RichTextCodec.stripFormattingForPreview(page.body).takeIf { it.isNotBlank() }
+            )
+            parts.joinToString("\n")
+        }
+    }
+
+    /**
+     * Clean human-readable snippet for cards & search results (strips internal title tags,
+     * markdown delimiters, and formats pipe tables cleanly).
+     */
+    fun plainTextSnippet(rawPage: String): String {
+        val pageTitle = extractPageTitle(rawPage)
+        val cleanBody = RichTextCodec.stripFormattingForPreview(extractPageBody(rawPage)).trim()
+        return when {
+            pageTitle.isNotBlank() && cleanBody.isNotBlank() -> "$pageTitle\n$cleanBody"
+            cleanBody.isNotBlank() -> cleanBody
+            pageTitle.isNotBlank() -> pageTitle
+            else -> ""
+        }
+    }
+
+    fun plainTextSnippet(note: NoteEntity): String {
+        return plainTextSnippet(note.content)
+    }
+
+    fun countWords(rawPages: List<String>): Int {
+        return rawPages.sumOf { raw ->
+            val pageTitle = extractPageTitle(raw)
+            val body = RichTextCodec.stripFormattingForPreview(extractPageBody(raw))
+            val titleWords = if (pageTitle.isBlank()) 0 else pageTitle.trim().split("\\s+".toRegex()).size
+            val bodyWords = if (body.isBlank()) 0 else body.trim().split("\\s+".toRegex()).size
+            titleWords + bodyWords
+        }
+    }
+
+    fun buildShareableDraftText(
+        title: String,
+        rawPages: List<String>,
+        checklist: List<ChecklistItem>,
+        isArabic: Boolean
+    ): String {
+        val sb = StringBuilder()
+        if (title.isNotBlank()) sb.append("$title\n\n")
+        val draftPages = rawPages.map { DraftPage(extractPageTitle(it), extractPageBody(it)) }
+        if (draftPages.size <= 1) {
+            val single = draftPages.firstOrNull()
+            if (single != null) {
+                if (single.title.isNotBlank()) sb.append("${single.title}\n")
+                val cleanBody = RichTextCodec.stripFormattingForPreview(single.body)
+                if (cleanBody.isNotBlank()) sb.append("$cleanBody\n\n")
+            }
+        } else {
+            draftPages.forEachIndexed { idx, page ->
+                val cleanBody = RichTextCodec.stripFormattingForPreview(page.body)
+                if (page.title.isNotBlank() || cleanBody.isNotBlank()) {
+                    val baseLabel = if (isArabic) "صفحة ${idx + 1}" else "Page ${idx + 1}"
+                    val label = if (page.title.isNotBlank()) "--- $baseLabel: ${page.title} ---" else "--- $baseLabel ---"
+                    sb.append("$label\n")
+                    if (cleanBody.isNotBlank()) sb.append("$cleanBody\n")
+                    sb.append('\n')
+                }
+            }
+        }
+        if (checklist.isNotEmpty()) {
+            checklist.forEach {
+                val mark = if (it.isDone) "[✓]" else "[ ]"
+                sb.append("$mark ${it.text}\n")
+            }
+        }
+        sb.append("\n— Shared from Fluffy Notes ✨")
+        return sb.toString()
     }
 
     fun estimateNoteBytes(

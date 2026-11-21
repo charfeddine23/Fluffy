@@ -275,9 +275,12 @@ fun NoteCard(
             }
 
             // Note Content
-            if (note.content.isNotBlank()) {
+            val cardBodyPreview = remember(note.content, note.pagesJson) {
+                NotePagesCodec.plainTextSnippet(note)
+            }
+            if (cardBodyPreview.isNotBlank()) {
                 Text(
-                    text = note.content,
+                    text = cardBodyPreview,
                     style = MaterialTheme.typography.bodyMedium.copy(
                         fontSize = 13.5.sp,
                         color = bodyColor,
@@ -660,11 +663,14 @@ fun GalleryNoteCard(
 
             // Center-Bottom Showcase Typography
             Column(modifier = Modifier.fillMaxWidth()) {
+                val cleanBodyPreview = remember(note.content) {
+                    NotePagesCodec.plainTextSnippet(note.content)
+                }
                 val displayTitle = note.title.ifBlank {
                     if (checklistItems.isNotEmpty()) {
                         checklistItems.firstOrNull()?.text.orEmpty()
                     } else {
-                        note.content.lineSequence().firstOrNull().orEmpty()
+                        cleanBodyPreview.lineSequence().firstOrNull().orEmpty()
                     }
                 }.ifBlank { if (isArabic) "مسودة بدون عنوان" else "Untitled Draft" }
 
@@ -678,9 +684,9 @@ fun GalleryNoteCard(
                     overflow = TextOverflow.Ellipsis
                 )
 
-                val snippet = remember(note.content, note.pagesJson, checklistItems) {
+                val snippet = remember(cleanBodyPreview, checklistItems) {
                     when {
-                        note.content.isNotBlank() -> note.content.trim()
+                        cleanBodyPreview.isNotBlank() -> cleanBodyPreview.trim()
                         checklistItems.isNotEmpty() -> checklistItems.joinToString(" • ") { it.text }
                         else -> ""
                     }
@@ -784,7 +790,7 @@ fun MagazineNoteCard(
     val pages = remember(note.content, note.pagesJson) { NotePagesCodec.decodePages(note.content, note.pagesJson) }
     val totalPages = pages.size
     val totalWords = remember(pages) {
-        pages.sumOf { p -> if (p.isBlank()) 0 else p.trim().split("\\s+".toRegex()).size }
+        NotePagesCodec.countWords(pages)
     }
     val cardAccent = surfaceColors.accentColor
     val titleColor = surfaceColors.titleColor
@@ -886,10 +892,11 @@ fun MagazineNoteCard(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
-                    if (note.content.isNotBlank()) {
+                    val leadSnippet = remember(note.content) { NotePagesCodec.plainTextSnippet(note.content) }
+                    if (leadSnippet.isNotBlank()) {
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = note.content,
+                            text = leadSnippet,
                             fontSize = 14.sp,
                             color = bodyColor,
                             lineHeight = 20.sp,
@@ -1060,9 +1067,10 @@ fun MagazineNoteCard(
                         overflow = TextOverflow.Ellipsis
                     )
 
-                    val excerpt = remember(note.content, checklistItems) {
+                    val cleanNoteContent = remember(note.content) { NotePagesCodec.plainTextSnippet(note.content) }
+                    val excerpt = remember(cleanNoteContent, checklistItems) {
                         when {
-                            note.content.isNotBlank() -> note.content
+                            cleanNoteContent.isNotBlank() -> cleanNoteContent
                             checklistItems.isNotEmpty() -> checklistItems.joinToString(" • ") { it.text }
                             else -> ""
                         }

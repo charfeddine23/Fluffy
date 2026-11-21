@@ -90,6 +90,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -115,8 +116,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -127,13 +130,20 @@ import androidx.compose.ui.window.Dialog
 import com.example.audio.rememberAudioPlaybackController
 import com.example.data.model.ChecklistItem
 import com.example.data.model.GlassTint
+import com.example.data.model.MarkdownTableData
 import com.example.data.model.NoteBackgroundCanvas
 import com.example.data.model.NoteBackgroundCatalog
 import com.example.data.model.NoteEntity
 import com.example.data.model.NotePagesCodec
+import com.example.data.model.RichFormatAction
+import com.example.data.model.RichTextCodec
 import com.example.data.storage.AudioCloudPolicy
 import com.example.ui.components.AudioPlayerCard
 import com.example.ui.components.DocumentStyleBottomSheet
+import com.example.ui.components.InlineTablesPreviewSection
+import com.example.ui.components.NotionFormattingToolbar
+import com.example.ui.components.RichContentView
+import com.example.ui.components.TableEditorDialog
 import com.example.ui.components.VoiceRecorderDialog
 import com.example.ui.glass.FrostedBackdrop
 import com.example.ui.glass.LiquidGlassCard
@@ -193,13 +203,26 @@ fun NoteEditorScreen(
     // New drafts open in Edit/Writing mode; saved notes reopen in View-Only mode
     var isEditMode by remember { mutableStateOf(isCreatingNew || note.id == 0L) }
 
-    // Local mutable state for literal multi-page editing (up to 100 pages or 900 KB)
+    // Local mutable state for literal multi-page editing with per-page titles (up to 100 pages or 900 KB)
     var title by remember { mutableStateOf(note.title) }
+    val initialDraftPages = remember(note.id, note.syncId) {
+        NotePagesCodec.decodeDraftPages(note.content, note.pagesJson)
+    }
     val pages = remember(note.id, note.syncId) {
         mutableStateListOf<String>().apply {
-            addAll(NotePagesCodec.decodePages(note.content, note.pagesJson))
+            addAll(initialDraftPages.map { it.body }.ifEmpty { listOf("") })
         }
     }
+    val pageTitles = remember(note.id, note.syncId) {
+        mutableStateListOf<String>().apply {
+            addAll(initialDraftPages.map { it.title }.ifEmpty { listOf("") })
+        }
+    }
+    val pageSelections = remember(note.id, note.syncId) { mutableStateMapOf<Int, TextRange>() }
+    val pageCompositions = remember(note.id, note.syncId) { mutableStateMapOf<Int, TextRange?>() }
+    val undoStacks = remember(note.id, note.syncId) { mutableStateMapOf<Int, MutableList<TextFieldValue>>() }
+    val redoStacks = remember(note.id, note.syncId) { mutableStateMapOf<Int, MutableList<TextFieldValue>>() }
+
     var category by remember { mutableStateOf(note.category) }
     var selectedTint by remember { mutableStateOf(GlassTint.fromId(note.colorPreset)) }
     var backgroundId by remember { mutableStateOf(note.backgroundId) }
@@ -218,6 +241,9 @@ fun NoteEditorScreen(
     var showMoreMenu by remember { mutableStateOf(false) }
     var showViewMoreMenu by remember { mutableStateOf(false) }
     var showPagePickerDialog by remember { mutableStateOf(false) }
+    var showTableDialog by remember { mutableStateOf(false) }
+    var editingTableTarget by remember { mutableStateOf<MarkdownTableData?>(null) }
+    var isRemovingPage by remember { mutableStateOf(false) }
     var limitWarningMessage by remember { mutableStateOf<String?>(null) }
     var copyFeedbackMessage by remember { mutableStateOf<String?>(null) }
     var justCopiedPage by remember { mutableStateOf(false) }
@@ -234,10 +260,16 @@ fun NoteEditorScreen(
 
     val maxAllowedPages = NotePagesCodec.maxPagesForTier(isPremium)
     val pagesSnapshot = pages.toList()
-    val page1Content = pagesSnapshot.firstOrNull().orEmpty()
-    val encodedExtraPages = remember(pagesSnapshot) { NotePagesCodec.encodeExtraPages(pagesSnapshot) }
-    val totalNoteBytes = remember(title, pagesSnapshot, checklistItems.toList()) {
-        NotePagesCodec.estimateNoteBytes(title, pagesSnapshot, checklistItems.toList())
+    val pageTitlesSnapshot = pageTitles.toList()
+    val encodedPageEntries = remember(pagesSnapshot, pageTitlesSnapshot) {
+        pagesSnapshot.indices.map { idx ->
+            NotePagesCodec.encodePageEntry(pageTitlesSnapshot.getOrElse(idx) { "" }, pagesSnapshot[idx])
+        }
+    }
+    val page1Content = encodedPageEntries.firstOrNull().orEmpty()
+    val encodedExtraPages = remember(encodedPageEntries) { NotePagesCodec.encodeExtraPages(encodedPageEntries) }
+    val totalNoteBytes = remember(title, encodedPageEntries, checklistItems.toList()) {
+        NotePagesCodec.estimateNoteBytes(title, encodedPageEntries, checklistItems.toList())
     }
     val canAppendAnotherPage = pages.size < maxAllowedPages &&
         totalNoteBytes + 8L <= NotePagesCodec.MAX_NOTE_BYTES
@@ -256,11 +288,26 @@ fun NoteEditorScreen(
         readPanOffset = Offset.Zero
     }
 
-    // Auto-create page when user swipes into the trailing virtual slot (e.g., swipe right in Arabic RTL -> Page 2)
-    LaunchedEffect(pagerState.settledPage, isEditMode, pages.size, canAppendAnotherPage, isPremium) {
-        if (isEditMode && pagerState.settledPage == pages.size) {
+    // Auto-create page ONLY when user genuinely settles onto the trailing virtual slot (never during deletion)
+    LaunchedEffect(
+        pagerState.settledPage,
+        pagerState.currentPage,
+        pagerState.isScrollInProgress,
+        isEditMode,
+        pages.size,
+        canAppendAnotherPage,
+        isPremium,
+        isRemovingPage
+    ) {
+        if (isEditMode &&
+            !isRemovingPage &&
+            !pagerState.isScrollInProgress &&
+            pagerState.currentPage == pages.size &&
+            pagerState.settledPage == pages.size
+        ) {
             if (canAppendAnotherPage) {
                 pages.add("")
+                pageTitles.add("")
             } else {
                 limitWarningMessage = if (pages.size >= maxAllowedPages) {
                     if (isPremium) {
@@ -322,6 +369,7 @@ fun NoteEditorScreen(
             return
         }
         pages.add("")
+        pageTitles.add("")
         val newIndex = pages.lastIndex
         coroutineScope.launch {
             pagerState.animateScrollToPage(newIndex)
@@ -329,11 +377,52 @@ fun NoteEditorScreen(
     }
 
     fun removePageAt(index: Int) {
-        if (pages.size <= 1 || index !in pages.indices) return
-        pages.removeAt(index)
-        val clampedTarget = index.coerceAtMost(pages.lastIndex)
+        if (pages.size <= 1 || index !in pages.indices || isRemovingPage) return
+        val curPage = pagerState.currentPage
+        val nextTarget = when {
+            curPage == index -> (index - 1).coerceAtLeast(0)
+            curPage > index -> curPage - 1
+            else -> curPage
+        }
         coroutineScope.launch {
-            pagerState.animateScrollToPage(clampedTarget)
+            isRemovingPage = true
+            try {
+                // Pre-scroll away BEFORE shrinking `pages` so `settledPage == pages.size` never triggers auto-append
+                if (pagerState.currentPage >= index) {
+                    val safePreScroll = nextTarget.coerceIn(0, (pages.size - 2).coerceAtLeast(0))
+                    pagerState.scrollToPage(safePreScroll)
+                }
+                pages.removeAt(index)
+                if (index in pageTitles.indices) {
+                    pageTitles.removeAt(index)
+                }
+                val selSnap = pageSelections.toMap()
+                val compSnap = pageCompositions.toMap()
+                val undoSnap = undoStacks.toMap()
+                val redoSnap = redoStacks.toMap()
+                pageSelections.clear()
+                pageCompositions.clear()
+                undoStacks.clear()
+                redoStacks.clear()
+                selSnap.forEach { (k, v) ->
+                    if (k < index) pageSelections[k] = v else if (k > index) pageSelections[k - 1] = v
+                }
+                compSnap.forEach { (k, v) ->
+                    if (k < index) pageCompositions[k] = v else if (k > index) pageCompositions[k - 1] = v
+                }
+                undoSnap.forEach { (k, v) ->
+                    if (k < index) undoStacks[k] = v else if (k > index) undoStacks[k - 1] = v
+                }
+                redoSnap.forEach { (k, v) ->
+                    if (k < index) redoStacks[k] = v else if (k > index) redoStacks[k - 1] = v
+                }
+                val clamped = nextTarget.coerceIn(0, pages.lastIndex)
+                if (pagerState.currentPage != clamped) {
+                    pagerState.scrollToPage(clamped)
+                }
+            } finally {
+                isRemovingPage = false
+            }
         }
     }
 
@@ -345,15 +434,98 @@ fun NoteEditorScreen(
         if (truncated) triggerLimitWarning(isCountLimit = false)
     }
 
-    fun updatePageTextBounded(pageIndex: Int, newText: String) {
+    fun updatePageTitleBounded(pageIndex: Int, newPageTitle: String) {
         if (pageIndex !in pages.indices) return
-        val currentPageBytes = pages[pageIndex].toByteArray(Charsets.UTF_8).size.toLong()
-        val otherBytes = totalNoteBytes - currentPageBytes
-        val safetyMargin = if (pageIndex > 0) 6L else 0L
+        while (pageTitles.size < pages.size) pageTitles.add("")
+        val cleanNew = newPageTitle.replace("\n", " ").replace("\r", "")
+        val currentRaw = NotePagesCodec.encodePageEntry(pageTitles[pageIndex], pages[pageIndex])
+        val otherBytes = totalNoteBytes - currentRaw.toByteArray(Charsets.UTF_8).size.toLong()
+        val safetyMargin = if (pageIndex > 0) 8L else 0L
+        val candidateRaw = NotePagesCodec.encodePageEntry(cleanNew, pages[pageIndex])
         val budget = (NotePagesCodec.MAX_NOTE_BYTES - otherBytes - safetyMargin).coerceAtLeast(0L)
+        if (candidateRaw.toByteArray(Charsets.UTF_8).size.toLong() <= budget) {
+            pageTitles[pageIndex] = cleanNew
+        } else {
+            val existingBodyBytes = pages[pageIndex].toByteArray(Charsets.UTF_8).size.toLong() + 36L
+            val titleBudget = (budget - existingBodyBytes).coerceAtLeast(0L)
+            val (fitted, _) = NotePagesCodec.fitWithinByteBudget(cleanNew, titleBudget)
+            pageTitles[pageIndex] = fitted
+            triggerLimitWarning(isCountLimit = false)
+        }
+    }
+
+    fun updatePageTextBounded(pageIndex: Int, newText: String): Boolean {
+        if (pageIndex !in pages.indices) return false
+        val pTitle = pageTitles.getOrElse(pageIndex) { "" }
+        val currentRaw = NotePagesCodec.encodePageEntry(pTitle, pages[pageIndex])
+        val otherBytes = totalNoteBytes - currentRaw.toByteArray(Charsets.UTF_8).size.toLong()
+        val headerOverhead = if (pTitle.isBlank()) 0L else {
+            (NotePagesCodec.encodePageEntry(pTitle, "").toByteArray(Charsets.UTF_8).size.toLong())
+        }
+        val safetyMargin = if (pageIndex > 0) 6L else 0L
+        val budget = (NotePagesCodec.MAX_NOTE_BYTES - otherBytes - headerOverhead - safetyMargin).coerceAtLeast(0L)
         val (fitted, truncated) = NotePagesCodec.fitWithinByteBudget(newText, budget)
         pages[pageIndex] = fitted
         if (truncated) triggerLimitWarning(isCountLimit = false)
+        return truncated
+    }
+
+    fun pushUndoSnapshot(pageIndex: Int, currentVal: TextFieldValue) {
+        val stack = undoStacks.getOrPut(pageIndex) { mutableListOf() }
+        if (stack.lastOrNull()?.text != currentVal.text) {
+            stack.add(currentVal)
+            if (stack.size > 40) stack.removeAt(0)
+            redoStacks[pageIndex]?.clear()
+        }
+    }
+
+    fun applyRichFieldValue(pageIndex: Int, nextVal: TextFieldValue, recordUndo: Boolean = true) {
+        if (pageIndex !in pages.indices) return
+        val curText = pages[pageIndex]
+        val curSel = (pageSelections[pageIndex] ?: TextRange(curText.length)).let {
+            TextRange(it.start.coerceIn(0, curText.length), it.end.coerceIn(0, curText.length))
+        }
+        if (recordUndo && nextVal.text != curText) {
+            pushUndoSnapshot(pageIndex, TextFieldValue(curText, curSel, pageCompositions[pageIndex]))
+        }
+        val wasTruncated = updatePageTextBounded(pageIndex, nextVal.text)
+        val appliedLen = pages[pageIndex].length
+        pageSelections[pageIndex] = if (wasTruncated) {
+            TextRange(appliedLen)
+        } else {
+            TextRange(nextVal.selection.start.coerceIn(0, appliedLen), nextVal.selection.end.coerceIn(0, appliedLen))
+        }
+        pageCompositions[pageIndex] = if (nextVal.text == curText) nextVal.composition else null
+    }
+
+    fun undoOnPage(pageIndex: Int) {
+        val stack = undoStacks[pageIndex] ?: return
+        if (stack.isEmpty() || pageIndex !in pages.indices) return
+        val curText = pages[pageIndex]
+        val curSel = (pageSelections[pageIndex] ?: TextRange(curText.length)).let {
+            TextRange(it.start.coerceIn(0, curText.length), it.end.coerceIn(0, curText.length))
+        }
+        redoStacks.getOrPut(pageIndex) { mutableListOf() }.add(TextFieldValue(curText, curSel))
+        val prev = stack.removeAt(stack.lastIndex)
+        updatePageTextBounded(pageIndex, prev.text)
+        val len = pages[pageIndex].length
+        pageSelections[pageIndex] = TextRange(prev.selection.start.coerceIn(0, len), prev.selection.end.coerceIn(0, len))
+        pageCompositions[pageIndex] = null
+    }
+
+    fun redoOnPage(pageIndex: Int) {
+        val stack = redoStacks[pageIndex] ?: return
+        if (stack.isEmpty() || pageIndex !in pages.indices) return
+        val curText = pages[pageIndex]
+        val curSel = (pageSelections[pageIndex] ?: TextRange(curText.length)).let {
+            TextRange(it.start.coerceIn(0, curText.length), it.end.coerceIn(0, curText.length))
+        }
+        undoStacks.getOrPut(pageIndex) { mutableListOf() }.add(TextFieldValue(curText, curSel))
+        val next = stack.removeAt(stack.lastIndex)
+        updatePageTextBounded(pageIndex, next.text)
+        val len = pages[pageIndex].length
+        pageSelections[pageIndex] = TextRange(next.selection.start.coerceIn(0, len), next.selection.end.coerceIn(0, len))
+        pageCompositions[pageIndex] = null
     }
 
     fun triggerImmediateSaveIfViewMode() {
@@ -441,13 +613,12 @@ fun NoteEditorScreen(
     val accentColor = surfaceColors.accentColor
     val pillFill = surfaceColors.pillFill
 
-    val wordCount = remember(pagesSnapshot) {
-        pagesSnapshot.sumOf { pageText ->
-            if (pageText.isBlank()) 0 else pageText.trim().split("\\s+".toRegex()).size
-        }
+    val wordCount = remember(encodedPageEntries) {
+        NotePagesCodec.countWords(encodedPageEntries)
     }
-    val charCount = remember(pagesSnapshot) {
-        pagesSnapshot.sumOf { it.length }
+    val charCount = remember(pagesSnapshot, pageTitlesSnapshot) {
+        pagesSnapshot.sumOf { RichTextCodec.stripFormattingForPreview(it).length } +
+            pageTitlesSnapshot.sumOf { it.length }
     }
 
     FrostedBackdrop(isDark = isDark) {
@@ -568,7 +739,8 @@ fun NoteEditorScreen(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = ripple(bounded = true)
                                 ) {
-                                    val rawPageText = pages.getOrNull(currentReadPageIdx).orEmpty()
+                                    val rawPageEntry = encodedPageEntries.getOrNull(currentReadPageIdx).orEmpty()
+                                    val cleanPageText = NotePagesCodec.plainTextSnippet(rawPageEntry)
                                     val fallbackChecklistText = if (currentReadPageIdx == 0 && checklistItems.isNotEmpty()) {
                                         checklistItems
                                             .filter { it.text.isNotBlank() }
@@ -578,7 +750,7 @@ fun NoteEditorScreen(
                                     } else {
                                         ""
                                     }
-                                    val textToCopy = rawPageText.ifBlank { fallbackChecklistText }
+                                    val textToCopy = cleanPageText.ifBlank { fallbackChecklistText }
                                     if (textToCopy.isNotEmpty()) {
                                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                         clipboard.setPrimaryClip(ClipData.newPlainText("Fluffy Page Content", textToCopy))
@@ -795,7 +967,7 @@ fun NoteEditorScreen(
                                     },
                                     onClick = {
                                         showViewMoreMenu = false
-                                        shareNoteText(context, title, pages.toList(), checklistItems, isArabic)
+                                        shareNoteText(context, title, encodedPageEntries, checklistItems, isArabic)
                                     }
                                 )
 
@@ -1023,9 +1195,9 @@ fun NoteEditorScreen(
                         if (pages.size > 1 && pagerState.currentPage < pages.size) {
                             Box(
                                 modifier = Modifier
-                                    .size(30.dp)
+                                    .size(36.dp)
                                     .clip(CircleShape)
-                                    .background(Color(0xFFEF4444).copy(alpha = 0.14f))
+                                    .background(Color(0xFFEF4444).copy(alpha = 0.16f))
                                     .clickable(
                                         interactionSource = remember { MutableInteractionSource() },
                                         indication = ripple(bounded = true)
@@ -1037,7 +1209,7 @@ fun NoteEditorScreen(
                                     imageVector = Icons.Default.DeleteOutline,
                                     contentDescription = if (isArabic) "حذف الصفحة الحالية" else "Delete current page",
                                     tint = Color(0xFFEF4444),
-                                    modifier = Modifier.size(16.dp)
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                         }
@@ -1372,18 +1544,119 @@ fun NoteEditorScreen(
                                         }
                                     }
                                 }
-                            } else {
-                                Text(
-                                    text = if (isArabic) "صفحة ${pageIndex + 1}" else "Page ${pageIndex + 1}",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = accentColor.copy(alpha = 0.85f),
-                                    modifier = Modifier.padding(bottom = 8.dp)
-                                )
+                            }
+                            // Per-Page Title Section (Every page supports its own optional title)
+                            val currentPageTitle = pageTitles.getOrElse(pageIndex) { "" }
+                            if (isEditMode) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = 8.dp)
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(
+                                            if (effectiveDark) Color.White.copy(alpha = 0.06f)
+                                            else Color.Black.copy(alpha = 0.04f)
+                                        )
+                                        .border(
+                                            width = 0.9.dp,
+                                            color = if (currentPageTitle.isNotBlank()) accentColor.copy(alpha = 0.45f) else metaColor.copy(alpha = 0.18f),
+                                            shape = RoundedCornerShape(14.dp)
+                                        )
+                                        .padding(horizontal = 12.dp, vertical = 9.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(CircleShape)
+                                            .background(accentColor.copy(alpha = if (effectiveDark) 0.24f else 0.15f))
+                                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                                    ) {
+                                        Text(
+                                            text = if (isArabic) "ص ${pageIndex + 1}" else "P${pageIndex + 1}",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = accentColor
+                                        )
+                                    }
+
+                                    BasicTextField(
+                                        value = currentPageTitle,
+                                        onValueChange = { updatePageTitleBounded(pageIndex, it) },
+                                        singleLine = true,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("editor_page_title_input_$pageIndex"),
+                                        textStyle = TextStyle(
+                                            fontSize = 15.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = textColor
+                                        ),
+                                        cursorBrush = SolidColor(accentColor),
+                                        decorationBox = { innerTitleField ->
+                                            Box(modifier = Modifier.fillMaxWidth()) {
+                                                if (currentPageTitle.isEmpty()) {
+                                                    Text(
+                                                        text = if (isArabic) {
+                                                            "عنوان الصفحة ${pageIndex + 1} (اختياري)..."
+                                                        } else {
+                                                            "Page ${pageIndex + 1} title (optional)..."
+                                                        },
+                                                        fontSize = 14.5.sp,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = metaColor.copy(alpha = 0.58f)
+                                                    )
+                                                }
+                                                innerTitleField()
+                                            }
+                                        }
+                                    )
+                                }
+                            } else if (currentPageTitle.isNotBlank() || pageIndex > 0) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(CircleShape)
+                                            .background(accentColor.copy(alpha = if (effectiveDark) 0.22f else 0.14f))
+                                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                                    ) {
+                                        Text(
+                                            text = if (isArabic) "صفحة ${pageIndex + 1}" else "Page ${pageIndex + 1}",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = accentColor
+                                        )
+                                    }
+                                    if (currentPageTitle.isNotBlank()) {
+                                        SelectionContainer {
+                                            Text(
+                                                text = currentPageTitle,
+                                                fontSize = 17.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = textColor,
+                                                modifier = Modifier.testTag("editor_page_title_readonly_$pageIndex")
+                                            )
+                                        }
+                                    }
+                                }
                             }
 
                             val pageText = pages[pageIndex]
-                            val remainingMinHeight = (minCanvasHeight - 64.dp).coerceAtLeast(220.dp)
+                            val pageTables = remember(pageText) { RichTextCodec.parseAllTables(pageText) }
+                            val richVisualTransformation = remember(accentColor, metaColor, effectiveDark) {
+                                RichTextCodec.createRichVisualTransformation(
+                                    accentColor = accentColor,
+                                    metaColor = metaColor,
+                                    isDark = effectiveDark
+                                )
+                            }
+                            val remainingMinHeight = (minCanvasHeight - 130.dp).coerceAtLeast(180.dp)
                             val fieldTestTag = if (pageIndex == 0) {
                                 if (isEditMode) "editor_content_input" else "editor_content_readonly"
                             } else {
@@ -1391,17 +1664,50 @@ fun NoteEditorScreen(
                             }
 
                             if (isEditMode) {
+                                val curSelection = (pageSelections[pageIndex] ?: TextRange(pageText.length)).let {
+                                    TextRange(
+                                        it.start.coerceIn(0, pageText.length),
+                                        it.end.coerceIn(0, pageText.length)
+                                    )
+                                }
+                                val curComposition = pageCompositions[pageIndex]?.let { comp ->
+                                    if (comp.start in 0..pageText.length && comp.end in 0..pageText.length) comp else null
+                                }
+                                val fieldValue = TextFieldValue(
+                                    text = pageText,
+                                    selection = curSelection,
+                                    composition = curComposition
+                                )
+
                                 BasicTextField(
-                                    value = pageText,
-                                    onValueChange = { updatePageTextBounded(pageIndex, it) },
+                                    value = fieldValue,
+                                    onValueChange = { updatedVal ->
+                                        if (updatedVal.text != pageText) {
+                                            pushUndoSnapshot(pageIndex, fieldValue)
+                                        }
+                                        val wasTruncated = updatePageTextBounded(pageIndex, updatedVal.text)
+                                        val clampedLen = pages[pageIndex].length
+                                        pageSelections[pageIndex] = if (wasTruncated) {
+                                            TextRange(clampedLen)
+                                        } else {
+                                            TextRange(
+                                                updatedVal.selection.start.coerceIn(0, clampedLen),
+                                                updatedVal.selection.end.coerceIn(0, clampedLen)
+                                            )
+                                        }
+                                        pageCompositions[pageIndex] = updatedVal.composition?.let { comp ->
+                                            if (comp.start in 0..clampedLen && comp.end in 0..clampedLen) comp else null
+                                        }
+                                    },
+                                    visualTransformation = richVisualTransformation,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .defaultMinSize(minHeight = remainingMinHeight)
+                                        .defaultMinSize(minHeight = if (pageTables.isEmpty()) remainingMinHeight else 120.dp)
                                         .testTag(fieldTestTag),
                                     textStyle = TextStyle(
                                         fontSize = writingFontSizeSp.sp,
                                         color = bodyColor,
-                                        lineHeight = (writingFontSizeSp * 1.5f).sp
+                                        lineHeight = (writingFontSizeSp * 1.52f).sp
                                     ),
                                     cursorBrush = SolidColor(selectedTint.accentColor),
                                     decorationBox = { innerTextField ->
@@ -1409,14 +1715,14 @@ fun NoteEditorScreen(
                                             if (pageText.isEmpty()) {
                                                 Text(
                                                     text = if (pageIndex == 0) {
-                                                        if (isArabic) "اكتب أفكارك وملاحظاتك هنا بحرية..." else "Note"
+                                                        if (isArabic) "اكتب أفكارك وملاحظاتك هنا بحرية... أو نسّق النص من الشريط بالأسفل" else "Write freely... use the Notion bar below to style or add tables"
                                                     } else {
                                                         if (isArabic) "اكتب محتوى الصفحة ${pageIndex + 1} هنا..." else "Write page ${pageIndex + 1} here..."
                                                     },
                                                     style = TextStyle(
                                                         fontSize = writingFontSizeSp.sp,
                                                         color = metaColor.copy(alpha = 0.6f),
-                                                        lineHeight = (writingFontSizeSp * 1.5f).sp
+                                                        lineHeight = (writingFontSizeSp * 1.52f).sp
                                                     )
                                                 )
                                             }
@@ -1424,19 +1730,42 @@ fun NoteEditorScreen(
                                         }
                                     }
                                 )
+
+                                // Rendered Interactive Table Cards in Writing Mode (1-tap edit cells/rows/cols)
+                                InlineTablesPreviewSection(
+                                    tables = pageTables,
+                                    isDark = effectiveDark,
+                                    isArabic = isArabic,
+                                    accentColor = accentColor,
+                                    textColor = textColor,
+                                    metaColor = metaColor,
+                                    onEditTable = { tbl ->
+                                        editingTableTarget = tbl
+                                        showTableDialog = true
+                                    }
+                                )
                             } else {
                                 SelectionContainer {
-                                    Text(
-                                        text = pageText,
+                                    RichContentView(
+                                        rawText = pageText,
+                                        fontSizeSp = writingFontSizeSp,
+                                        isDark = effectiveDark,
+                                        isArabic = isArabic,
+                                        accentColor = accentColor,
+                                        textColor = textColor,
+                                        bodyColor = bodyColor,
+                                        metaColor = metaColor,
+                                        onToggleChecklistLine = { lineOffset ->
+                                            val toggled = RichTextCodec.toggleChecklistLineAtOffset(pageText, lineOffset)
+                                            if (toggled != pageText) {
+                                                updatePageTextBounded(pageIndex, toggled)
+                                                triggerImmediateSaveIfViewMode()
+                                            }
+                                        },
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .defaultMinSize(minHeight = remainingMinHeight)
-                                            .testTag(fieldTestTag),
-                                        style = TextStyle(
-                                            fontSize = writingFontSizeSp.sp,
-                                            color = bodyColor,
-                                            lineHeight = (writingFontSizeSp * 1.5f).sp
-                                        )
+                                            .testTag(fieldTestTag)
                                     )
                                 }
                             }
@@ -1543,19 +1872,62 @@ fun NoteEditorScreen(
                 }
             }
 
-            // 3. Bottom Action Toolbar (Hidden completely in View-Only mode; visible only in Edit/Writing mode)
+            // 3. Notion-Style Rich Formatting Dock + Bottom Action Toolbar (visible only in Writing Mode)
             AnimatedVisibility(
                 visible = isEditMode,
                 enter = expandVertically(expandFrom = Alignment.Bottom) + fadeIn(),
                 exit = shrinkVertically(shrinkTowards = Alignment.Bottom) + fadeOut()
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                val activePageIdx = pagerState.currentPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
+                val activePageBody = pages.getOrElse(activePageIdx) { "" }
+                val activeSel = (pageSelections[activePageIdx] ?: TextRange(activePageBody.length)).let {
+                    TextRange(it.start.coerceIn(0, activePageBody.length), it.end.coerceIn(0, activePageBody.length))
+                }
+                val activeStyles = remember(activePageBody, activeSel) {
+                    RichTextCodec.inspectActiveStyles(activePageBody, activeSel)
+                }
+
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    NotionFormattingToolbar(
+                        activeStyles = activeStyles,
+                        canUndo = undoStacks[activePageIdx]?.isNotEmpty() == true,
+                        canRedo = redoStacks[activePageIdx]?.isNotEmpty() == true,
+                        isDark = effectiveDark,
+                        isArabic = isArabic,
+                        accentColor = accentColor,
+                        textColor = textColor,
+                        metaColor = metaColor,
+                        pillFill = pillFill,
+                        onAction = { action ->
+                            val curVal = TextFieldValue(
+                                text = activePageBody,
+                                selection = activeSel,
+                                composition = pageCompositions[activePageIdx]
+                            )
+                            val transformed = RichTextCodec.applyRichAction(curVal, action)
+                            applyRichFieldValue(activePageIdx, transformed, recordUndo = true)
+                        },
+                        onUndo = { undoOnPage(activePageIdx) },
+                        onRedo = { redoOnPage(activePageIdx) },
+                        onInsertTableClick = {
+                            editingTableTarget = null
+                            showTableDialog = true
+                        },
+                        onDecreaseFontSize = {
+                            writingFontSizeSp = (writingFontSizeSp - 1.5f).coerceIn(12f, 32f)
+                        },
+                        onIncreaseFontSize = {
+                            writingFontSizeSp = (writingFontSizeSp + 1.5f).coerceIn(12f, 32f)
+                        }
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -1786,7 +2158,7 @@ fun NoteEditorScreen(
                                     },
                                     onClick = {
                                         showMoreMenu = false
-                                        shareNoteText(context, title, pages.toList(), checklistItems, isArabic)
+                                        shareNoteText(context, title, encodedPageEntries, checklistItems, isArabic)
                                     }
                                 )
 
@@ -1840,6 +2212,7 @@ fun NoteEditorScreen(
                             }
                         }
                     }
+                }
                 }
             }
         }
@@ -1926,6 +2299,8 @@ fun NoteEditorScreen(
                         ) {
                             gridItemsIndexed(pages) { index, pageText ->
                                 val isSelected = index == pagerState.currentPage
+                                val pTitle = pageTitles.getOrElse(index) { "" }
+                                val previewSnippet = RichTextCodec.stripFormattingForPreview(pageText).trim()
                                 Column(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(14.dp))
@@ -1946,15 +2321,52 @@ fun NoteEditorScreen(
                                         }
                                         .padding(10.dp)
                                 ) {
-                                    Text(
-                                        text = if (isArabic) "ص ${index + 1}" else "P${index + 1}",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        color = if (isSelected) accentColor else textColor
-                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = if (isArabic) "ص ${index + 1}" else "P${index + 1}",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = if (isSelected) accentColor else textColor
+                                        )
+                                        if (isEditMode && pages.size > 1) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(22.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color(0xFFEF4444).copy(alpha = 0.18f))
+                                                    .clickable {
+                                                        removePageAt(index)
+                                                    }
+                                                    .testTag("picker_delete_page_$index"),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Close,
+                                                    contentDescription = if (isArabic) "حذف الصفحة" else "Delete Page",
+                                                    tint = Color(0xFFEF4444),
+                                                    modifier = Modifier.size(13.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                    if (pTitle.isNotBlank()) {
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = pTitle,
+                                            fontSize = 11.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = textColor,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                     Spacer(modifier = Modifier.height(3.dp))
                                     Text(
-                                        text = pageText.trim().ifBlank { if (isArabic) "فارغة" else "Empty" },
+                                        text = previewSnippet.ifBlank { if (isArabic) "فارغة" else "Empty" },
                                         fontSize = 10.5.sp,
                                         color = metaColor,
                                         maxLines = 2,
@@ -1967,6 +2379,60 @@ fun NoteEditorScreen(
                     }
                 }
             }
+        }
+
+        // Interactive Notion-Style Table Builder / Cell Editor Dialog
+        if (showTableDialog) {
+            val activeIdx = pagerState.currentPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
+            val curBody = pages.getOrElse(activeIdx) { "" }
+            val curSel = (pageSelections[activeIdx] ?: TextRange(curBody.length)).let {
+                TextRange(it.start.coerceIn(0, curBody.length), it.end.coerceIn(0, curBody.length))
+            }
+            val editTarget = editingTableTarget
+            TableEditorDialog(
+                initialTable = editTarget,
+                isDark = effectiveDark,
+                isArabic = isArabic,
+                accentColor = accentColor,
+                textColor = textColor,
+                metaColor = metaColor,
+                onDismiss = {
+                    showTableDialog = false
+                    editingTableTarget = null
+                },
+                onConfirmTable = { rows ->
+                    val md = RichTextCodec.serializeTable(rows)
+                    val nextVal = if (editTarget != null && editTarget.startOffset >= 0) {
+                        RichTextCodec.replaceTableAtRange(
+                            text = curBody,
+                            startOffset = editTarget.startOffset,
+                            endOffset = editTarget.endOffset,
+                            tableMarkdown = md
+                        )
+                    } else {
+                        RichTextCodec.insertTableAtSelection(
+                            text = curBody,
+                            selection = curSel,
+                            tableMarkdown = md
+                        )
+                    }
+                    applyRichFieldValue(activeIdx, nextVal, recordUndo = true)
+                    showTableDialog = false
+                    editingTableTarget = null
+                },
+                onDeleteTable = if (editTarget != null && editTarget.startOffset >= 0) {
+                    {
+                        val updated = RichTextCodec.deleteTableAtRange(
+                            curBody,
+                            editTarget.startOffset,
+                            editTarget.endOffset
+                        )
+                        applyRichFieldValue(activeIdx, TextFieldValue(updated, TextRange(updated.length)), recordUndo = true)
+                        showTableDialog = false
+                        editingTableTarget = null
+                    }
+                } else null
+            )
         }
 
         // Document Colors & 40 Backgrounds (20 Free + 20 Premium) Modal Bottom Sheet
@@ -2043,31 +2509,11 @@ private fun shareNoteText(
     checklist: List<ChecklistItem>,
     isArabic: Boolean
 ) {
-    val sb = StringBuilder()
-    if (title.isNotBlank()) sb.append("$title\n\n")
-    if (pages.size <= 1) {
-        val single = pages.firstOrNull().orEmpty()
-        if (single.isNotBlank()) sb.append("$single\n\n")
-    } else {
-        pages.forEachIndexed { idx, pageText ->
-            if (pageText.isNotBlank()) {
-                val label = if (isArabic) "--- صفحة ${idx + 1} ---" else "--- Page ${idx + 1} ---"
-                sb.append("$label\n$pageText\n\n")
-            }
-        }
-    }
-    if (checklist.isNotEmpty()) {
-        checklist.forEach {
-            val mark = if (it.isDone) "[✓]" else "[ ]"
-            sb.append("$mark ${it.text}\n")
-        }
-    }
-    sb.append("\n— Shared from Fluffy Liquid Glass Notes ✨")
-
+    val body = NotePagesCodec.buildShareableDraftText(title, pages, checklist, isArabic)
     val intent = Intent(Intent.ACTION_SEND).apply {
         type = "text/plain"
         putExtra(Intent.EXTRA_SUBJECT, title)
-        putExtra(Intent.EXTRA_TEXT, sb.toString())
+        putExtra(Intent.EXTRA_TEXT, body)
     }
     context.startActivity(Intent.createChooser(intent, "Share note via"))
 }

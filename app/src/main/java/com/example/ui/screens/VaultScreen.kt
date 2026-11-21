@@ -13,7 +13,9 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,9 +44,12 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.items as staggeredItems
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -86,9 +91,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -108,9 +115,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.example.audio.rememberAudioPlaybackController
 import com.example.data.model.ChecklistItem
 import com.example.data.model.GlassTint
+import com.example.data.model.NoteBackgroundCatalog
 import com.example.data.model.NoteEntity
 import com.example.data.model.NotePagesCodec
 import com.example.data.model.NotesViewMode
@@ -118,6 +127,7 @@ import com.example.data.model.VaultItemEntity
 import com.example.data.storage.AudioCloudPolicy
 import com.example.data.storage.LocalDeviceStorageManager
 import com.example.ui.components.AudioPlayerCard
+import com.example.ui.components.RichContentView
 import com.example.ui.components.VaultGalleryCard
 import com.example.ui.components.VaultMagazineCard
 import com.example.ui.components.VaultNoteStyleCard
@@ -127,6 +137,7 @@ import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.glass.liquidGlass
 import com.example.ui.theme.LocalAppThemePreset
 import com.example.ui.theme.tr
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -210,11 +221,13 @@ fun VaultScreen(
     var pendingDeleteItem by remember { mutableStateOf<VaultItemEntity?>(null) }
     var previewItem by remember { mutableStateOf<VaultItemEntity?>(null) }
     var editingTarget by remember { mutableStateOf<Pair<VaultItemEntity?, NoteEntity?>?>(null) }
+    var editingInitialPage by remember { mutableIntStateOf(0) }
     var showVoiceRecorderInVault by remember { mutableStateOf(false) }
     var passkeyAttempt by remember { mutableStateOf("") }
     var passkeyError by remember { mutableStateOf(false) }
     var promptedSessionId by rememberSaveable { mutableLongStateOf(-1L) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val browserScope = rememberCoroutineScope()
 
     LaunchedEffect(snackbarMessage) {
         if (!snackbarMessage.isNullOrBlank()) {
@@ -1096,6 +1109,16 @@ fun VaultScreen(
                         exportFileLauncher.launch(suggested)
                     }
 
+                    val isItemEditable: (VaultItemEntity, NoteEntity?) -> Boolean = { candidate, candidateMeta ->
+                        val itemAudio = AudioCloudPolicy.isAudioFile(candidate.mimeType, candidate.fileName) ||
+                            ((candidateMeta?.audioDurationSec ?: 0) > 0 && candidate.localFilePath.isNotBlank())
+                        itemAudio ||
+                            candidateMeta != null ||
+                            candidate.mimeType.startsWith("text/") ||
+                            candidate.literalContent.isNotEmpty() ||
+                            candidate.localFilePath.isBlank()
+                    }
+
                     // Render Vault items using the exact 4 NotesViewMode layouts of FluffyHomeScreen
                     when (viewMode) {
                         NotesViewMode.GRID -> {
@@ -1115,12 +1138,19 @@ fun VaultScreen(
                                 verticalItemSpacing = 12.dp
                             ) {
                                 staggeredItems(vaultItems, key = { it.id }) { item ->
+                                    val meta = vaultNoteMetaMap[item.id]
                                     VaultNoteStyleCard(
                                         item = item,
-                                        metaNote = vaultNoteMetaMap[item.id],
+                                        metaNote = meta,
                                         isDark = isDark,
                                         isArabic = isArabic,
                                         onClick = { previewItem = item },
+                                        onEditClick = if (isItemEditable(item, meta)) {
+                                            {
+                                                editingInitialPage = 0
+                                                editingTarget = item to meta
+                                            }
+                                        } else null,
                                         onMoveToNotesClick = { onMoveToNotes(item) },
                                         onExportClick = { launchExport(item) },
                                         onDeleteClick = { pendingDeleteItem = item }
@@ -1144,12 +1174,19 @@ fun VaultScreen(
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 listItems(vaultItems, key = { it.id }) { item ->
+                                    val meta = vaultNoteMetaMap[item.id]
                                     VaultNoteStyleCard(
                                         item = item,
-                                        metaNote = vaultNoteMetaMap[item.id],
+                                        metaNote = meta,
                                         isDark = isDark,
                                         isArabic = isArabic,
                                         onClick = { previewItem = item },
+                                        onEditClick = if (isItemEditable(item, meta)) {
+                                            {
+                                                editingInitialPage = 0
+                                                editingTarget = item to meta
+                                            }
+                                        } else null,
                                         onMoveToNotesClick = { onMoveToNotes(item) },
                                         onExportClick = { launchExport(item) },
                                         onDeleteClick = { pendingDeleteItem = item }
@@ -1175,12 +1212,19 @@ fun VaultScreen(
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 gridItems(vaultItems, key = { it.id }) { item ->
+                                    val meta = vaultNoteMetaMap[item.id]
                                     VaultGalleryCard(
                                         item = item,
-                                        metaNote = vaultNoteMetaMap[item.id],
+                                        metaNote = meta,
                                         isDark = isDark,
                                         isArabic = isArabic,
                                         onClick = { previewItem = item },
+                                        onEditClick = if (isItemEditable(item, meta)) {
+                                            {
+                                                editingInitialPage = 0
+                                                editingTarget = item to meta
+                                            }
+                                        } else null,
                                         onMoveToNotesClick = { onMoveToNotes(item) },
                                         onExportClick = { launchExport(item) },
                                         onDeleteClick = { pendingDeleteItem = item }
@@ -1204,14 +1248,21 @@ fun VaultScreen(
                                 verticalArrangement = Arrangement.spacedBy(14.dp)
                             ) {
                                 itemsIndexed(vaultItems, key = { _, it -> it.id }) { index, item ->
+                                    val meta = vaultNoteMetaMap[item.id]
                                     VaultMagazineCard(
                                         item = item,
-                                        metaNote = vaultNoteMetaMap[item.id],
+                                        metaNote = meta,
                                         issueIndex = index,
                                         isLeadFeature = index == 0,
                                         isDark = isDark,
                                         isArabic = isArabic,
                                         onClick = { previewItem = item },
+                                        onEditClick = if (isItemEditable(item, meta)) {
+                                            {
+                                                editingInitialPage = 0
+                                                editingTarget = item to meta
+                                            }
+                                        } else null,
                                         onMoveToNotesClick = { onMoveToNotes(item) },
                                         onExportClick = { launchExport(item) },
                                         onDeleteClick = { pendingDeleteItem = item }
@@ -1248,7 +1299,7 @@ fun VaultScreen(
         }
     }
 
-    // Detail Preview Dialog when tapping any Vault card (includes Audio playback, Edit & Move back)
+    // Multi-Page Rich Vault Draft Browser Dialog (browse pages cleanly, view tables & rich styles, or tap Edit)
     previewItem?.let { rawPreviewItem ->
         val item = vaultItems.firstOrNull { it.id == rawPreviewItem.id } ?: rawPreviewItem
         val metaNote = vaultNoteMetaMap[item.id]
@@ -1262,13 +1313,36 @@ fun VaultScreen(
         val checklistItems = remember(metaNote?.checklistJson) {
             metaNote?.let { ChecklistItem.jsonToList(it.checklistJson) }.orEmpty()
         }
-        val pages = remember(metaNote?.content, metaNote?.pagesJson, item.literalContent) {
+        val draftPages = remember(metaNote?.content, metaNote?.pagesJson, item.literalContent) {
             if (metaNote != null) {
-                NotePagesCodec.decodePages(metaNote.content, metaNote.pagesJson)
+                NotePagesCodec.decodeDraftPages(metaNote.content, metaNote.pagesJson)
             } else {
-                listOf(item.literalContent)
+                val rawSingle = item.literalContent
+                listOf(
+                    NotePagesCodec.DraftPage(
+                        title = NotePagesCodec.extractPageTitle(rawSingle),
+                        body = NotePagesCodec.extractPageBody(rawSingle)
+                    )
+                )
             }
         }
+        val browseTint = remember(metaNote?.colorPreset, isAudio) {
+            when {
+                metaNote != null -> GlassTint.fromId(metaNote.colorPreset)
+                isAudio -> GlassTint.ROSE
+                else -> GlassTint.AMETHYST
+            }
+        }
+        val browseSurface = remember(effectiveDark, browseTint, metaNote?.customColorArgb, metaNote?.backgroundId) {
+            NoteBackgroundCatalog.resolveSurfaceColors(
+                themeIsDark = effectiveDark,
+                tint = browseTint,
+                customColorArgb = metaNote?.customColorArgb ?: 0L,
+                backgroundId = metaNote?.backgroundId ?: NoteBackgroundCatalog.NONE_ID
+            )
+        }
+        val browseAccent = browseSurface.accentColor
+        val browsePagerState = rememberPagerState(initialPage = 0, pageCount = { draftPages.size.coerceAtLeast(1) })
         val isIntegrityValid = remember(item.id, item.sha256, item.localFilePath) {
             LocalDeviceStorageManager.verifyVaultItemIntegrity(item)
         }
@@ -1280,25 +1354,28 @@ fun VaultScreen(
             onDismissRequest = {
                 playbackController.stop()
                 previewItem = null
-            }
+            },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
         ) {
             LiquidGlassCard(
                 isDark = effectiveDark,
-                tint = if (isAudio) GlassTint.ROSE else GlassTint.AMETHYST,
+                tint = browseTint,
                 shape = RoundedCornerShape(26.dp),
                 borderWidth = 1.4.dp,
                 customFill = activePreset.surface.copy(alpha = 0.96f),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .widthIn(max = 440.dp)
+                    .padding(horizontal = 16.dp, vertical = 20.dp)
+                    .widthIn(max = 520.dp)
                     .testTag("vault_preview_dialog")
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                        .padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    // Header
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1312,7 +1389,7 @@ fun VaultScreen(
                             Icon(
                                 imageVector = Icons.Default.Shield,
                                 contentDescription = null,
-                                tint = Color(0xFFC084FC),
+                                tint = browseAccent,
                                 modifier = Modifier.size(20.dp)
                             )
                             Text(
@@ -1327,8 +1404,9 @@ fun VaultScreen(
 
                         Box(
                             modifier = Modifier
-                                .size(36.dp)
+                                .size(38.dp)
                                 .clip(CircleShape)
+                                .background(if (effectiveDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.05f))
                                 .clickable {
                                     playbackController.stop()
                                     previewItem = null
@@ -1354,16 +1432,85 @@ fun VaultScreen(
                             fontSize = 11.5.sp,
                             color = metaColor
                         )
-                        Text(
-                            text = if (isIntegrityValid) {
-                                if (isArabic) "محفوظ في الخزنة ✓" else "Vault Verified ✓"
-                            } else {
-                                if (isArabic) "نسخة محلية" else "Local Copy"
-                            },
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFF10B981)
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            if (draftPages.size > 1) {
+                                Text(
+                                    text = if (isArabic) {
+                                        "صفحة ${browsePagerState.currentPage + 1} / ${draftPages.size}"
+                                    } else {
+                                        "Page ${browsePagerState.currentPage + 1} / ${draftPages.size}"
+                                    },
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = browseAccent,
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .background(browseAccent.copy(alpha = 0.14f))
+                                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                                        .testTag("vault_preview_page_indicator")
+                                )
+                            }
+                            Text(
+                                text = if (isIntegrityValid) {
+                                    if (isArabic) "محفوظ في الخزنة ✓" else "Vault Verified ✓"
+                                } else {
+                                    if (isArabic) "نسخة محلية" else "Local Copy"
+                                },
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF10B981)
+                            )
+                        }
+                    }
+
+                    // Page Jump Pills for multi-page drafts
+                    if (draftPages.size > 1) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            draftPages.forEachIndexed { idx, p ->
+                                val isCur = idx == browsePagerState.currentPage
+                                Box(
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .background(
+                                            if (isCur) browseAccent.copy(alpha = 0.22f)
+                                            else if (effectiveDark) Color.White.copy(alpha = 0.06f)
+                                            else Color.Black.copy(alpha = 0.04f)
+                                        )
+                                        .border(
+                                            width = if (isCur) 1.dp else 0.6.dp,
+                                            color = if (isCur) browseAccent else metaColor.copy(alpha = 0.2f),
+                                            shape = CircleShape
+                                        )
+                                        .clickable {
+                                            browserScope.launch { browsePagerState.animateScrollToPage(idx) }
+                                        }
+                                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                                        .testTag("vault_preview_page_chip_$idx")
+                                ) {
+                                    Text(
+                                        text = if (p.title.isNotBlank()) {
+                                            "${idx + 1}. ${p.title}"
+                                        } else {
+                                            if (isArabic) "صفحة ${idx + 1}" else "Page ${idx + 1}"
+                                        },
+                                        fontSize = 11.5.sp,
+                                        fontWeight = if (isCur) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isCur) browseAccent else textColor,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
                     }
 
                     if (isAudio && item.localFilePath.isNotBlank()) {
@@ -1379,81 +1526,114 @@ fun VaultScreen(
                         )
                     }
 
-                    Column(
+                    // Swipeable Rich Multi-Page Reader
+                    HorizontalPager(
+                        state = browsePagerState,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 260.dp)
-                            .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        if (pages.size <= 1) {
-                            val single = pages.firstOrNull().orEmpty()
-                            if (single.isNotBlank()) {
-                                Text(
-                                    text = single,
-                                    fontSize = 14.sp,
-                                    color = textColor,
-                                    lineHeight = 21.sp
-                                )
-                            }
-                        } else {
-                            pages.forEachIndexed { idx, p ->
-                                if (p.isNotBlank()) {
-                                    Text(
-                                        text = if (isArabic) "--- صفحة ${idx + 1} ---" else "--- Page ${idx + 1} ---",
-                                        fontSize = 11.5.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFFC084FC)
-                                    )
-                                    Text(
-                                        text = p,
-                                        fontSize = 14.sp,
-                                        color = textColor,
-                                        lineHeight = 20.sp
-                                    )
-                                }
-                            }
-                        }
-
-                        if (checklistItems.isNotEmpty()) {
-                            checklistItems.forEach { chk ->
+                            .heightIn(min = 120.dp, max = 340.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(if (effectiveDark) Color.White.copy(alpha = 0.03f) else Color.Black.copy(alpha = 0.02f))
+                            .border(0.8.dp, metaColor.copy(alpha = 0.16f), RoundedCornerShape(16.dp))
+                            .testTag("vault_preview_pager")
+                    ) { pageIdx ->
+                        val page = draftPages.getOrElse(pageIdx) { NotePagesCodec.DraftPage() }
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                                .padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            if (page.title.isNotBlank()) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Icon(
-                                        imageVector = if (chk.isDone) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
-                                        contentDescription = null,
-                                        tint = Color(0xFFC084FC),
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Text(
-                                        text = chk.text,
-                                        fontSize = 13.sp,
-                                        color = if (chk.isDone) metaColor else textColor,
-                                        textDecoration = if (chk.isDone) TextDecoration.LineThrough else TextDecoration.None
-                                    )
+                                    if (draftPages.size > 1) {
+                                        Text(
+                                            text = if (isArabic) "ص ${pageIdx + 1}" else "P${pageIdx + 1}",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = browseAccent,
+                                            modifier = Modifier
+                                                .clip(CircleShape)
+                                                .background(browseAccent.copy(alpha = 0.16f))
+                                                .padding(horizontal = 7.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                    SelectionContainer {
+                                        Text(
+                                            text = page.title,
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = textColor
+                                        )
+                                    }
                                 }
                             }
-                        }
 
-                        if (item.fileName.isNotEmpty()) {
-                            val sizeKb = item.byteSize / 1024f
-                            val sizeLabel = if (sizeKb >= 1024f) {
-                                String.format(Locale.US, "%.2f MB", sizeKb / 1024f)
-                            } else {
-                                String.format(Locale.US, "%.1f KB", sizeKb.coerceAtLeast(0.1f))
+                            if (page.body.isNotBlank()) {
+                                SelectionContainer {
+                                    RichContentView(
+                                        rawText = page.body,
+                                        fontSizeSp = 14.5f,
+                                        isDark = effectiveDark,
+                                        isArabic = isArabic,
+                                        accentColor = browseAccent,
+                                        textColor = textColor,
+                                        bodyColor = browseSurface.bodyColor,
+                                        metaColor = metaColor
+                                    )
+                                }
+                            } else if (page.title.isBlank() && checklistItems.isEmpty()) {
+                                Text(
+                                    text = if (isArabic) "هذه الصفحة فارغة." else "This page is empty.",
+                                    fontSize = 13.sp,
+                                    color = metaColor.copy(alpha = 0.7f)
+                                )
                             }
-                            Text(
-                                text = "${item.fileName} • $sizeLabel",
-                                fontSize = 12.sp,
-                                color = Color(0xFF38BDF8),
-                                fontWeight = FontWeight.Medium
-                            )
+
+                            if (pageIdx == 0 && checklistItems.isNotEmpty()) {
+                                checklistItems.forEach { chk ->
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (chk.isDone) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
+                                            contentDescription = null,
+                                            tint = browseAccent,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Text(
+                                            text = chk.text,
+                                            fontSize = 13.sp,
+                                            color = if (chk.isDone) metaColor else textColor,
+                                            textDecoration = if (chk.isDone) TextDecoration.LineThrough else TextDecoration.None
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (pageIdx == 0 && item.fileName.isNotEmpty()) {
+                                val sizeKb = item.byteSize / 1024f
+                                val sizeLabel = if (sizeKb >= 1024f) {
+                                    String.format(Locale.US, "%.2f MB", sizeKb / 1024f)
+                                } else {
+                                    String.format(Locale.US, "%.1f KB", sizeKb.coerceAtLeast(0.1f))
+                                }
+                                Text(
+                                    text = "${item.fileName} • $sizeLabel",
+                                    fontSize = 12.sp,
+                                    color = Color(0xFF38BDF8),
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
                         }
                     }
 
-                    // Preview Actions: Edit inside Vault, Move back to Notes/Audio, Export, Delete
+                    // Preview Actions: Edit inside Vault (opens directly on browsed page), Move back to Notes/Audio, Export, Delete
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -1463,8 +1643,10 @@ fun VaultScreen(
                             if (isEditableNoteOrAudio) {
                                 Button(
                                     onClick = {
+                                        val activeBrowseIdx = browsePagerState.currentPage
                                         playbackController.stop()
                                         previewItem = null
+                                        editingInitialPage = activeBrowseIdx
                                         editingTarget = item to metaNote
                                     },
                                     colors = ButtonDefaults.buttonColors(
@@ -1601,8 +1783,12 @@ fun VaultScreen(
             isDark = effectiveDark,
             isArabic = isArabic,
             isPremium = isPremium,
+            initialPageIndex = editingInitialPage,
             onRequestPremiumUpgrade = onRequestPremiumUpgrade,
-            onDismiss = { editingTarget = null },
+            onDismiss = {
+                editingInitialPage = 0
+                editingTarget = null
+            },
             onSave = { title, content, pagesJson, category, colorPreset, backgroundId, customColorArgb, isPinned, checklist, audioDurationSec, audioFilePath, audioByteSize ->
                 if (editItem != null) {
                     onUpdateVaultNote(
@@ -1637,6 +1823,7 @@ fun VaultScreen(
                         audioByteSize
                     )
                 }
+                editingInitialPage = 0
                 editingTarget = null
             }
         )

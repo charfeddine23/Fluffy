@@ -282,18 +282,23 @@ object LocalDeviceStorageManager {
     }
 
     private fun buildReadableVaultLiteral(note: NoteEntity): String {
-        val pages = NotePagesCodec.decodePages(note.content, note.pagesJson)
+        val draftPages = NotePagesCodec.decodeDraftPages(note.content, note.pagesJson)
         val checklist = ChecklistItem.jsonToList(note.checklistJson)
-        if (pages.size <= 1 && checklist.isEmpty()) {
-            return note.content
+        if (draftPages.size <= 1 && checklist.isEmpty()) {
+            val p1 = draftPages.firstOrNull()
+            return if (p1 != null && p1.title.isNotBlank()) {
+                "${p1.title}\n${p1.body}".trimEnd()
+            } else {
+                note.content
+            }
         }
         val sb = StringBuilder()
-        val nonEmptyPages = if (pages.size <= 1) {
-            listOf(note.content)
-        } else {
-            pages.filterIndexed { index, text -> index == 0 || text.isNotEmpty() }
+        val nonEmptyPages = draftPages.filterIndexed { index, page ->
+            index == 0 || page.title.isNotBlank() || page.body.isNotEmpty()
         }
-        val body = nonEmptyPages.joinToString("\n\n").trimEnd()
+        val body = nonEmptyPages.joinToString("\n\n") { page ->
+            if (page.title.isNotBlank()) "${page.title}\n${page.body}".trimEnd() else page.body.trimEnd()
+        }.trimEnd()
         if (body.isNotEmpty()) {
             sb.append(body)
         }
