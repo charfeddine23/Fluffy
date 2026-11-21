@@ -119,7 +119,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -129,6 +128,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.audio.rememberAudioPlaybackController
 import com.example.data.model.ChecklistItem
+import com.example.data.model.EditorPageSegment
 import com.example.data.model.GlassTint
 import com.example.data.model.InsertFeatureType
 import com.example.data.model.MarkdownTableData
@@ -141,12 +141,16 @@ import com.example.data.model.RichTextCodec
 import com.example.data.storage.AudioCloudPolicy
 import com.example.ui.components.AudioPlayerCard
 import com.example.ui.components.DocumentStyleBottomSheet
-import com.example.ui.components.InlineTablesPreviewSection
 import com.example.ui.components.InsertFeaturesBottomSheet
 import com.example.ui.components.RichContentView
+import com.example.ui.components.SegmentedRichPageEditor
 import com.example.ui.components.TableEditorDialog
 import com.example.ui.components.VoiceRecorderDialog
 import com.example.ui.components.WritingFormattingBar
+import com.example.ui.components.applyActionToSegmentedPage
+import com.example.ui.components.insertSnippetInSegmentedPage
+import com.example.ui.components.insertTableInSegmentedPage
+import com.example.ui.components.resolveActiveTextSegment
 import com.example.ui.glass.FrostedBackdrop
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.glass.liquidGlass
@@ -220,10 +224,10 @@ fun NoteEditorScreen(
             addAll(initialDraftPages.map { it.title }.ifEmpty { listOf("") })
         }
     }
-    val pageSelections = remember(note.id, note.syncId) { mutableStateMapOf<Int, TextRange>() }
-    val pageCompositions = remember(note.id, note.syncId) { mutableStateMapOf<Int, TextRange?>() }
-    val undoStacks = remember(note.id, note.syncId) { mutableStateMapOf<Int, MutableList<TextFieldValue>>() }
-    val redoStacks = remember(note.id, note.syncId) { mutableStateMapOf<Int, MutableList<TextFieldValue>>() }
+    val activeSegmentByPage = remember(note.id, note.syncId) { mutableStateMapOf<Int, Int>() }
+    val segmentSelections = remember(note.id, note.syncId) { mutableStateMapOf<String, TextRange>() }
+    val segmentCompositions = remember(note.id, note.syncId) { mutableStateMapOf<String, TextRange?>() }
+    val pendingStylesByPage = remember(note.id, note.syncId) { mutableStateMapOf<Int, Set<RichFormatAction>>() }
 
     var category by remember { mutableStateOf(note.category) }
     var selectedTint by remember { mutableStateOf(GlassTint.fromId(note.colorPreset)) }
@@ -289,6 +293,9 @@ fun NoteEditorScreen(
     LaunchedEffect(isEditMode, pagerState.currentPage) {
         readZoomScale = 1f
         readPanOffset = Offset.Zero
+        if (!isEditMode) {
+            pendingStylesByPage.clear()
+        }
     }
 
     // Auto-create page ONLY when user genuinely settles onto the trailing virtual slot (never during deletion)
@@ -399,26 +406,33 @@ fun NoteEditorScreen(
                 if (index in pageTitles.indices) {
                     pageTitles.removeAt(index)
                 }
-                val selSnap = pageSelections.toMap()
-                val compSnap = pageCompositions.toMap()
-                val undoSnap = undoStacks.toMap()
-                val redoSnap = redoStacks.toMap()
-                pageSelections.clear()
-                pageCompositions.clear()
-                undoStacks.clear()
-                redoStacks.clear()
-                selSnap.forEach { (k, v) ->
-                    if (k < index) pageSelections[k] = v else if (k > index) pageSelections[k - 1] = v
+                val activeSnap = activeSegmentByPage.toMap()
+                val pendingSnap = pendingStylesByPage.toMap()
+                val selSnap = segmentSelections.toMap()
+                val compSnap = segmentCompositions.toMap()
+                activeSegmentByPage.clear()
+                pendingStylesByPage.clear()
+                segmentSelections.clear()
+                segmentCompositions.clear()
+                activeSnap.forEach { (k, v) ->
+                    if (k < index) activeSegmentByPage[k] = v else if (k > index) activeSegmentByPage[k - 1] = v
                 }
-                compSnap.forEach { (k, v) ->
-                    if (k < index) pageCompositions[k] = v else if (k > index) pageCompositions[k - 1] = v
+                pendingSnap.forEach { (k, v) ->
+                    if (k < index) pendingStylesByPage[k] = v else if (k > index) pendingStylesByPage[k - 1] = v
                 }
-                undoSnap.forEach { (k, v) ->
-                    if (k < index) undoStacks[k] = v else if (k > index) undoStacks[k - 1] = v
+                fun remapSegmentKey(key: String): String? {
+                    val parts = key.split(':')
+                    if (parts.size != 2) return null
+                    val p = parts[0].toIntOrNull() ?: return null
+                    val s = parts[1].toIntOrNull() ?: return null
+                    return when {
+                        p < index -> key
+                        p > index -> "${p - 1}:$s"
+                        else -> null
+                    }
                 }
-                redoSnap.forEach { (k, v) ->
-                    if (k < index) redoStacks[k] = v else if (k > index) redoStacks[k - 1] = v
-                }
+                selSnap.forEach { (k, v) -> remapSegmentKey(k)?.let { segmentSelections[it] = v } }
+                compSnap.forEach { (k, v) -> remapSegmentKey(k)?.let { segmentCompositions[it] = v } }
                 val clamped = nextTarget.coerceIn(0, pages.lastIndex)
                 if (pagerState.currentPage != clamped) {
                     pagerState.scrollToPage(clamped)
@@ -473,32 +487,95 @@ fun NoteEditorScreen(
         return truncated
     }
 
-    fun pushUndoSnapshot(pageIndex: Int, currentVal: TextFieldValue) {
-        val stack = undoStacks.getOrPut(pageIndex) { mutableListOf() }
-        if (stack.lastOrNull()?.text != currentVal.text) {
-            stack.add(currentVal)
-            if (stack.size > 40) stack.removeAt(0)
-            redoStacks[pageIndex]?.clear()
+    fun pageSegmentSelections(pageIndex: Int): Map<Int, TextRange> {
+        val prefix = "$pageIndex:"
+        val out = mutableMapOf<Int, TextRange>()
+        segmentSelections.forEach { (k, v) ->
+            if (k.startsWith(prefix)) {
+                k.removePrefix(prefix).toIntOrNull()?.let { out[it] = v }
+            }
         }
+        return out
     }
 
-    fun applyRichFieldValue(pageIndex: Int, nextVal: TextFieldValue, recordUndo: Boolean = true) {
+    fun pageSegmentCompositions(pageIndex: Int): Map<Int, TextRange?> {
+        val prefix = "$pageIndex:"
+        val out = mutableMapOf<Int, TextRange?>()
+        segmentCompositions.forEach { (k, v) ->
+            if (k.startsWith(prefix)) {
+                k.removePrefix(prefix).toIntOrNull()?.let { out[it] = v }
+            }
+        }
+        return out
+    }
+
+    fun clearPageSegments(pageIndex: Int) {
+        val prefix = "$pageIndex:"
+        segmentSelections.keys.filter { it.startsWith(prefix) }.forEach { segmentSelections.remove(it) }
+        segmentCompositions.keys.filter { it.startsWith(prefix) }.forEach { segmentCompositions.remove(it) }
+    }
+
+    fun applyFormatActionToPage(pageIndex: Int, action: RichFormatAction) {
         if (pageIndex !in pages.indices) return
-        val curText = pages[pageIndex]
-        val curSel = (pageSelections[pageIndex] ?: TextRange(curText.length)).let {
-            TextRange(it.start.coerceIn(0, curText.length), it.end.coerceIn(0, curText.length))
-        }
-        if (recordUndo && nextVal.text != curText) {
-            pushUndoSnapshot(pageIndex, TextFieldValue(curText, curSel, pageCompositions[pageIndex]))
-        }
-        val wasTruncated = updatePageTextBounded(pageIndex, nextVal.text)
-        val appliedLen = pages[pageIndex].length
-        pageSelections[pageIndex] = if (wasTruncated) {
-            TextRange(appliedLen)
+        val result = applyActionToSegmentedPage(
+            pageText = pages[pageIndex],
+            preferredSegmentIndex = activeSegmentByPage[pageIndex] ?: 0,
+            segmentSelections = pageSegmentSelections(pageIndex),
+            segmentCompositions = pageSegmentCompositions(pageIndex),
+            pendingStyles = pendingStylesByPage[pageIndex] ?: emptySet(),
+            action = action
+        )
+        val truncated = updatePageTextBounded(pageIndex, result.updatedPageText)
+        val latestSegments = RichTextCodec.splitPageIntoEditorSegments(pages[pageIndex])
+        val (_, newSeg) = resolveActiveTextSegment(latestSegments, result.targetSegmentIndex)
+        activeSegmentByPage[pageIndex] = result.targetSegmentIndex
+        segmentSelections["$pageIndex:${result.targetSegmentIndex}"] = if (truncated) {
+            TextRange(newSeg.text.length)
         } else {
-            TextRange(nextVal.selection.start.coerceIn(0, appliedLen), nextVal.selection.end.coerceIn(0, appliedLen))
+            TextRange(
+                result.updatedSelection.start.coerceIn(0, newSeg.text.length),
+                result.updatedSelection.end.coerceIn(0, newSeg.text.length)
+            )
         }
-        pageCompositions[pageIndex] = if (nextVal.text == curText) nextVal.composition else null
+        segmentCompositions["$pageIndex:${result.targetSegmentIndex}"] = null
+        pendingStylesByPage[pageIndex] = result.updatedPendingStyles
+    }
+
+    fun applyInsertFeatureToPage(pageIndex: Int, feature: InsertFeatureType) {
+        if (pageIndex !in pages.indices) return
+        val snippet = RichTextCodec.buildInsertSnippet(feature, isArabic)
+        val needNewLine = feature == InsertFeatureType.DAILY_HEADER ||
+            feature == InsertFeatureType.PROGRESS_BAR ||
+            feature == InsertFeatureType.MEETING_TEMPLATE ||
+            feature == InsertFeatureType.PROS_CONS_TABLE
+        val result = insertSnippetInSegmentedPage(
+            pageText = pages[pageIndex],
+            preferredSegmentIndex = activeSegmentByPage[pageIndex] ?: 0,
+            segmentSelections = pageSegmentSelections(pageIndex),
+            snippet = snippet,
+            ensureNewLinePrefix = needNewLine
+        )
+        val truncated = updatePageTextBounded(pageIndex, result.updatedPageText)
+        val latestSegments = RichTextCodec.splitPageIntoEditorSegments(pages[pageIndex])
+        if (feature == InsertFeatureType.PROS_CONS_TABLE) {
+            clearPageSegments(pageIndex)
+            val tailIdx = latestSegments.indexOfLast { it is EditorPageSegment.TextSegment }.coerceAtLeast(0)
+            activeSegmentByPage[pageIndex] = tailIdx
+            segmentSelections["$pageIndex:$tailIdx"] = TextRange(0)
+        } else {
+            val (_, newSeg) = resolveActiveTextSegment(latestSegments, result.targetSegmentIndex)
+            activeSegmentByPage[pageIndex] = result.targetSegmentIndex
+            segmentSelections["$pageIndex:${result.targetSegmentIndex}"] = if (truncated) {
+                TextRange(newSeg.text.length)
+            } else {
+                TextRange(
+                    result.updatedSelection.start.coerceIn(0, newSeg.text.length),
+                    result.updatedSelection.end.coerceIn(0, newSeg.text.length)
+                )
+            }
+            segmentCompositions["$pageIndex:${result.targetSegmentIndex}"] = null
+        }
+        pendingStylesByPage.remove(pageIndex)
     }
 
     fun triggerImmediateSaveIfViewMode() {
@@ -1621,7 +1698,6 @@ fun NoteEditorScreen(
                             }
 
                             val pageText = pages[pageIndex]
-                            val pageTables = remember(pageText) { RichTextCodec.parseAllTables(pageText) }
                             val richVisualTransformation = remember(accentColor, metaColor, effectiveDark) {
                                 RichTextCodec.createRichVisualTransformation(
                                     accentColor = accentColor,
@@ -1637,84 +1713,69 @@ fun NoteEditorScreen(
                             }
 
                             if (isEditMode) {
-                                val curSelection = (pageSelections[pageIndex] ?: TextRange(pageText.length)).let {
-                                    TextRange(
-                                        it.start.coerceIn(0, pageText.length),
-                                        it.end.coerceIn(0, pageText.length)
-                                    )
-                                }
-                                val curComposition = pageCompositions[pageIndex]?.let { comp ->
-                                    if (comp.start in 0..pageText.length && comp.end in 0..pageText.length) comp else null
-                                }
-                                val fieldValue = TextFieldValue(
-                                    text = pageText,
-                                    selection = curSelection,
-                                    composition = curComposition
-                                )
+                                val activeSegIdx = activeSegmentByPage[pageIndex] ?: 0
+                                val pageSegSels = pageSegmentSelections(pageIndex)
+                                val pageSegComps = pageSegmentCompositions(pageIndex)
+                                val pendingStyles = pendingStylesByPage[pageIndex] ?: emptySet()
 
-                                BasicTextField(
-                                    value = fieldValue,
-                                    onValueChange = { updatedVal ->
-                                        if (updatedVal.text != pageText) {
-                                            pushUndoSnapshot(pageIndex, fieldValue)
-                                        }
-                                        val wasTruncated = updatePageTextBounded(pageIndex, updatedVal.text)
-                                        val clampedLen = pages[pageIndex].length
-                                        pageSelections[pageIndex] = if (wasTruncated) {
-                                            TextRange(clampedLen)
-                                        } else {
-                                            TextRange(
-                                                updatedVal.selection.start.coerceIn(0, clampedLen),
-                                                updatedVal.selection.end.coerceIn(0, clampedLen)
-                                            )
-                                        }
-                                        pageCompositions[pageIndex] = updatedVal.composition?.let { comp ->
-                                            if (comp.start in 0..clampedLen && comp.end in 0..clampedLen) comp else null
-                                        }
+                                SegmentedRichPageEditor(
+                                    pageText = pageText,
+                                    activeSegmentIndex = activeSegIdx,
+                                    segmentSelections = pageSegSels,
+                                    segmentCompositions = pageSegComps,
+                                    pendingInlineStyles = pendingStyles,
+                                    richVisualTransformation = richVisualTransformation,
+                                    fontSizeSp = writingFontSizeSp,
+                                    minHeight = remainingMinHeight,
+                                    placeholderText = if (pageIndex == 0) {
+                                        if (isArabic) "اكتب أفكارك وملاحظاتك هنا بحرية..." else "Write your thoughts and notes freely..."
+                                    } else {
+                                        if (isArabic) "اكتب محتوى الصفحة ${pageIndex + 1} هنا..." else "Write page ${pageIndex + 1} here..."
                                     },
-                                    visualTransformation = richVisualTransformation,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .defaultMinSize(minHeight = if (pageTables.isEmpty()) remainingMinHeight else 120.dp)
-                                        .testTag(fieldTestTag),
-                                    textStyle = TextStyle(
-                                        fontSize = writingFontSizeSp.sp,
-                                        color = bodyColor,
-                                        lineHeight = (writingFontSizeSp * 1.52f).sp
-                                    ),
-                                    cursorBrush = SolidColor(selectedTint.accentColor),
-                                    decorationBox = { innerTextField ->
-                                        Box(modifier = Modifier.fillMaxWidth()) {
-                                            if (pageText.isEmpty()) {
-                                                Text(
-                                                    text = if (pageIndex == 0) {
-                                                        if (isArabic) "اكتب أفكارك وملاحظاتك هنا بحرية..." else "Write your thoughts and notes freely..."
-                                                    } else {
-                                                        if (isArabic) "اكتب محتوى الصفحة ${pageIndex + 1} هنا..." else "Write page ${pageIndex + 1} here..."
-                                                    },
-                                                    style = TextStyle(
-                                                        fontSize = writingFontSizeSp.sp,
-                                                        color = metaColor.copy(alpha = 0.6f),
-                                                        lineHeight = (writingFontSizeSp * 1.52f).sp
-                                                    )
-                                                )
-                                            }
-                                            innerTextField()
-                                        }
-                                    }
-                                )
-
-                                // Rendered Interactive Table Cards in Writing Mode (1-tap edit cells/rows/cols)
-                                InlineTablesPreviewSection(
-                                    tables = pageTables,
+                                    fieldTestTag = fieldTestTag,
                                     isDark = effectiveDark,
                                     isArabic = isArabic,
                                     accentColor = accentColor,
                                     textColor = textColor,
+                                    bodyColor = bodyColor,
                                     metaColor = metaColor,
+                                    onSegmentTextChanged = { updatedPageText, segIdx, newSegSel, newSegComp, nextPending ->
+                                        val truncated = updatePageTextBounded(pageIndex, updatedPageText)
+                                        val latestSegments = RichTextCodec.splitPageIntoEditorSegments(pages[pageIndex])
+                                        val activeSeg = latestSegments.getOrNull(segIdx) as? EditorPageSegment.TextSegment
+                                        val maxSegLen = activeSeg?.text?.length ?: 0
+                                        activeSegmentByPage[pageIndex] = segIdx
+                                        segmentSelections["$pageIndex:$segIdx"] = if (truncated) {
+                                            TextRange(maxSegLen)
+                                        } else {
+                                            TextRange(
+                                                newSegSel.start.coerceIn(0, maxSegLen),
+                                                newSegSel.end.coerceIn(0, maxSegLen)
+                                            )
+                                        }
+                                        segmentCompositions["$pageIndex:$segIdx"] = if (truncated) null else newSegComp
+                                        pendingStylesByPage[pageIndex] = nextPending
+                                    },
+                                    onSegmentFocused = { segIdx ->
+                                        if (activeSegmentByPage[pageIndex] != segIdx) {
+                                            activeSegmentByPage[pageIndex] = segIdx
+                                            pendingStylesByPage.remove(pageIndex)
+                                        }
+                                    },
                                     onEditTable = { tbl ->
                                         editingTableTarget = tbl
                                         showTableDialog = true
+                                    },
+                                    onDeleteTable = { tbl ->
+                                        val updated = RichTextCodec.deleteTableAtRange(
+                                            pageText,
+                                            tbl.startOffset,
+                                            tbl.endOffset
+                                        )
+                                        updatePageTextBounded(pageIndex, updated)
+                                        clearPageSegments(pageIndex)
+                                        activeSegmentByPage[pageIndex] = 0
+                                        pendingStylesByPage.remove(pageIndex)
                                     }
                                 )
                             } else {
@@ -1853,11 +1914,17 @@ fun NoteEditorScreen(
             ) {
                 val activePageIdx = pagerState.currentPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
                 val activePageText = pages.getOrElse(activePageIdx) { "" }
-                val activePageSel = (pageSelections[activePageIdx] ?: TextRange(activePageText.length)).let {
-                    TextRange(it.start.coerceIn(0, activePageText.length), it.end.coerceIn(0, activePageText.length))
+                val activePageSegments = remember(activePageText) {
+                    RichTextCodec.splitPageIntoEditorSegments(activePageText)
                 }
-                val activeStyles = remember(activePageText, activePageSel) {
-                    RichTextCodec.inspectActiveStyles(activePageText, activePageSel)
+                val preferredSeg = activeSegmentByPage[activePageIdx] ?: 0
+                val (resolvedSegIdx, resolvedSeg) = resolveActiveTextSegment(activePageSegments, preferredSeg)
+                val activeSegSel = (segmentSelections["$activePageIdx:$resolvedSegIdx"] ?: TextRange(resolvedSeg.text.length)).let {
+                    TextRange(it.start.coerceIn(0, resolvedSeg.text.length), it.end.coerceIn(0, resolvedSeg.text.length))
+                }
+                val pendingStyles = pendingStylesByPage[activePageIdx] ?: emptySet()
+                val activeStyles = remember(resolvedSeg.text, activeSegSel, pendingStyles) {
+                    RichTextCodec.inspectActiveStyles(resolvedSeg.text, activeSegSel) + pendingStyles
                 }
 
                 Column(modifier = Modifier.fillMaxWidth()) {
@@ -1869,15 +1936,7 @@ fun NoteEditorScreen(
                         textColor = textColor,
                         metaColor = metaColor,
                         pillFill = pillFill,
-                        onFormatAction = { action ->
-                            val currentVal = TextFieldValue(
-                                text = activePageText,
-                                selection = activePageSel,
-                                composition = pageCompositions[activePageIdx]
-                            )
-                            val updatedVal = RichTextCodec.applyRichAction(currentVal, action)
-                            applyRichFieldValue(activePageIdx, updatedVal, recordUndo = true)
-                        },
+                        onFormatAction = { action -> applyFormatActionToPage(activePageIdx, action) },
                         onOpenAddMenu = { showInsertSheet = true }
                     )
 
@@ -2344,11 +2403,6 @@ fun NoteEditorScreen(
         // 20-Tool Insert Bottom Sheet (+ Add button)
         if (showInsertSheet) {
             val activeIdx = pagerState.currentPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
-            val curBody = pages.getOrElse(activeIdx) { "" }
-            val curSel = (pageSelections[activeIdx] ?: TextRange(curBody.length)).let {
-                TextRange(it.start.coerceIn(0, curBody.length), it.end.coerceIn(0, curBody.length))
-            }
-            val curVal = TextFieldValue(curBody, curSel, pageCompositions[activeIdx])
 
             InsertFeaturesBottomSheet(
                 isDark = effectiveDark,
@@ -2376,39 +2430,15 @@ fun NoteEditorScreen(
                                 triggerLimitWarning(isCountLimit = false)
                             }
                         }
-                        InsertFeatureType.TODO_CHECKBOX -> {
-                            applyRichFieldValue(activeIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.CHECKBOX), recordUndo = true)
-                        }
-                        InsertFeatureType.BULLET_LIST -> {
-                            applyRichFieldValue(activeIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.BULLET_LIST), recordUndo = true)
-                        }
-                        InsertFeatureType.NUMBERED_LIST -> {
-                            applyRichFieldValue(activeIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.NUMBERED_LIST), recordUndo = true)
-                        }
-                        InsertFeatureType.QUOTE -> {
-                            applyRichFieldValue(activeIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.QUOTE), recordUndo = true)
-                        }
-                        InsertFeatureType.CALLOUT -> {
-                            applyRichFieldValue(activeIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.CALLOUT), recordUndo = true)
-                        }
-                        InsertFeatureType.CODE_BLOCK -> {
-                            applyRichFieldValue(activeIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.CODE_BLOCK), recordUndo = true)
-                        }
-                        InsertFeatureType.INLINE_CODE -> {
-                            applyRichFieldValue(activeIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.CODE), recordUndo = true)
-                        }
-                        InsertFeatureType.DIVIDER -> {
-                            applyRichFieldValue(activeIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.DIVIDER), recordUndo = true)
-                        }
-                        else -> {
-                            val snippet = RichTextCodec.buildInsertSnippet(feature, isArabic)
-                            val needNewLine = feature == InsertFeatureType.DAILY_HEADER ||
-                                feature == InsertFeatureType.PROGRESS_BAR ||
-                                feature == InsertFeatureType.MEETING_TEMPLATE ||
-                                feature == InsertFeatureType.PROS_CONS_TABLE
-                            val updated = RichTextCodec.insertSnippetAtSelection(curVal, snippet, ensureNewLinePrefix = needNewLine)
-                            applyRichFieldValue(activeIdx, updated, recordUndo = true)
-                        }
+                        InsertFeatureType.TODO_CHECKBOX -> applyFormatActionToPage(activeIdx, RichFormatAction.CHECKBOX)
+                        InsertFeatureType.BULLET_LIST -> applyFormatActionToPage(activeIdx, RichFormatAction.BULLET_LIST)
+                        InsertFeatureType.NUMBERED_LIST -> applyFormatActionToPage(activeIdx, RichFormatAction.NUMBERED_LIST)
+                        InsertFeatureType.QUOTE -> applyFormatActionToPage(activeIdx, RichFormatAction.QUOTE)
+                        InsertFeatureType.CALLOUT -> applyFormatActionToPage(activeIdx, RichFormatAction.CALLOUT)
+                        InsertFeatureType.CODE_BLOCK -> applyFormatActionToPage(activeIdx, RichFormatAction.CODE_BLOCK)
+                        InsertFeatureType.INLINE_CODE -> applyFormatActionToPage(activeIdx, RichFormatAction.CODE)
+                        InsertFeatureType.DIVIDER -> applyFormatActionToPage(activeIdx, RichFormatAction.DIVIDER)
+                        else -> applyInsertFeatureToPage(activeIdx, feature)
                     }
                 }
             )
@@ -2418,9 +2448,6 @@ fun NoteEditorScreen(
         if (showTableDialog) {
             val activeIdx = pagerState.currentPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
             val curBody = pages.getOrElse(activeIdx) { "" }
-            val curSel = (pageSelections[activeIdx] ?: TextRange(curBody.length)).let {
-                TextRange(it.start.coerceIn(0, curBody.length), it.end.coerceIn(0, curBody.length))
-            }
             val editTarget = editingTableTarget
             TableEditorDialog(
                 initialTable = editTarget,
@@ -2435,21 +2462,30 @@ fun NoteEditorScreen(
                 },
                 onConfirmTable = { rows ->
                     val md = RichTextCodec.serializeTable(rows)
-                    val nextVal = if (editTarget != null && editTarget.startOffset >= 0) {
-                        RichTextCodec.replaceTableAtRange(
+                    if (editTarget != null && editTarget.startOffset >= 0) {
+                        val updated = RichTextCodec.replaceTableAtRange(
                             text = curBody,
                             startOffset = editTarget.startOffset,
                             endOffset = editTarget.endOffset,
                             tableMarkdown = md
-                        )
+                        ).text
+                        updatePageTextBounded(activeIdx, updated)
+                        clearPageSegments(activeIdx)
                     } else {
-                        RichTextCodec.insertTableAtSelection(
-                            text = curBody,
-                            selection = curSel,
+                        val updated = insertTableInSegmentedPage(
+                            pageText = curBody,
+                            preferredSegmentIndex = activeSegmentByPage[activeIdx] ?: 0,
+                            segmentSelections = pageSegmentSelections(activeIdx),
                             tableMarkdown = md
                         )
+                        updatePageTextBounded(activeIdx, updated)
+                        clearPageSegments(activeIdx)
+                        val latestSegments = RichTextCodec.splitPageIntoEditorSegments(pages[activeIdx])
+                        val tailIdx = latestSegments.indexOfLast { it is EditorPageSegment.TextSegment }.coerceAtLeast(0)
+                        activeSegmentByPage[activeIdx] = tailIdx
+                        segmentSelections["$activeIdx:$tailIdx"] = TextRange(0)
                     }
-                    applyRichFieldValue(activeIdx, nextVal, recordUndo = true)
+                    pendingStylesByPage.remove(activeIdx)
                     showTableDialog = false
                     editingTableTarget = null
                 },
@@ -2460,7 +2496,10 @@ fun NoteEditorScreen(
                             editTarget.startOffset,
                             editTarget.endOffset
                         )
-                        applyRichFieldValue(activeIdx, TextFieldValue(updated, TextRange(updated.length)), recordUndo = true)
+                        updatePageTextBounded(activeIdx, updated)
+                        clearPageSegments(activeIdx)
+                        activeSegmentByPage[activeIdx] = 0
+                        pendingStylesByPage.remove(activeIdx)
                         showTableDialog = false
                         editingTableTarget = null
                     }

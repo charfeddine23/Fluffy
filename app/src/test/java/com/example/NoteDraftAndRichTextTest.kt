@@ -225,4 +225,116 @@ class NoteDraftAndRichTextTest {
         assertTrue(RichTextCodec.buildInsertSnippet(InsertFeatureType.DATE_STAMP, isArabic = true, nowMillis = 0L).startsWith("📅"))
         assertTrue(RichTextCodec.buildInsertSnippet(InsertFeatureType.MEETING_TEMPLATE, isArabic = false).contains("Meeting Notes"))
     }
+
+    @Test
+    fun `pending italic and bold+italic typing wraps seamlessly without empty marker bugs`() {
+        // Toggle Italic on empty page -> zero dangling markers injected
+        val startState = RichTextCodec.toggleFormatForEditor(
+            value = TextFieldValue("", TextRange(0)),
+            action = RichFormatAction.ITALIC,
+            pendingStyles = emptySet()
+        )
+        assertEquals("", startState.fieldValue.text)
+        assertEquals(setOf(RichFormatAction.ITALIC), startState.pendingStyles)
+
+        // Type Arabic word character-by-character -> merges into single *كتاب* span
+        var curVal = startState.fieldValue
+        var pending = startState.pendingStyles
+        for (ch in listOf('ك', 'ت', 'ا', 'ب')) {
+            val typed = curVal.text.substring(0, curVal.selection.start) + ch + curVal.text.substring(curVal.selection.end)
+            val outcome = RichTextCodec.applyPendingStylesOnEdit(
+                prevText = curVal.text,
+                nextVal = TextFieldValue(typed, TextRange(curVal.selection.start + 1)),
+                pendingStyles = pending
+            )
+            curVal = outcome.fieldValue
+            pending = outcome.pendingStyles
+        }
+        assertEquals("*كتاب*", curVal.text)
+
+        // Toggle Italic OFF at end of *كتاب* -> plain text follows cleanly
+        val turnOff = RichTextCodec.toggleFormatForEditor(curVal, RichFormatAction.ITALIC, pending)
+        assertTrue(turnOff.pendingStyles.isEmpty())
+        val afterPlain = RichTextCodec.applyPendingStylesOnEdit(
+            prevText = turnOff.fieldValue.text,
+            nextVal = TextFieldValue(turnOff.fieldValue.text + " جديد", TextRange(turnOff.fieldValue.text.length + 5)),
+            pendingStyles = turnOff.pendingStyles
+        )
+        assertEquals("*كتاب* جديد", afterPlain.fieldValue.text)
+
+        // Combined Bold + Italic pending typing -> ***hi***
+        val biStart = RichTextCodec.toggleFormatForEditor(
+            TextFieldValue("", TextRange(0)),
+            RichFormatAction.BOLD,
+            setOf(RichFormatAction.ITALIC)
+        )
+        assertEquals(setOf(RichFormatAction.ITALIC, RichFormatAction.BOLD), biStart.pendingStyles)
+        var biVal = biStart.fieldValue
+        var biPending = biStart.pendingStyles
+        for (ch in listOf('h', 'i')) {
+            val typed = biVal.text + ch
+            val res = RichTextCodec.applyPendingStylesOnEdit(
+                prevText = biVal.text,
+                nextVal = TextFieldValue(typed, TextRange(typed.length)),
+                pendingStyles = biPending
+            )
+            biVal = res.fieldValue
+            biPending = res.pendingStyles
+        }
+        assertEquals("***hi***", biVal.text)
+
+        // Adding Bold inside an existing Italic word preserves both *ital**x**ic* cleanly
+        val nestedRes = RichTextCodec.applyPendingStylesOnEdit(
+            prevText = "*italic*",
+            nextVal = TextFieldValue("*italxic*", TextRange(6)),
+            pendingStyles = setOf(RichFormatAction.BOLD)
+        )
+        assertEquals("*ital**x**ic*", nestedRes.fieldValue.text)
+    }
+
+    @Test
+    fun `splitPageIntoEditorSegments isolates pipe tables and divider visual transform stays monotonic`() {
+        val rawPage = "فقرة أولى\n\n| العمود 1 | العمود 2 |\n| --- | --- |\n| أ | ب |\nفقرة ثانية"
+        val segments = RichTextCodec.splitPageIntoEditorSegments(rawPage)
+        val textSegments = segments.filterIsInstance<com.example.data.model.EditorPageSegment.TextSegment>()
+        val tableSegments = segments.filterIsInstance<com.example.data.model.EditorPageSegment.TableSegment>()
+
+        assertEquals(1, tableSegments.size)
+        assertEquals(2, textSegments.size)
+        assertFalse(textSegments.any { it.text.contains("|") })
+        assertTrue(textSegments[0].text.contains("فقرة أولى"))
+        assertEquals("فقرة ثانية", textSegments[1].text)
+
+        // Updating tail segment preserves table intact
+        val tail = textSegments[1]
+        val updatedPage = RichTextCodec.replaceSegmentInPage(
+            rawText = rawPage,
+            segStart = tail.startOffset,
+            segEnd = tail.endOffset,
+            newSegmentText = "فقرة محدثة",
+            hasTableBefore = true,
+            hasTableAfter = false
+        )
+        assertEquals(1, RichTextCodec.parseAllTables(updatedPage).size)
+        assertTrue(updatedPage.endsWith("فقرة محدثة"))
+
+        // Divider + code fence transformForEditor stays strictly monotonic and hides raw tokens
+        val specialRaw = "أعلى\n---\n```\ncode()\n```\nأسفل"
+        val transformed = RichTextCodec.transformForEditor(
+            raw = specialRaw,
+            accentColor = Color(0xFF8B5CF6),
+            metaColor = Color(0xFF94A3B8),
+            isDark = true
+        )
+        assertFalse(transformed.text.text.contains("---"))
+        assertFalse(transformed.text.text.contains("```"))
+        assertTrue(transformed.text.text.contains("────────────────────"))
+        val mapping = transformed.offsetMapping
+        var prevT = 0
+        for (o in 0..specialRaw.length) {
+            val t = mapping.originalToTransformed(o)
+            assertTrue(t >= prevT && t <= transformed.text.length)
+            prevT = t
+        }
+    }
 }

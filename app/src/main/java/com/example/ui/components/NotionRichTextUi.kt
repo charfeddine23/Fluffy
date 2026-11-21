@@ -83,21 +83,27 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.example.data.model.EditorPageSegment
 import com.example.data.model.GlassTint
 import com.example.data.model.InsertFeatureType
 import com.example.data.model.MarkdownTableData
@@ -1214,6 +1220,341 @@ private fun DimensionStepperPill(
                 tint = if (canPlus) accentColor else textColor.copy(alpha = 0.3f),
                 modifier = Modifier.size(15.dp)
             )
+        }
+    }
+}
+
+data class SegmentedEditResult(
+    val updatedPageText: String,
+    val targetSegmentIndex: Int,
+    val updatedSelection: TextRange,
+    val updatedPendingStyles: Set<RichFormatAction>
+)
+
+fun resolveActiveTextSegment(
+    segments: List<EditorPageSegment>,
+    preferredSegmentIndex: Int
+): Pair<Int, EditorPageSegment.TextSegment> {
+    val preferred = segments.getOrNull(preferredSegmentIndex) as? EditorPageSegment.TextSegment
+    if (preferred != null) return preferredSegmentIndex to preferred
+    val lastTextIdx = segments.indexOfLast { it is EditorPageSegment.TextSegment }
+    if (lastTextIdx >= 0) {
+        return lastTextIdx to (segments[lastTextIdx] as EditorPageSegment.TextSegment)
+    }
+    return 0 to EditorPageSegment.TextSegment(0, 0, "")
+}
+
+fun applyActionToSegmentedPage(
+    pageText: String,
+    preferredSegmentIndex: Int,
+    segmentSelections: Map<Int, TextRange>,
+    segmentCompositions: Map<Int, TextRange?>,
+    pendingStyles: Set<RichFormatAction>,
+    action: RichFormatAction
+): SegmentedEditResult {
+    val segments = RichTextCodec.splitPageIntoEditorSegments(pageText)
+    val (segIdx, seg) = resolveActiveTextSegment(segments, preferredSegmentIndex)
+    val localSel = (segmentSelections[segIdx] ?: TextRange(seg.text.length)).let {
+        TextRange(it.start.coerceIn(0, seg.text.length), it.end.coerceIn(0, seg.text.length))
+    }
+    val localComp = segmentCompositions[segIdx]?.let { comp ->
+        if (comp.start in 0..seg.text.length && comp.end in 0..seg.text.length) comp else null
+    }
+    val curVal = TextFieldValue(seg.text, localSel, localComp)
+    val outcome = RichTextCodec.toggleFormatForEditor(curVal, action, pendingStyles)
+    val hasTableBefore = segIdx > 0 && segments.getOrNull(segIdx - 1) is EditorPageSegment.TableSegment
+    val hasTableAfter = segIdx < segments.lastIndex && segments.getOrNull(segIdx + 1) is EditorPageSegment.TableSegment
+    val updatedPageText = RichTextCodec.replaceSegmentInPage(
+        rawText = pageText,
+        segStart = seg.startOffset,
+        segEnd = seg.endOffset,
+        newSegmentText = outcome.fieldValue.text,
+        hasTableBefore = hasTableBefore,
+        hasTableAfter = hasTableAfter
+    )
+    return SegmentedEditResult(
+        updatedPageText = updatedPageText,
+        targetSegmentIndex = segIdx,
+        updatedSelection = outcome.fieldValue.selection,
+        updatedPendingStyles = outcome.pendingStyles
+    )
+}
+
+fun insertSnippetInSegmentedPage(
+    pageText: String,
+    preferredSegmentIndex: Int,
+    segmentSelections: Map<Int, TextRange>,
+    snippet: String,
+    ensureNewLinePrefix: Boolean
+): SegmentedEditResult {
+    val segments = RichTextCodec.splitPageIntoEditorSegments(pageText)
+    val (segIdx, seg) = resolveActiveTextSegment(segments, preferredSegmentIndex)
+    val localSel = (segmentSelections[segIdx] ?: TextRange(seg.text.length)).let {
+        TextRange(it.start.coerceIn(0, seg.text.length), it.end.coerceIn(0, seg.text.length))
+    }
+    val nextSegVal = RichTextCodec.insertSnippetAtSelection(
+        value = TextFieldValue(seg.text, localSel),
+        snippet = snippet,
+        ensureNewLinePrefix = ensureNewLinePrefix
+    )
+    val hasTableBefore = segIdx > 0 && segments.getOrNull(segIdx - 1) is EditorPageSegment.TableSegment
+    val hasTableAfter = segIdx < segments.lastIndex && segments.getOrNull(segIdx + 1) is EditorPageSegment.TableSegment
+    val updatedPageText = RichTextCodec.replaceSegmentInPage(
+        rawText = pageText,
+        segStart = seg.startOffset,
+        segEnd = seg.endOffset,
+        newSegmentText = nextSegVal.text,
+        hasTableBefore = hasTableBefore,
+        hasTableAfter = hasTableAfter
+    )
+    return SegmentedEditResult(
+        updatedPageText = updatedPageText,
+        targetSegmentIndex = segIdx,
+        updatedSelection = nextSegVal.selection,
+        updatedPendingStyles = emptySet()
+    )
+}
+
+fun insertTableInSegmentedPage(
+    pageText: String,
+    preferredSegmentIndex: Int,
+    segmentSelections: Map<Int, TextRange>,
+    tableMarkdown: String
+): String {
+    val segments = RichTextCodec.splitPageIntoEditorSegments(pageText)
+    val (segIdx, seg) = resolveActiveTextSegment(segments, preferredSegmentIndex)
+    val localSel = (segmentSelections[segIdx] ?: TextRange(seg.text.length)).let {
+        TextRange(it.start.coerceIn(0, seg.text.length), it.end.coerceIn(0, seg.text.length))
+    }
+    val nextSegVal = RichTextCodec.insertTableAtSelection(seg.text, localSel, tableMarkdown)
+    val hasTableBefore = segIdx > 0 && segments.getOrNull(segIdx - 1) is EditorPageSegment.TableSegment
+    val hasTableAfter = segIdx < segments.lastIndex && segments.getOrNull(segIdx + 1) is EditorPageSegment.TableSegment
+    return RichTextCodec.replaceSegmentInPage(
+        rawText = pageText,
+        segStart = seg.startOffset,
+        segEnd = seg.endOffset,
+        newSegmentText = nextSegVal.text,
+        hasTableBefore = hasTableBefore,
+        hasTableAfter = hasTableAfter
+    )
+}
+
+/**
+ * Segment-aware rich editor that splits raw Markdown Pipe Tables out of BasicTextField
+ * so tables render purely as sleek interactive visual cards with ZERO raw `|` or `---` symbols.
+ */
+@Composable
+fun SegmentedRichPageEditor(
+    pageText: String,
+    activeSegmentIndex: Int,
+    segmentSelections: Map<Int, TextRange>,
+    segmentCompositions: Map<Int, TextRange?>,
+    pendingInlineStyles: Set<RichFormatAction>,
+    richVisualTransformation: VisualTransformation,
+    fontSizeSp: Float,
+    minHeight: Dp,
+    placeholderText: String,
+    fieldTestTag: String,
+    isDark: Boolean,
+    isArabic: Boolean,
+    accentColor: Color,
+    textColor: Color,
+    bodyColor: Color,
+    metaColor: Color,
+    onSegmentTextChanged: (
+        newPageText: String,
+        segmentIndex: Int,
+        newSegSelection: TextRange,
+        newSegComposition: TextRange?,
+        nextPendingStyles: Set<RichFormatAction>
+    ) -> Unit,
+    onSegmentFocused: (Int) -> Unit,
+    onEditTable: (MarkdownTableData) -> Unit,
+    onDeleteTable: (MarkdownTableData) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val segments = remember(pageText) { RichTextCodec.splitPageIntoEditorSegments(pageText) }
+    val hasTables = segments.any { it is EditorPageSegment.TableSegment }
+
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        segments.forEachIndexed { segIdx, seg ->
+            when (seg) {
+                is EditorPageSegment.TextSegment -> {
+                    val hasTableBefore = segIdx > 0 && segments[segIdx - 1] is EditorPageSegment.TableSegment
+                    val hasTableAfter = segIdx < segments.lastIndex && segments[segIdx + 1] is EditorPageSegment.TableSegment
+                    val localSel = (segmentSelections[segIdx] ?: TextRange(seg.text.length)).let {
+                        TextRange(it.start.coerceIn(0, seg.text.length), it.end.coerceIn(0, seg.text.length))
+                    }
+                    val localComp = segmentCompositions[segIdx]?.let { comp ->
+                        if (comp.start in 0..seg.text.length && comp.end in 0..seg.text.length) comp else null
+                    }
+                    val fieldValue = TextFieldValue(
+                        text = seg.text,
+                        selection = localSel,
+                        composition = localComp
+                    )
+                    val segMinHeight = when {
+                        !hasTables -> minHeight
+                        segIdx == segments.lastIndex -> 96.dp
+                        else -> 32.dp
+                    }
+                    val segPlaceholder = when {
+                        !hasTables -> placeholderText
+                        hasTableBefore -> if (isArabic) "أكمل الكتابة هنا..." else "Continue writing here..."
+                        else -> placeholderText
+                    }
+
+                    BasicTextField(
+                        value = fieldValue,
+                        onValueChange = { updatedVal ->
+                            val activePending = if (segIdx == activeSegmentIndex) pendingInlineStyles else emptySet()
+                            val outcome = RichTextCodec.applyPendingStylesOnEdit(
+                                prevText = seg.text,
+                                nextVal = updatedVal,
+                                pendingStyles = activePending
+                            )
+                            val updatedPage = RichTextCodec.replaceSegmentInPage(
+                                rawText = pageText,
+                                segStart = seg.startOffset,
+                                segEnd = seg.endOffset,
+                                newSegmentText = outcome.fieldValue.text,
+                                hasTableBefore = hasTableBefore,
+                                hasTableAfter = hasTableAfter
+                            )
+                            onSegmentTextChanged(
+                                updatedPage,
+                                segIdx,
+                                outcome.fieldValue.selection,
+                                outcome.fieldValue.composition,
+                                outcome.pendingStyles
+                            )
+                        },
+                        visualTransformation = richVisualTransformation,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .defaultMinSize(minHeight = segMinHeight)
+                            .onFocusChanged { focusState ->
+                                if (focusState.isFocused) onSegmentFocused(segIdx)
+                            }
+                            .testTag(if (segIdx == 0) fieldTestTag else "${fieldTestTag}_seg_$segIdx"),
+                        textStyle = TextStyle(
+                            fontSize = fontSizeSp.sp,
+                            color = bodyColor,
+                            lineHeight = (fontSizeSp * 1.52f).sp
+                        ),
+                        cursorBrush = SolidColor(accentColor),
+                        decorationBox = { innerTextField ->
+                            Box(modifier = Modifier.fillMaxWidth()) {
+                                if (seg.text.isEmpty() && (!hasTables || segIdx == segments.lastIndex || segIdx == 0)) {
+                                    Text(
+                                        text = segPlaceholder,
+                                        style = TextStyle(
+                                            fontSize = fontSizeSp.sp,
+                                            color = metaColor.copy(alpha = 0.56f),
+                                            lineHeight = (fontSizeSp * 1.52f).sp
+                                        )
+                                    )
+                                }
+                                innerTextField()
+                            }
+                        }
+                    )
+                }
+
+                is EditorPageSegment.TableSegment -> {
+                    val table = seg.table
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(if (isDark) Color.White.copy(alpha = 0.04f) else Color.Black.copy(alpha = 0.03f))
+                            .border(1.dp, accentColor.copy(alpha = 0.34f), RoundedCornerShape(16.dp))
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.TableChart,
+                                    contentDescription = null,
+                                    tint = accentColor,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Text(
+                                    text = if (isArabic) {
+                                        "جدول ${seg.index + 1} (${table.rowCount}×${table.colCount})"
+                                    } else {
+                                        "Table ${seg.index + 1} (${table.rowCount}×${table.colCount})"
+                                    },
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = accentColor
+                                )
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .background(accentColor.copy(alpha = 0.16f))
+                                        .clickable { onEditTable(table) }
+                                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = null,
+                                        tint = accentColor,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                    Text(
+                                        text = if (isArabic) "تعديل" else "Edit",
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = accentColor
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFFEF4444).copy(alpha = 0.14f))
+                                        .clickable { onDeleteTable(table) },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.DeleteOutline,
+                                        contentDescription = if (isArabic) "حذف الجدول" else "Delete Table",
+                                        tint = Color(0xFFEF4444),
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        StyledMarkdownTable(
+                            table = table,
+                            isDark = isDark,
+                            accentColor = accentColor,
+                            textColor = textColor,
+                            metaColor = metaColor
+                        )
+                    }
+                }
+            }
         }
     }
 }

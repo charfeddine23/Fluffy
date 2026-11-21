@@ -70,6 +70,34 @@ data class MarkdownTableData(
     val colCount: Int get() = rows.firstOrNull()?.size ?: 0
 }
 
+sealed interface EditorPageSegment {
+    data class TextSegment(val startOffset: Int, val endOffset: Int, val text: String) : EditorPageSegment
+    data class TableSegment(val index: Int, val table: MarkdownTableData) : EditorPageSegment
+}
+
+data class EditorFormatOutcome(
+    val fieldValue: TextFieldValue,
+    val pendingStyles: Set<RichFormatAction>
+)
+
+private val inlineStyleOrder = listOf(
+    RichFormatAction.HIGHLIGHT,
+    RichFormatAction.STRIKETHROUGH,
+    RichFormatAction.UNDERLINE,
+    RichFormatAction.BOLD,
+    RichFormatAction.ITALIC,
+    RichFormatAction.CODE
+)
+
+private val inlineActionSet = setOf(
+    RichFormatAction.BOLD,
+    RichFormatAction.ITALIC,
+    RichFormatAction.UNDERLINE,
+    RichFormatAction.STRIKETHROUGH,
+    RichFormatAction.HIGHLIGHT,
+    RichFormatAction.CODE
+)
+
 sealed interface RichBlock {
     data class Heading(val level: Int, val text: AnnotatedString) : RichBlock
     data class Paragraph(val text: AnnotatedString) : RichBlock
@@ -207,6 +235,265 @@ object RichTextCodec {
         }
     }
 
+    fun splitPageIntoEditorSegments(rawText: String): List<EditorPageSegment> {
+        val tables = parseAllTables(rawText)
+        if (tables.isEmpty()) {
+            return listOf(EditorPageSegment.TextSegment(0, rawText.length, rawText))
+        }
+        val segments = mutableListOf<EditorPageSegment>()
+        var cursor = 0
+        tables.forEachIndexed { idx, table ->
+            val segStart = cursor.coerceIn(0, rawText.length)
+            val segEnd = table.startOffset.coerceIn(segStart, rawText.length)
+            val rawSlice = rawText.substring(segStart, segEnd)
+            val trimmedDisplay = if (rawSlice.endsWith('\n')) rawSlice.dropLast(1) else rawSlice
+            if (trimmedDisplay.isNotEmpty() || idx == 0) {
+                segments.add(EditorPageSegment.TextSegment(segStart, segEnd, trimmedDisplay))
+            }
+            segments.add(EditorPageSegment.TableSegment(idx, table))
+            cursor = table.endOffset
+            if (cursor < rawText.length && rawText[cursor] == '\n') {
+                cursor++
+            }
+        }
+        val tailStart = cursor.coerceIn(0, rawText.length)
+        val tailText = rawText.substring(tailStart)
+        segments.add(EditorPageSegment.TextSegment(tailStart, rawText.length, tailText))
+        return segments
+    }
+
+    fun replaceSegmentInPage(
+        rawText: String,
+        segStart: Int,
+        segEnd: Int,
+        newSegmentText: String,
+        hasTableBefore: Boolean,
+        hasTableAfter: Boolean
+    ): String {
+        val safeStart = segStart.coerceIn(0, rawText.length)
+        val safeEnd = segEnd.coerceIn(safeStart, rawText.length)
+        val prefix = rawText.substring(0, safeStart)
+        val suffix = rawText.substring(safeEnd)
+        val leadingSep = if (hasTableBefore && newSegmentText.isNotEmpty() && !prefix.endsWith("\n")) "\n" else ""
+        val trailingSep = if (hasTableAfter && newSegmentText.isNotEmpty() && !suffix.startsWith("\n")) "\n" else ""
+        return prefix + leadingSep + newSegmentText + trailingSep + suffix
+    }
+
+    fun toggleFormatForEditor(
+        value: TextFieldValue,
+        action: RichFormatAction,
+        pendingStyles: Set<RichFormatAction>
+    ): EditorFormatOutcome {
+        if (action !in inlineActionSet) {
+            val next = applyRichAction(value, action)
+            val nextPending = if (action == RichFormatAction.CLEAR_FORMATTING) emptySet() else pendingStyles
+            return EditorFormatOutcome(next, nextPending)
+        }
+
+        val text = value.text
+        val start = value.selection.min.coerceIn(0, text.length)
+        val end = value.selection.max.coerceIn(0, text.length)
+
+        // 1. Selected range -> apply directly on selection
+        if (start != end) {
+            return EditorFormatOutcome(applyRichAction(value, action), pendingStyles)
+        }
+
+        // 2. Collapsed cursor inside an existing span of this exact style -> unwrap it cleanly
+        val kind = kindForAction(action)
+        if (kind != null && isCursorInsideInlineKind(text, start, kind)) {
+            return EditorFormatOutcome(applyRichAction(value, action), pendingStyles - action)
+        }
+
+        // 3. Collapsed cursor inside a word -> toggle style on that word
+        if (start > 0 && start < text.length && isWordChar(text[start - 1]) && isWordChar(text[start])) {
+            return EditorFormatOutcome(applyRichAction(value, action), pendingStyles)
+        }
+
+        // 4. Collapsed cursor in empty space / end of word -> toggle pending style (zero dangling tags!)
+        val updatedPending = if (action in pendingStyles) pendingStyles - action else pendingStyles + action
+        return EditorFormatOutcome(value, updatedPending)
+    }
+
+    fun applyPendingStylesOnEdit(
+        prevText: String,
+        nextVal: TextFieldValue,
+        pendingStyles: Set<RichFormatAction>
+    ): EditorFormatOutcome {
+        val nextText = nextVal.text
+        // Deletion / Backspace: prune empty tag shells like ****, <u></u>, ~~ ~~
+        if (nextText.length <= prevText.length) {
+            val cleaned = cleanupOrphanInlineMarkers(nextText, nextVal.selection.max)
+            val adjustedPending = if (cleaned.text.isEmpty() || nextText.length < prevText.length && nextVal.selection.max == 0) {
+                pendingStyles
+            } else {
+                pendingStyles
+            }
+            return EditorFormatOutcome(cleaned, adjustedPending)
+        }
+
+        if (pendingStyles.isEmpty()) {
+            return EditorFormatOutcome(nextVal, emptySet())
+        }
+
+        // Find common prefix and suffix between prevText and nextText (IME-safe!)
+        var prefix = 0
+        val minLen = kotlin.math.min(prevText.length, nextText.length)
+        while (prefix < minLen && prevText[prefix] == nextText[prefix]) {
+            prefix++
+        }
+        var suffix = 0
+        while (suffix < (minLen - prefix) &&
+            prevText[prevText.length - 1 - suffix] == nextText[nextText.length - 1 - suffix]
+        ) {
+            suffix++
+        }
+
+        val insertEnd = (nextText.length - suffix).coerceIn(prefix, nextText.length)
+        if (insertEnd <= prefix) {
+            return EditorFormatOutcome(nextVal, pendingStyles)
+        }
+        val inserted = nextText.substring(prefix, insertEnd)
+
+        // Pressing Enter finishes inline typing styles
+        if (inserted.contains('\n')) {
+            return EditorFormatOutcome(nextVal, emptySet())
+        }
+
+        // Pure whitespace stays plain until non-space text is typed
+        if (inserted.isBlank()) {
+            return EditorFormatOutcome(nextVal, pendingStyles)
+        }
+
+        val wrapped = wrapTextWithStyles(inserted, pendingStyles)
+        val leftText = nextText.substring(0, prefix)
+        val rightText = nextText.substring(insertEnd)
+        val (mergedText, mergedCursor) = mergeSeamInlineMarkers(
+            leftText = leftText,
+            wrapped = wrapped,
+            rightText = rightText,
+            pendingStyles = pendingStyles
+        )
+        return EditorFormatOutcome(
+            fieldValue = TextFieldValue(
+                text = mergedText,
+                selection = TextRange(mergedCursor.coerceIn(0, mergedText.length)),
+                composition = null
+            ),
+            pendingStyles = pendingStyles
+        )
+    }
+
+    private fun wrapTextWithStyles(raw: String, styles: Set<RichFormatAction>): String {
+        var result = raw
+        for (style in inlineStyleOrder) {
+            if (style !in styles) continue
+            result = when (style) {
+                RichFormatAction.CODE -> "`$result`"
+                RichFormatAction.ITALIC -> "*$result*"
+                RichFormatAction.BOLD -> "**$result**"
+                RichFormatAction.UNDERLINE -> "<u>$result</u>"
+                RichFormatAction.STRIKETHROUGH -> "~~$result~~"
+                RichFormatAction.HIGHLIGHT -> "==$result=="
+                else -> result
+            }
+        }
+        return result
+    }
+
+    private fun mergeSeamInlineMarkers(
+        leftText: String,
+        wrapped: String,
+        rightText: String,
+        pendingStyles: Set<RichFormatAction>
+    ): Pair<String, Int> {
+        var left = leftText
+        var mid = wrapped
+        var right = rightText
+
+        // 1. Merge matching adjacent outer wrapper tokens (outer-to-inner) at the left seam
+        val outerToInnerPairs = listOf(
+            RichFormatAction.HIGHLIGHT to ("==" to "=="),
+            RichFormatAction.STRIKETHROUGH to ("~~" to "~~"),
+            RichFormatAction.UNDERLINE to ("</u>" to "<u>"),
+            RichFormatAction.CODE to ("`" to "`")
+        )
+        for ((style, pair) in outerToInnerPairs) {
+            if (style in pendingStyles && left.endsWith(pair.first) && mid.startsWith(pair.second)) {
+                left = left.dropLast(pair.first.length)
+                mid = mid.drop(pair.second.length)
+            }
+        }
+
+        // 2. Exact asterisk seam merging for BOLD (**), ITALIC (*), or BOTH (***)
+        val leftStars = left.takeLastWhile { it == '*' }.length
+        val hasBold = RichFormatAction.BOLD in pendingStyles
+        val hasItalic = RichFormatAction.ITALIC in pendingStyles
+        var starsToStrip = 0
+        if (hasBold && (leftStars == 2 || (leftStars == 3 && hasItalic))) {
+            starsToStrip += 2
+        }
+        if (hasItalic && (leftStars == 1 || (leftStars == 3 && hasBold))) {
+            starsToStrip += 1
+        }
+        if (starsToStrip > 0 && mid.startsWith("*".repeat(starsToStrip))) {
+            left = left.dropLast(starsToStrip)
+            mid = mid.drop(starsToStrip)
+        }
+
+        // 3. Also merge closing tags cleanly if typing right before a matching opening tag at right seam
+        for ((style, pair) in outerToInnerPairs) {
+            val closeLeft = if (style == RichFormatAction.UNDERLINE) "</u>" else pair.first
+            val openRight = if (style == RichFormatAction.UNDERLINE) "<u>" else pair.second
+            if (style in pendingStyles && mid.endsWith(closeLeft) && right.startsWith(openRight)) {
+                mid = mid.dropLast(closeLeft.length)
+                right = right.drop(openRight.length)
+            }
+        }
+
+        val combined = left + mid + right
+        val cursor = (left.length + mid.length).coerceIn(0, combined.length)
+        return combined to cursor
+    }
+
+    private fun cleanupOrphanInlineMarkers(text: String, cursor: Int): TextFieldValue {
+        var out = text
+        var cur = cursor
+        val emptyShells = listOf("****", "<u></u>", "~~~~", "====", "``")
+        var changed = true
+        while (changed) {
+            changed = false
+            for (shell in emptyShells) {
+                val idx = out.indexOf(shell)
+                if (idx >= 0) {
+                    out = out.removeRange(idx, idx + shell.length)
+                    if (cur > idx) cur = (cur - shell.length).coerceAtLeast(idx)
+                    changed = true
+                }
+            }
+        }
+        return TextFieldValue(out, TextRange(cur.coerceIn(0, out.length)))
+    }
+
+    private fun kindForAction(action: RichFormatAction): InlineKind? = when (action) {
+        RichFormatAction.BOLD -> InlineKind.BOLD
+        RichFormatAction.ITALIC -> InlineKind.ITALIC
+        RichFormatAction.UNDERLINE -> InlineKind.UNDERLINE
+        RichFormatAction.STRIKETHROUGH -> InlineKind.STRIKETHROUGH
+        RichFormatAction.HIGHLIGHT -> InlineKind.HIGHLIGHT
+        RichFormatAction.CODE -> InlineKind.CODE
+        else -> null
+    }
+
+    private fun isCursorInsideInlineKind(text: String, cursor: Int, kind: InlineKind): Boolean {
+        val lineStart = text.lastIndexOf('\n', (cursor - 1).coerceAtLeast(0)).let { if (it < 0) 0 else it + 1 }
+        val lineEnd = text.indexOf('\n', cursor).let { if (it < 0) text.length else it }
+        if (cursor < lineStart || cursor > lineEnd) return false
+        val lineCursor = cursor - lineStart
+        val spans = parseInlineSpans(text.substring(lineStart, lineEnd))
+        return spans.any { it.kind == kind && lineCursor in it.innerStart..it.innerEnd }
+    }
+
     private fun isWordChar(c: Char): Boolean = c.isLetterOrDigit() || c == '_'
 
     private fun toggleInlineWrap(
@@ -286,10 +573,27 @@ object RichTextCodec {
             return TextFieldValue(updated, TextRange(start, start + unwrapped.length))
         }
 
-        val updated = text.substring(0, start) + openTag + selected + closeTag + text.substring(end)
+        // If selection sits inside an enclosing span of the same tag, unwrap that enclosing span cleanly
+        val enclosing = findEnclosingTagSpan(text, start, openTag, closeTag, isBold)
+        if (enclosing != null && enclosing.first <= start && end <= enclosing.second) {
+            val (spanStart, spanEnd) = enclosing
+            val inner = text.substring(spanStart + openTag.length, spanEnd - closeTag.length)
+            val updated = text.substring(0, spanStart) + inner + text.substring(spanEnd)
+            val newStart = (start - openTag.length).coerceIn(spanStart, updated.length)
+            val newEnd = (end - openTag.length).coerceIn(newStart, updated.length)
+            return TextFieldValue(updated, TextRange(newStart, newEnd))
+        }
+
+        // Strip any redundant inner markers of the exact same tag before wrapping once
+        val cleanSelected = if (openTag == closeTag) {
+            selected.replace(openTag, "")
+        } else {
+            selected.replace(openTag, "").replace(closeTag, "")
+        }
+        val updated = text.substring(0, start) + openTag + cleanSelected + closeTag + text.substring(end)
         return TextFieldValue(
             text = updated,
-            selection = TextRange(start + openTag.length, end + openTag.length)
+            selection = TextRange(start + openTag.length, start + openTag.length + cleanSelected.length)
         )
     }
 
@@ -359,6 +663,15 @@ object RichTextCodec {
             val unwrapped = selected.substring(1, selected.length - 1)
             val updated = text.substring(0, start) + unwrapped + text.substring(end)
             return TextFieldValue(updated, TextRange(start, start + unwrapped.length))
+        }
+        val enclosing = findEnclosingSingleAsteriskSpan(text, start)
+        if (enclosing != null && enclosing.first <= start && end <= enclosing.second) {
+            val (s, e) = enclosing
+            val inner = text.substring(s + 1, e - 1)
+            val updated = text.substring(0, s) + inner + text.substring(e)
+            val newStart = (start - 1).coerceIn(s, updated.length)
+            val newEnd = (end - 1).coerceIn(newStart, updated.length)
+            return TextFieldValue(updated, TextRange(newStart, newEnd))
         }
         val updated = text.substring(0, start) + "*" + selected + "*" + text.substring(end)
         return TextFieldValue(updated, TextRange(start + 1, end + 1))
@@ -841,7 +1154,7 @@ object RichTextCodec {
         val rawEnd: Int
     )
 
-    private fun parseInlineSpans(line: String): List<InlineSpan> {
+    private fun parseInlineSpans(line: String, baseOffset: Int = 0): List<InlineSpan> {
         val result = mutableListOf<InlineSpan>()
         var i = 0
         while (i < line.length) {
@@ -849,7 +1162,8 @@ object RichTextCodec {
                 line.startsWith("**", i) -> {
                     val close = findClosingBold(line, i + 2)
                     if (close >= 0) {
-                        result.add(InlineSpan(InlineKind.BOLD, "**", "**", i, i + 2, close, close + 2))
+                        result.add(InlineSpan(InlineKind.BOLD, "**", "**", baseOffset + i, baseOffset + i + 2, baseOffset + close, baseOffset + close + 2))
+                        result.addAll(parseInlineSpans(line.substring(i + 2, close), baseOffset + i + 2))
                         i = close + 2
                         continue
                     }
@@ -857,7 +1171,8 @@ object RichTextCodec {
                 line.startsWith("<u>", i) -> {
                     val close = line.indexOf("</u>", i + 3)
                     if (close >= 0) {
-                        result.add(InlineSpan(InlineKind.UNDERLINE, "<u>", "</u>", i, i + 3, close, close + 4))
+                        result.add(InlineSpan(InlineKind.UNDERLINE, "<u>", "</u>", baseOffset + i, baseOffset + i + 3, baseOffset + close, baseOffset + close + 4))
+                        result.addAll(parseInlineSpans(line.substring(i + 3, close), baseOffset + i + 3))
                         i = close + 4
                         continue
                     }
@@ -865,7 +1180,8 @@ object RichTextCodec {
                 line.startsWith("~~", i) -> {
                     val close = line.indexOf("~~", i + 2)
                     if (close >= 0) {
-                        result.add(InlineSpan(InlineKind.STRIKETHROUGH, "~~", "~~", i, i + 2, close, close + 2))
+                        result.add(InlineSpan(InlineKind.STRIKETHROUGH, "~~", "~~", baseOffset + i, baseOffset + i + 2, baseOffset + close, baseOffset + close + 2))
+                        result.addAll(parseInlineSpans(line.substring(i + 2, close), baseOffset + i + 2))
                         i = close + 2
                         continue
                     }
@@ -873,7 +1189,8 @@ object RichTextCodec {
                 line.startsWith("==", i) -> {
                     val close = line.indexOf("==", i + 2)
                     if (close >= 0) {
-                        result.add(InlineSpan(InlineKind.HIGHLIGHT, "==", "==", i, i + 2, close, close + 2))
+                        result.add(InlineSpan(InlineKind.HIGHLIGHT, "==", "==", baseOffset + i, baseOffset + i + 2, baseOffset + close, baseOffset + close + 2))
+                        result.addAll(parseInlineSpans(line.substring(i + 2, close), baseOffset + i + 2))
                         i = close + 2
                         continue
                     }
@@ -881,7 +1198,7 @@ object RichTextCodec {
                 line[i] == '`' -> {
                     val close = line.indexOf('`', i + 1)
                     if (close >= 0) {
-                        result.add(InlineSpan(InlineKind.CODE, "`", "`", i, i + 1, close, close + 1))
+                        result.add(InlineSpan(InlineKind.CODE, "`", "`", baseOffset + i, baseOffset + i + 1, baseOffset + close, baseOffset + close + 1))
                         i = close + 1
                         continue
                     }
@@ -889,7 +1206,8 @@ object RichTextCodec {
                 line[i] == '*' && !line.startsWith("**", i) -> {
                     val close = findClosingSingleAsterisk(line, i + 1)
                     if (close > i) {
-                        result.add(InlineSpan(InlineKind.ITALIC, "*", "*", i, i + 1, close, close + 1))
+                        result.add(InlineSpan(InlineKind.ITALIC, "*", "*", baseOffset + i, baseOffset + i + 1, baseOffset + close, baseOffset + close + 1))
+                        result.addAll(parseInlineSpans(line.substring(i + 1, close), baseOffset + i + 1))
                         i = close + 1
                         continue
                     }
@@ -1178,13 +1496,15 @@ object RichTextCodec {
 
             if (line.trim().startsWith("```")) {
                 inCodeFence = !inCodeFence
-                emitRawSlice(
+                emitMappedReplacement(
                     lineStart,
                     lineEnd,
+                    if (inCodeFence) "⟨ Code ⟩" else "⟨/⟩",
                     SpanStyle(
-                        color = metaColor.copy(alpha = 0.55f),
+                        color = if (inCodeFence) accentColor.copy(alpha = 0.78f) else metaColor.copy(alpha = 0.45f),
                         fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold
                     )
                 )
             } else if (inCodeFence) {
@@ -1282,11 +1602,12 @@ object RichTextCodec {
                             SpanStyle(fontStyle = FontStyle.Italic, color = metaColor)
                         )
                     }
-                    line.trim() == "---" -> {
-                        emitRawSlice(
+                    line.trim() == "---" || line.trim() == "***" -> {
+                        emitMappedReplacement(
                             lineStart,
                             lineEnd,
-                            SpanStyle(color = metaColor.copy(alpha = 0.45f))
+                            "────────────────────",
+                            SpanStyle(color = metaColor.copy(alpha = 0.42f))
                         )
                     }
                     else -> {

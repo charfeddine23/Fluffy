@@ -67,9 +67,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -78,6 +76,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.audio.rememberAudioPlaybackController
 import com.example.data.model.ChecklistItem
+import com.example.data.model.EditorPageSegment
 import com.example.data.model.GlassTint
 import com.example.data.model.InsertFeatureType
 import com.example.data.model.MarkdownTableData
@@ -92,11 +91,15 @@ import com.example.data.storage.AudioCloudPolicy
 import com.example.data.storage.AudioStorageManager
 import com.example.ui.components.AudioPlayerCard
 import com.example.ui.components.DocumentStyleBottomSheet
-import com.example.ui.components.InlineTablesPreviewSection
 import com.example.ui.components.InsertFeaturesBottomSheet
+import com.example.ui.components.SegmentedRichPageEditor
 import com.example.ui.components.TableEditorDialog
 import com.example.ui.components.VoiceRecorderDialog
 import com.example.ui.components.WritingFormattingBar
+import com.example.ui.components.applyActionToSegmentedPage
+import com.example.ui.components.insertSnippetInSegmentedPage
+import com.example.ui.components.insertTableInSegmentedPage
+import com.example.ui.components.resolveActiveTextSegment
 import com.example.ui.glass.FrostedBackdrop
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.theme.LocalAppThemePreset
@@ -184,10 +187,10 @@ fun VaultNoteEditorSheet(
     var activePageIndex by remember(existingItem?.id, initialPageIndex) {
         mutableIntStateOf(initialPageIndex.coerceIn(0, (initialDraftPages.size - 1).coerceAtLeast(0)))
     }
-    val pageSelections = remember(existingItem?.id) { mutableStateMapOf<Int, TextRange>() }
-    val pageCompositions = remember(existingItem?.id) { mutableStateMapOf<Int, TextRange?>() }
-    val undoStacks = remember(existingItem?.id) { mutableStateMapOf<Int, MutableList<TextFieldValue>>() }
-    val redoStacks = remember(existingItem?.id) { mutableStateMapOf<Int, MutableList<TextFieldValue>>() }
+    val activeSegmentByPage = remember(existingItem?.id) { mutableStateMapOf<Int, Int>() }
+    val segmentSelections = remember(existingItem?.id) { mutableStateMapOf<String, TextRange>() }
+    val segmentCompositions = remember(existingItem?.id) { mutableStateMapOf<String, TextRange?>() }
+    val pendingStylesByPage = remember(existingItem?.id) { mutableStateMapOf<Int, Set<RichFormatAction>>() }
     var writingFontSizeSp by remember { mutableFloatStateOf(15.5f) }
     var showInsertSheet by remember { mutableStateOf(false) }
     var showTableDialog by remember { mutableStateOf(false) }
@@ -264,58 +267,122 @@ fun VaultNoteEditorSheet(
     val maxAllowedPages = NotePagesCodec.maxPagesForTier(isPremium)
     val safePageIdx = activePageIndex.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
 
-    fun pushUndoSnapshot(pageIdx: Int, snapshot: TextFieldValue) {
-        val stack = undoStacks.getOrPut(pageIdx) { mutableListOf() }
-        if (stack.lastOrNull()?.text == snapshot.text && stack.lastOrNull()?.selection == snapshot.selection) return
-        stack.add(snapshot)
-        if (stack.size > 40) stack.removeAt(0)
-        redoStacks[pageIdx]?.clear()
+    fun pageSegmentSelections(pageIdx: Int): Map<Int, TextRange> {
+        val prefix = "$pageIdx:"
+        val out = mutableMapOf<Int, TextRange>()
+        segmentSelections.forEach { (k, v) ->
+            if (k.startsWith(prefix)) {
+                k.removePrefix(prefix).toIntOrNull()?.let { out[it] = v }
+            }
+        }
+        return out
     }
 
-    fun applyRichFieldValue(pageIdx: Int, nextVal: TextFieldValue, recordUndo: Boolean = true) {
-        if (pageIdx !in pages.indices) return
-        val prevText = pages[pageIdx]
-        if (recordUndo && prevText != nextVal.text) {
-            val prevSel = (pageSelections[pageIdx] ?: TextRange(prevText.length)).let {
-                TextRange(it.start.coerceIn(0, prevText.length), it.end.coerceIn(0, prevText.length))
+    fun pageSegmentCompositions(pageIdx: Int): Map<Int, TextRange?> {
+        val prefix = "$pageIdx:"
+        val out = mutableMapOf<Int, TextRange?>()
+        segmentCompositions.forEach { (k, v) ->
+            if (k.startsWith(prefix)) {
+                k.removePrefix(prefix).toIntOrNull()?.let { out[it] = v }
             }
-            pushUndoSnapshot(pageIdx, TextFieldValue(prevText, prevSel, pageCompositions[pageIdx]))
         }
-        pages[pageIdx] = nextVal.text
-        pageSelections[pageIdx] = TextRange(
-            nextVal.selection.start.coerceIn(0, nextVal.text.length),
-            nextVal.selection.end.coerceIn(0, nextVal.text.length)
+        return out
+    }
+
+    fun clearPageSegments(pageIdx: Int) {
+        val prefix = "$pageIdx:"
+        segmentSelections.keys.filter { it.startsWith(prefix) }.forEach { segmentSelections.remove(it) }
+        segmentCompositions.keys.filter { it.startsWith(prefix) }.forEach { segmentCompositions.remove(it) }
+    }
+
+    fun applyFormatActionToPage(pageIdx: Int, action: RichFormatAction) {
+        if (pageIdx !in pages.indices) return
+        val result = applyActionToSegmentedPage(
+            pageText = pages[pageIdx],
+            preferredSegmentIndex = activeSegmentByPage[pageIdx] ?: 0,
+            segmentSelections = pageSegmentSelections(pageIdx),
+            segmentCompositions = pageSegmentCompositions(pageIdx),
+            pendingStyles = pendingStylesByPage[pageIdx] ?: emptySet(),
+            action = action
         )
-        pageCompositions[pageIdx] = null
+        pages[pageIdx] = result.updatedPageText
+        val latestSegments = RichTextCodec.splitPageIntoEditorSegments(pages[pageIdx])
+        val (_, newSeg) = resolveActiveTextSegment(latestSegments, result.targetSegmentIndex)
+        activeSegmentByPage[pageIdx] = result.targetSegmentIndex
+        segmentSelections["$pageIdx:${result.targetSegmentIndex}"] = TextRange(
+            result.updatedSelection.start.coerceIn(0, newSeg.text.length),
+            result.updatedSelection.end.coerceIn(0, newSeg.text.length)
+        )
+        segmentCompositions["$pageIdx:${result.targetSegmentIndex}"] = null
+        pendingStylesByPage[pageIdx] = result.updatedPendingStyles
+    }
+
+    fun applyInsertFeatureToPage(pageIdx: Int, feature: InsertFeatureType) {
+        if (pageIdx !in pages.indices) return
+        val snippet = RichTextCodec.buildInsertSnippet(feature, isArabic)
+        val needNewLine = feature == InsertFeatureType.DAILY_HEADER ||
+            feature == InsertFeatureType.PROGRESS_BAR ||
+            feature == InsertFeatureType.MEETING_TEMPLATE ||
+            feature == InsertFeatureType.PROS_CONS_TABLE
+        val result = insertSnippetInSegmentedPage(
+            pageText = pages[pageIdx],
+            preferredSegmentIndex = activeSegmentByPage[pageIdx] ?: 0,
+            segmentSelections = pageSegmentSelections(pageIdx),
+            snippet = snippet,
+            ensureNewLinePrefix = needNewLine
+        )
+        pages[pageIdx] = result.updatedPageText
+        val latestSegments = RichTextCodec.splitPageIntoEditorSegments(pages[pageIdx])
+        if (feature == InsertFeatureType.PROS_CONS_TABLE) {
+            clearPageSegments(pageIdx)
+            val tailIdx = latestSegments.indexOfLast { it is EditorPageSegment.TextSegment }.coerceAtLeast(0)
+            activeSegmentByPage[pageIdx] = tailIdx
+            segmentSelections["$pageIdx:$tailIdx"] = TextRange(0)
+        } else {
+            val (_, newSeg) = resolveActiveTextSegment(latestSegments, result.targetSegmentIndex)
+            activeSegmentByPage[pageIdx] = result.targetSegmentIndex
+            segmentSelections["$pageIdx:${result.targetSegmentIndex}"] = TextRange(
+                result.updatedSelection.start.coerceIn(0, newSeg.text.length),
+                result.updatedSelection.end.coerceIn(0, newSeg.text.length)
+            )
+            segmentCompositions["$pageIdx:${result.targetSegmentIndex}"] = null
+        }
+        pendingStylesByPage.remove(pageIdx)
     }
 
     fun removePageAt(index: Int) {
         if (pages.size <= 1 || index !in pages.indices) return
-        val oldCount = pages.size
-        val nextSelMap = (0 until oldCount).filter { it != index }.mapIndexed { newIdx, oldIdx ->
-            newIdx to pageSelections[oldIdx]
-        }
-        val nextCompMap = (0 until oldCount).filter { it != index }.mapIndexed { newIdx, oldIdx ->
-            newIdx to pageCompositions[oldIdx]
-        }
-        val nextUndoMap = (0 until oldCount).filter { it != index }.mapIndexed { newIdx, oldIdx ->
-            newIdx to undoStacks[oldIdx]
-        }
-        val nextRedoMap = (0 until oldCount).filter { it != index }.mapIndexed { newIdx, oldIdx ->
-            newIdx to redoStacks[oldIdx]
-        }
+        val activeSnap = activeSegmentByPage.toMap()
+        val pendingSnap = pendingStylesByPage.toMap()
+        val selSnap = segmentSelections.toMap()
+        val compSnap = segmentCompositions.toMap()
         val (_, nextIdx) = NotePagesCodec.removePageSafely(pages, index, safePageIdx)
         pages.removeAt(index)
         if (index in pageTitles.indices) pageTitles.removeAt(index)
         while (pageTitles.size < pages.size) pageTitles.add("")
-        pageSelections.clear()
-        nextSelMap.forEach { (k, v) -> if (v != null) pageSelections[k] = v }
-        pageCompositions.clear()
-        nextCompMap.forEach { (k, v) -> if (v != null) pageCompositions[k] = v }
-        undoStacks.clear()
-        nextUndoMap.forEach { (k, v) -> if (v != null) undoStacks[k] = v }
-        redoStacks.clear()
-        nextRedoMap.forEach { (k, v) -> if (v != null) redoStacks[k] = v }
+        activeSegmentByPage.clear()
+        pendingStylesByPage.clear()
+        segmentSelections.clear()
+        segmentCompositions.clear()
+        activeSnap.forEach { (k, v) ->
+            if (k < index) activeSegmentByPage[k] = v else if (k > index) activeSegmentByPage[k - 1] = v
+        }
+        pendingSnap.forEach { (k, v) ->
+            if (k < index) pendingStylesByPage[k] = v else if (k > index) pendingStylesByPage[k - 1] = v
+        }
+        fun remapKey(key: String): String? {
+            val parts = key.split(':')
+            if (parts.size != 2) return null
+            val p = parts[0].toIntOrNull() ?: return null
+            val s = parts[1].toIntOrNull() ?: return null
+            return when {
+                p < index -> key
+                p > index -> "${p - 1}:$s"
+                else -> null
+            }
+        }
+        selSnap.forEach { (k, v) -> remapKey(k)?.let { segmentSelections[it] = v } }
+        compSnap.forEach { (k, v) -> remapKey(k)?.let { segmentCompositions[it] = v } }
         activePageIndex = nextIdx
     }
 
@@ -723,19 +790,17 @@ fun VaultNoteEditorSheet(
                                 .testTag("vault_editor_page_title_input_$safePageIdx")
                         )
 
-                        // Rich Notion-Style Page Body Editor + Live Styled Tables Preview
+                        // Rich Notion-Style Page Body Editor with Clean Interactive Tables
                         val activePageText = pages.getOrElse(safePageIdx) { "" }
-                        val activePageSel = (pageSelections[safePageIdx] ?: TextRange(activePageText.length)).let {
-                            TextRange(it.start.coerceIn(0, activePageText.length), it.end.coerceIn(0, activePageText.length))
+                        val activePageSegments = remember(activePageText) {
+                            RichTextCodec.splitPageIntoEditorSegments(activePageText)
                         }
-                        val activePageComp = pageCompositions[safePageIdx]?.let { comp ->
-                            if (comp.start in 0..activePageText.length && comp.end in 0..activePageText.length) comp else null
+                        val preferredSegIdx = activeSegmentByPage[safePageIdx] ?: 0
+                        val (resolvedSegIdx, resolvedSeg) = resolveActiveTextSegment(activePageSegments, preferredSegIdx)
+                        val activeSegSel = (segmentSelections["$safePageIdx:$resolvedSegIdx"] ?: TextRange(resolvedSeg.text.length)).let {
+                            TextRange(it.start.coerceIn(0, resolvedSeg.text.length), it.end.coerceIn(0, resolvedSeg.text.length))
                         }
-                        val activeFieldValue = TextFieldValue(
-                            text = activePageText,
-                            selection = activePageSel,
-                            composition = activePageComp
-                        )
+                        val pendingVaultStyles = pendingStylesByPage[safePageIdx] ?: emptySet()
                         val richVisualTransformation = remember(accentColor, metaColor, effectiveDark) {
                             RichTextCodec.createRichVisualTransformation(
                                 accentColor = accentColor,
@@ -743,11 +808,8 @@ fun VaultNoteEditorSheet(
                                 isDark = effectiveDark
                             )
                         }
-                        val activePageTables = remember(activePageText) {
-                            RichTextCodec.parseAllTables(activePageText)
-                        }
-                        val activeVaultStyles = remember(activePageText, activePageSel) {
-                            RichTextCodec.inspectActiveStyles(activePageText, activePageSel)
+                        val activeVaultStyles = remember(resolvedSeg.text, activeSegSel, pendingVaultStyles) {
+                            RichTextCodec.inspectActiveStyles(resolvedSeg.text, activeSegSel) + pendingVaultStyles
                         }
 
                         WritingFormattingBar(
@@ -758,10 +820,7 @@ fun VaultNoteEditorSheet(
                             textColor = textColor,
                             metaColor = metaColor,
                             pillFill = surfaceColors.pillFill,
-                            onFormatAction = { action ->
-                                val next = RichTextCodec.applyRichAction(activeFieldValue, action)
-                                applyRichFieldValue(safePageIdx, next, recordUndo = true)
-                            },
+                            onFormatAction = { action -> applyFormatActionToPage(safePageIdx, action) },
                             onOpenAddMenu = { showInsertSheet = true },
                             modifier = Modifier.padding(horizontal = 0.dp)
                         )
@@ -781,64 +840,64 @@ fun VaultNoteEditorSheet(
                                 )
                                 .padding(14.dp)
                         ) {
-                            BasicTextField(
-                                value = activeFieldValue,
-                                onValueChange = { updatedVal ->
-                                    if (safePageIdx in pages.indices) {
-                                        if (updatedVal.text != activePageText) {
-                                            pushUndoSnapshot(safePageIdx, activeFieldValue)
-                                        }
-                                        pages[safePageIdx] = updatedVal.text
-                                        pageSelections[safePageIdx] = TextRange(
-                                            updatedVal.selection.start.coerceIn(0, updatedVal.text.length),
-                                            updatedVal.selection.end.coerceIn(0, updatedVal.text.length)
-                                        )
-                                        pageCompositions[safePageIdx] = updatedVal.composition?.let { comp ->
-                                            if (comp.start in 0..updatedVal.text.length && comp.end in 0..updatedVal.text.length) comp else null
-                                        }
-                                    }
-                                },
-                                visualTransformation = richVisualTransformation,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .defaultMinSize(minHeight = 160.dp)
-                                    .testTag("vault_editor_content_input"),
-                                textStyle = TextStyle(
-                                    fontSize = writingFontSizeSp.sp,
-                                    color = textColor,
-                                    lineHeight = (writingFontSizeSp * 1.5f).sp
+                            SegmentedRichPageEditor(
+                                pageText = activePageText,
+                                activeSegmentIndex = preferredSegIdx,
+                                segmentSelections = pageSegmentSelections(safePageIdx),
+                                segmentCompositions = pageSegmentCompositions(safePageIdx),
+                                pendingInlineStyles = pendingVaultStyles,
+                                richVisualTransformation = richVisualTransformation,
+                                fontSizeSp = writingFontSizeSp,
+                                minHeight = 160.dp,
+                                placeholderText = tr(
+                                    "اكتب أو عدّل محتوى المدونة هنا...",
+                                    "Écrivez ou modifiez ici...",
+                                    "Write or edit here...",
+                                    "Aru da..."
                                 ),
-                                cursorBrush = SolidColor(accentColor),
-                                decorationBox = { innerTextField ->
-                                    Box(modifier = Modifier.fillMaxWidth()) {
-                                        if (activePageText.isEmpty()) {
-                                            Text(
-                                                text = tr(
-                                                    "اكتب أو عدّل محتوى المدونة هنا...",
-                                                    "Écrivez ou modifiez ici...",
-                                                    "Write or edit here...",
-                                                    "Aru da..."
-                                                ),
-                                                color = metaColor.copy(alpha = 0.65f),
-                                                fontSize = writingFontSizeSp.sp,
-                                                lineHeight = (writingFontSizeSp * 1.5f).sp
-                                            )
-                                        }
-                                        innerTextField()
-                                    }
-                                }
-                            )
-
-                            InlineTablesPreviewSection(
-                                tables = activePageTables,
+                                fieldTestTag = "vault_editor_content_input",
                                 isDark = effectiveDark,
                                 isArabic = isArabic,
                                 accentColor = accentColor,
                                 textColor = textColor,
+                                bodyColor = textColor,
                                 metaColor = metaColor,
+                                onSegmentTextChanged = { updatedPageText, segIdx, newSegSel, newSegComp, nextPending ->
+                                    if (safePageIdx in pages.indices) {
+                                        pages[safePageIdx] = updatedPageText
+                                        val latestSegments = RichTextCodec.splitPageIntoEditorSegments(updatedPageText)
+                                        val activeSeg = latestSegments.getOrNull(segIdx) as? EditorPageSegment.TextSegment
+                                        val maxSegLen = activeSeg?.text?.length ?: 0
+                                        activeSegmentByPage[safePageIdx] = segIdx
+                                        segmentSelections["$safePageIdx:$segIdx"] = TextRange(
+                                            newSegSel.start.coerceIn(0, maxSegLen),
+                                            newSegSel.end.coerceIn(0, maxSegLen)
+                                        )
+                                        segmentCompositions["$safePageIdx:$segIdx"] = newSegComp
+                                        pendingStylesByPage[safePageIdx] = nextPending
+                                    }
+                                },
+                                onSegmentFocused = { segIdx ->
+                                    if (activeSegmentByPage[safePageIdx] != segIdx) {
+                                        activeSegmentByPage[safePageIdx] = segIdx
+                                        pendingStylesByPage.remove(safePageIdx)
+                                    }
+                                },
                                 onEditTable = { tbl ->
                                     editingTableTarget = tbl
                                     showTableDialog = true
+                                },
+                                onDeleteTable = { tbl ->
+                                    if (safePageIdx in pages.indices) {
+                                        pages[safePageIdx] = RichTextCodec.deleteTableAtRange(
+                                            activePageText,
+                                            tbl.startOffset,
+                                            tbl.endOffset
+                                        )
+                                        clearPageSegments(safePageIdx)
+                                        activeSegmentByPage[safePageIdx] = 0
+                                        pendingStylesByPage.remove(safePageIdx)
+                                    }
                                 }
                             )
                         }
@@ -958,11 +1017,6 @@ fun VaultNoteEditorSheet(
     }
 
     if (showInsertSheet) {
-        val curBody = pages.getOrElse(safePageIdx) { "" }
-        val curSel = (pageSelections[safePageIdx] ?: TextRange(curBody.length)).let {
-            TextRange(it.start.coerceIn(0, curBody.length), it.end.coerceIn(0, curBody.length))
-        }
-        val curVal = TextFieldValue(curBody, curSel, pageCompositions[safePageIdx])
         InsertFeaturesBottomSheet(
             isDark = effectiveDark,
             isArabic = isArabic,
@@ -993,22 +1047,15 @@ fun VaultNoteEditorSheet(
                     InsertFeatureType.CHECKLIST_CARD -> {
                         checklist.add(ChecklistItem(text = if (isArabic) "مهمة جديدة" else "New task", isDone = false))
                     }
-                    InsertFeatureType.TODO_CHECKBOX -> applyRichFieldValue(safePageIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.CHECKBOX), true)
-                    InsertFeatureType.BULLET_LIST -> applyRichFieldValue(safePageIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.BULLET_LIST), true)
-                    InsertFeatureType.NUMBERED_LIST -> applyRichFieldValue(safePageIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.NUMBERED_LIST), true)
-                    InsertFeatureType.QUOTE -> applyRichFieldValue(safePageIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.QUOTE), true)
-                    InsertFeatureType.CALLOUT -> applyRichFieldValue(safePageIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.CALLOUT), true)
-                    InsertFeatureType.CODE_BLOCK -> applyRichFieldValue(safePageIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.CODE_BLOCK), true)
-                    InsertFeatureType.INLINE_CODE -> applyRichFieldValue(safePageIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.CODE), true)
-                    InsertFeatureType.DIVIDER -> applyRichFieldValue(safePageIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.DIVIDER), true)
-                    else -> {
-                        val snippet = RichTextCodec.buildInsertSnippet(feature, isArabic)
-                        val needNewLine = feature == InsertFeatureType.DAILY_HEADER ||
-                            feature == InsertFeatureType.PROGRESS_BAR ||
-                            feature == InsertFeatureType.MEETING_TEMPLATE ||
-                            feature == InsertFeatureType.PROS_CONS_TABLE
-                        applyRichFieldValue(safePageIdx, RichTextCodec.insertSnippetAtSelection(curVal, snippet, needNewLine), true)
-                    }
+                    InsertFeatureType.TODO_CHECKBOX -> applyFormatActionToPage(safePageIdx, RichFormatAction.CHECKBOX)
+                    InsertFeatureType.BULLET_LIST -> applyFormatActionToPage(safePageIdx, RichFormatAction.BULLET_LIST)
+                    InsertFeatureType.NUMBERED_LIST -> applyFormatActionToPage(safePageIdx, RichFormatAction.NUMBERED_LIST)
+                    InsertFeatureType.QUOTE -> applyFormatActionToPage(safePageIdx, RichFormatAction.QUOTE)
+                    InsertFeatureType.CALLOUT -> applyFormatActionToPage(safePageIdx, RichFormatAction.CALLOUT)
+                    InsertFeatureType.CODE_BLOCK -> applyFormatActionToPage(safePageIdx, RichFormatAction.CODE_BLOCK)
+                    InsertFeatureType.INLINE_CODE -> applyFormatActionToPage(safePageIdx, RichFormatAction.CODE)
+                    InsertFeatureType.DIVIDER -> applyFormatActionToPage(safePageIdx, RichFormatAction.DIVIDER)
+                    else -> applyInsertFeatureToPage(safePageIdx, feature)
                 }
             }
         )
@@ -1016,9 +1063,6 @@ fun VaultNoteEditorSheet(
 
     if (showTableDialog) {
         val curBody = pages.getOrElse(safePageIdx) { "" }
-        val curSel = (pageSelections[safePageIdx] ?: TextRange(curBody.length)).let {
-            TextRange(it.start.coerceIn(0, curBody.length), it.end.coerceIn(0, curBody.length))
-        }
         val editTarget = editingTableTarget
         TableEditorDialog(
             initialTable = editTarget,
@@ -1033,32 +1077,46 @@ fun VaultNoteEditorSheet(
             },
             onConfirmTable = { rows ->
                 val md = RichTextCodec.serializeTable(rows)
-                val nextVal = if (editTarget != null && editTarget.startOffset >= 0) {
-                    RichTextCodec.replaceTableAtRange(
-                        text = curBody,
-                        startOffset = editTarget.startOffset,
-                        endOffset = editTarget.endOffset,
-                        tableMarkdown = md
-                    )
-                } else {
-                    RichTextCodec.insertTableAtSelection(
-                        text = curBody,
-                        selection = curSel,
-                        tableMarkdown = md
-                    )
+                if (safePageIdx in pages.indices) {
+                    if (editTarget != null && editTarget.startOffset >= 0) {
+                        pages[safePageIdx] = RichTextCodec.replaceTableAtRange(
+                            text = curBody,
+                            startOffset = editTarget.startOffset,
+                            endOffset = editTarget.endOffset,
+                            tableMarkdown = md
+                        ).text
+                        clearPageSegments(safePageIdx)
+                    } else {
+                        val updated = insertTableInSegmentedPage(
+                            pageText = curBody,
+                            preferredSegmentIndex = activeSegmentByPage[safePageIdx] ?: 0,
+                            segmentSelections = pageSegmentSelections(safePageIdx),
+                            tableMarkdown = md
+                        )
+                        pages[safePageIdx] = updated
+                        clearPageSegments(safePageIdx)
+                        val latestSegments = RichTextCodec.splitPageIntoEditorSegments(updated)
+                        val tailIdx = latestSegments.indexOfLast { it is EditorPageSegment.TextSegment }.coerceAtLeast(0)
+                        activeSegmentByPage[safePageIdx] = tailIdx
+                        segmentSelections["$safePageIdx:$tailIdx"] = TextRange(0)
+                    }
+                    pendingStylesByPage.remove(safePageIdx)
                 }
-                applyRichFieldValue(safePageIdx, nextVal, recordUndo = true)
                 showTableDialog = false
                 editingTableTarget = null
             },
             onDeleteTable = if (editTarget != null && editTarget.startOffset >= 0) {
                 {
-                    val updated = RichTextCodec.deleteTableAtRange(
-                        curBody,
-                        editTarget.startOffset,
-                        editTarget.endOffset
-                    )
-                    applyRichFieldValue(safePageIdx, TextFieldValue(updated, TextRange(updated.length)), recordUndo = true)
+                    if (safePageIdx in pages.indices) {
+                        pages[safePageIdx] = RichTextCodec.deleteTableAtRange(
+                            curBody,
+                            editTarget.startOffset,
+                            editTarget.endOffset
+                        )
+                        clearPageSegments(safePageIdx)
+                        activeSegmentByPage[safePageIdx] = 0
+                        pendingStylesByPage.remove(safePageIdx)
+                    }
                     showTableDialog = false
                     editingTableTarget = null
                 }

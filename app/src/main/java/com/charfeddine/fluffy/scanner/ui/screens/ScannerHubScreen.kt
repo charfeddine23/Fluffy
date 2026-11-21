@@ -1,5 +1,7 @@
 package com.charfeddine.fluffy.scanner.ui.screens
 
+import android.app.Activity
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -42,6 +44,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandMore
@@ -166,6 +169,31 @@ fun ScannerHubScreen(
         pendingAppendGalleryDocId = null
         if (uris.isNotEmpty()) {
             scannerViewModel.importDeviceFiles(uris, appendToDocId = appendDocId, isArabic = isArabic)
+        }
+    }
+
+    val openPdfLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val appendDocId = pendingAppendGalleryDocId
+        pendingAppendGalleryDocId = null
+        if (result.resultCode == Activity.RESULT_OK) {
+            val intentData = result.data
+            val pickedUris = buildList<Uri> {
+                val clip = intentData?.clipData
+                if (clip != null) {
+                    for (i in 0 until clip.itemCount) {
+                        clip.getItemAt(i)?.uri?.let { add(it) }
+                    }
+                }
+                val single = intentData?.data
+                if (single != null && single !in this) {
+                    add(single)
+                }
+            }
+            if (pickedUris.isNotEmpty()) {
+                scannerViewModel.importDeviceFiles(pickedUris, appendToDocId = appendDocId, isArabic = isArabic)
+            }
         }
     }
 
@@ -504,15 +532,27 @@ fun ScannerHubScreen(
                                         onClick = onLaunchAppIdScanner
                                     )
                                     HubQuickActionTile(
-                                        icon = Icons.Default.FolderOpen,
-                                        label = if (isArabic) "ملفات الهاتف" else "Import",
+                                        icon = Icons.Default.Description,
+                                        label = "Open PDF",
                                         accentColor = ScannerGlassPalette.VioletGlow,
                                         highlighted = false,
                                         modifier = Modifier
                                             .weight(1f)
                                             .testTag("hub_import_gallery_btn"),
                                         onClick = {
-                                            fileImportLauncher.launch(arrayOf("image/*", "application/pdf"))
+                                            pendingAppendGalleryDocId = null
+                                            val pdfIntent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                                                addCategory(Intent.CATEGORY_OPENABLE)
+                                                type = "application/pdf"
+                                                putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/pdf"))
+                                                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            }
+                                            runCatching {
+                                                openPdfLauncher.launch(pdfIntent)
+                                            }.onFailure {
+                                                fileImportLauncher.launch(arrayOf("application/pdf"))
+                                            }
                                         }
                                     )
                                     HubQuickActionTile(
