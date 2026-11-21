@@ -130,12 +130,13 @@ fun WritingFormattingBar(
     pillFill: Color,
     onFormatAction: (RichFormatAction) -> Unit,
     onOpenAddMenu: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    outerVerticalPadding: Dp = 4.dp
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .padding(horizontal = 12.dp, vertical = outerVerticalPadding)
             .clip(RoundedCornerShape(22.dp))
             .background(if (isDark) Color(0xFF0F172A).copy(alpha = 0.72f) else Color.White.copy(alpha = 0.84f))
             .border(

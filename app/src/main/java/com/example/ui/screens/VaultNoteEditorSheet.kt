@@ -16,11 +16,12 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
@@ -41,6 +42,7 @@ import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
@@ -65,6 +67,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
@@ -391,8 +394,13 @@ fun VaultNoteEditorSheet(
             playbackController.stop()
             onDismiss()
         },
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
     ) {
+        val density = LocalDensity.current
+        val isImeVisible = WindowInsets.ime.getBottom(density) > WindowInsets.navigationBars.getBottom(density)
         FrostedBackdrop(isDark = effectiveDark) {
             Box(modifier = Modifier.fillMaxSize()) {
                 if (bgPreset != null) {
@@ -412,15 +420,14 @@ fun VaultNoteEditorSheet(
                     modifier = Modifier
                         .fillMaxSize()
                         .windowInsetsPadding(WindowInsets.statusBars)
-                        .windowInsetsPadding(WindowInsets.navigationBars)
-                        .imePadding()
-                        .padding(horizontal = 16.dp, vertical = 10.dp)
-                        .testTag("vault_note_editor_sheet"),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                        .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
+                        .testTag("vault_note_editor_sheet")
                 ) {
                     // Header Action Bar
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 8.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -547,7 +554,8 @@ fun VaultNoteEditorSheet(
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f)
-                            .verticalScroll(rememberScrollState()),
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         OutlinedTextField(
@@ -792,15 +800,6 @@ fun VaultNoteEditorSheet(
 
                         // Rich Notion-Style Page Body Editor with Clean Interactive Tables
                         val activePageText = pages.getOrElse(safePageIdx) { "" }
-                        val activePageSegments = remember(activePageText) {
-                            RichTextCodec.splitPageIntoEditorSegments(activePageText)
-                        }
-                        val preferredSegIdx = activeSegmentByPage[safePageIdx] ?: 0
-                        val (resolvedSegIdx, resolvedSeg) = resolveActiveTextSegment(activePageSegments, preferredSegIdx)
-                        val activeSegSel = (segmentSelections["$safePageIdx:$resolvedSegIdx"] ?: TextRange(resolvedSeg.text.length)).let {
-                            TextRange(it.start.coerceIn(0, resolvedSeg.text.length), it.end.coerceIn(0, resolvedSeg.text.length))
-                        }
-                        val pendingVaultStyles = pendingStylesByPage[safePageIdx] ?: emptySet()
                         val richVisualTransformation = remember(accentColor, metaColor, effectiveDark) {
                             RichTextCodec.createRichVisualTransformation(
                                 accentColor = accentColor,
@@ -808,22 +807,9 @@ fun VaultNoteEditorSheet(
                                 isDark = effectiveDark
                             )
                         }
-                        val activeVaultStyles = remember(resolvedSeg.text, activeSegSel, pendingVaultStyles) {
-                            RichTextCodec.inspectActiveStyles(resolvedSeg.text, activeSegSel) + pendingVaultStyles
-                        }
+                        val preferredSegIdx = activeSegmentByPage[safePageIdx] ?: 0
 
-                        WritingFormattingBar(
-                            activeStyles = activeVaultStyles,
-                            isDark = effectiveDark,
-                            isArabic = isArabic,
-                            accentColor = accentColor,
-                            textColor = textColor,
-                            metaColor = metaColor,
-                            pillFill = surfaceColors.pillFill,
-                            onFormatAction = { action -> applyFormatActionToPage(safePageIdx, action) },
-                            onOpenAddMenu = { showInsertSheet = true },
-                            modifier = Modifier.padding(horizontal = 0.dp)
-                        )
+                        val pendingVaultStyles = pendingStylesByPage[safePageIdx] ?: emptySet()
 
                         Column(
                             modifier = Modifier
@@ -1010,6 +996,52 @@ fun VaultNoteEditorSheet(
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))
+                    }
+
+                    // Bottom Formatting Bar pinned flush above keyboard
+                    val activePageText = pages.getOrElse(safePageIdx) { "" }
+                    val activePageSegments = remember(activePageText) {
+                        RichTextCodec.splitPageIntoEditorSegments(activePageText)
+                    }
+                    val preferredSegIdx = activeSegmentByPage[safePageIdx] ?: 0
+                    val (resolvedSegIdx, resolvedSeg) = resolveActiveTextSegment(activePageSegments, preferredSegIdx)
+                    val activeSegSel = (segmentSelections["$safePageIdx:$resolvedSegIdx"] ?: TextRange(resolvedSeg.text.length)).let {
+                        TextRange(it.start.coerceIn(0, resolvedSeg.text.length), it.end.coerceIn(0, resolvedSeg.text.length))
+                    }
+                    val pendingVaultStyles = pendingStylesByPage[safePageIdx] ?: emptySet()
+                    val activeVaultStyles = remember(resolvedSeg.text, activeSegSel, pendingVaultStyles) {
+                        RichTextCodec.inspectActiveStyles(resolvedSeg.text, activeSegSel) + pendingVaultStyles
+                    }
+                    val dockBg = if (isImeVisible) {
+                        if (effectiveDark) Color(0xFF0B1120).copy(alpha = 0.94f) else Color(0xFFF8FAFC).copy(alpha = 0.96f)
+                    } else {
+                        Color.Transparent
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(dockBg)
+                            .padding(bottom = if (isImeVisible) 2.dp else 6.dp)
+                    ) {
+                        if (isImeVisible) {
+                            HorizontalDivider(
+                                thickness = 0.8.dp,
+                                color = accentColor.copy(alpha = if (effectiveDark) 0.24f else 0.16f)
+                            )
+                        }
+                        WritingFormattingBar(
+                            activeStyles = activeVaultStyles,
+                            isDark = effectiveDark,
+                            isArabic = isArabic,
+                            accentColor = accentColor,
+                            textColor = textColor,
+                            metaColor = metaColor,
+                            pillFill = surfaceColors.pillFill,
+                            onFormatAction = { action -> applyFormatActionToPage(safePageIdx, action) },
+                            onOpenAddMenu = { showInsertSheet = true },
+                            outerVerticalPadding = if (isImeVisible) 3.dp else 4.dp
+                        )
                     }
                 }
             }

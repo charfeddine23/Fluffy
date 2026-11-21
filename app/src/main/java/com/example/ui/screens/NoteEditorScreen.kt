@@ -33,11 +33,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyRow
@@ -78,6 +79,7 @@ import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -115,6 +117,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
@@ -709,12 +712,14 @@ fun NoteEditorScreen(
             )
         }
 
+        val density = LocalDensity.current
+        val isImeVisible = WindowInsets.ime.getBottom(density) > WindowInsets.navigationBars.getBottom(density)
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.statusBars)
-                .windowInsetsPadding(WindowInsets.navigationBars)
-                .imePadding()
+                .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
         ) {
             // 1. Minimal Top Bar: Back on start; Style/Backgrounds + Pin + (Save in Edit mode OR Pencil in View-Only mode)
             Row(
@@ -1927,7 +1932,23 @@ fun NoteEditorScreen(
                     RichTextCodec.inspectActiveStyles(resolvedSeg.text, activeSegSel) + pendingStyles
                 }
 
-                Column(modifier = Modifier.fillMaxWidth()) {
+                val dockBg = if (isImeVisible) {
+                    if (effectiveDark) Color(0xFF0B1120).copy(alpha = 0.94f) else Color(0xFFF8FAFC).copy(alpha = 0.96f)
+                } else {
+                    Color.Transparent
+                }
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(dockBg)
+                ) {
+                    if (isImeVisible) {
+                        HorizontalDivider(
+                            thickness = 0.8.dp,
+                            color = accentColor.copy(alpha = if (effectiveDark) 0.24f else 0.16f)
+                        )
+                    }
                     WritingFormattingBar(
                         activeStyles = activeStyles,
                         isDark = effectiveDark,
@@ -1937,13 +1958,19 @@ fun NoteEditorScreen(
                         metaColor = metaColor,
                         pillFill = pillFill,
                         onFormatAction = { action -> applyFormatActionToPage(activePageIdx, action) },
-                        onOpenAddMenu = { showInsertSheet = true }
+                        onOpenAddMenu = { showInsertSheet = true },
+                        outerVerticalPadding = if (isImeVisible) 3.dp else 4.dp
                     )
 
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                            .padding(
+                                start = 14.dp,
+                                end = 14.dp,
+                                top = if (isImeVisible) 2.dp else 6.dp,
+                                bottom = if (isImeVisible) 4.dp else 8.dp
+                            ),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
