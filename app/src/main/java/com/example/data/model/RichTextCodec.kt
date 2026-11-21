@@ -13,6 +13,32 @@ import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.sp
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+enum class InsertFeatureType {
+    TABLE,
+    TODO_CHECKBOX,
+    CHECKLIST_CARD,
+    VOICE_MEMO,
+    NEW_PAGE,
+    BULLET_LIST,
+    NUMBERED_LIST,
+    QUOTE,
+    CALLOUT,
+    CODE_BLOCK,
+    INLINE_CODE,
+    DIVIDER,
+    DATE_STAMP,
+    TIME_STAMP,
+    DAILY_HEADER,
+    STAR_RATING,
+    PROGRESS_BAR,
+    STATUS_BADGE,
+    MEETING_TEMPLATE,
+    PROS_CONS_TABLE
+}
 
 enum class RichFormatAction {
     BOLD,
@@ -95,6 +121,89 @@ object RichTextCodec {
             RichFormatAction.CODE_BLOCK -> applyCodeBlock(value)
             RichFormatAction.DIVIDER -> insertDivider(value)
             RichFormatAction.CLEAR_FORMATTING -> clearFormattingAtSelection(value)
+        }
+    }
+
+    fun insertSnippetAtSelection(
+        value: TextFieldValue,
+        snippet: String,
+        ensureNewLinePrefix: Boolean = false
+    ): TextFieldValue {
+        val text = value.text
+        val rawSel = value.selection
+        val start = rawSel.min.coerceIn(0, text.length)
+        val end = rawSel.max.coerceIn(0, text.length)
+        val leading = if (ensureNewLinePrefix && start > 0 && text[start - 1] != '\n') "\n" else ""
+        val inserted = leading + snippet
+        val updated = text.substring(0, start) + inserted + text.substring(end)
+        val nextCursor = (start + inserted.length).coerceIn(0, updated.length)
+        return TextFieldValue(updated, TextRange(nextCursor))
+    }
+
+    fun buildInsertSnippet(
+        type: InsertFeatureType,
+        isArabic: Boolean,
+        nowMillis: Long = System.currentTimeMillis()
+    ): String {
+        val locale = if (isArabic) Locale("ar") else Locale.US
+        val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(nowMillis))
+        val timeStr = SimpleDateFormat("hh:mm a", locale).format(Date(nowMillis))
+        return when (type) {
+            InsertFeatureType.DATE_STAMP -> "📅 $dateStr"
+            InsertFeatureType.TIME_STAMP -> "🕒 $timeStr"
+            InsertFeatureType.DAILY_HEADER -> if (isArabic) {
+                "## 📅 يومية $dateStr • $timeStr\n"
+            } else {
+                "## 📅 Entry $dateStr • $timeStr\n"
+            }
+            InsertFeatureType.STAR_RATING -> if (isArabic) {
+                "★★★★☆ (4/5) "
+            } else {
+                "★★★★☆ (4/5) "
+            }
+            InsertFeatureType.PROGRESS_BAR -> if (isArabic) {
+                "📊 التقدم: [██████░░░░] 60%\n"
+            } else {
+                "📊 Progress: [██████░░░░] 60%\n"
+            }
+            InsertFeatureType.STATUS_BADGE -> if (isArabic) {
+                "【🟢 قيد التنفيذ】 "
+            } else {
+                "【🟢 In Progress】 "
+            }
+            InsertFeatureType.MEETING_TEMPLATE -> if (isArabic) {
+                """
+                ## 🤝 محضر اجتماع ($dateStr)
+                - **الموضوع:** 
+                - **الحضور:** 
+                - **أهم النقاط:** 
+                - [ ] المتابعة والتنفيذ
+                """.trimIndent() + "\n"
+            } else {
+                """
+                ## 🤝 Meeting Notes ($dateStr)
+                - **Topic:** 
+                - **Attendees:** 
+                - **Key Points:** 
+                - [ ] Action items
+                """.trimIndent() + "\n"
+            }
+            InsertFeatureType.PROS_CONS_TABLE -> if (isArabic) {
+                """
+                | ✅ الإيجابيات | ⚠️ السلبيات |
+                | --- | --- |
+                |  |  |
+                |  |  |
+                """.trimIndent() + "\n"
+            } else {
+                """
+                | ✅ Pros | ⚠️ Cons |
+                | --- | --- |
+                |  |  |
+                |  |  |
+                """.trimIndent() + "\n"
+            }
+            else -> ""
         }
     }
 
@@ -892,7 +1001,7 @@ object RichTextCodec {
                 }
             }
             val kindStyle = spanStyleForKind(matched.kind, accentColor, isDark)
-            val merged = inheritedStyle?.merge(kindStyle) ?: kindStyle
+            val merged = mergeInlineStyles(inheritedStyle, kindStyle)
             val absInnerStart = cursor + matched.innerStart
             val absInnerEnd = cursor + matched.innerEnd
             if (matched.kind == InlineKind.CODE) {
@@ -915,6 +1024,17 @@ object RichTextCodec {
             }
             cursor += matched.rawEnd
         }
+    }
+
+    private fun mergeInlineStyles(parent: SpanStyle?, child: SpanStyle): SpanStyle {
+        if (parent == null) return child
+        val pDeco = parent.textDecoration
+        val cDeco = child.textDecoration
+        val combinedDeco = when {
+            pDeco != null && cDeco != null -> TextDecoration.combine(listOf(pDeco, cDeco))
+            else -> cDeco ?: pDeco
+        }
+        return parent.merge(child).copy(textDecoration = combinedDeco)
     }
 
     private fun firstInlineMatch(sub: String): InlineSpan? {
@@ -1030,7 +1150,7 @@ object RichTextCodec {
                     emitRawSlice(pos, pos + match.rawStart, inheritedStyle)
                 }
                 val kindStyle = spanStyleForKind(match.kind, accentColor, isDark)
-                val merged = inheritedStyle?.merge(kindStyle) ?: kindStyle
+                val merged = mergeInlineStyles(inheritedStyle, kindStyle)
                 val openAbsStart = pos + match.rawStart
                 val innerAbsStart = pos + match.innerStart
                 val innerAbsEnd = pos + match.innerEnd

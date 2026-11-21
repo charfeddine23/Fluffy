@@ -130,19 +130,23 @@ import androidx.compose.ui.window.Dialog
 import com.example.audio.rememberAudioPlaybackController
 import com.example.data.model.ChecklistItem
 import com.example.data.model.GlassTint
+import com.example.data.model.InsertFeatureType
 import com.example.data.model.MarkdownTableData
 import com.example.data.model.NoteBackgroundCanvas
 import com.example.data.model.NoteBackgroundCatalog
 import com.example.data.model.NoteEntity
 import com.example.data.model.NotePagesCodec
+import com.example.data.model.RichFormatAction
 import com.example.data.model.RichTextCodec
 import com.example.data.storage.AudioCloudPolicy
 import com.example.ui.components.AudioPlayerCard
 import com.example.ui.components.DocumentStyleBottomSheet
 import com.example.ui.components.InlineTablesPreviewSection
+import com.example.ui.components.InsertFeaturesBottomSheet
 import com.example.ui.components.RichContentView
 import com.example.ui.components.TableEditorDialog
 import com.example.ui.components.VoiceRecorderDialog
+import com.example.ui.components.WritingFormattingBar
 import com.example.ui.glass.FrostedBackdrop
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.glass.liquidGlass
@@ -239,6 +243,7 @@ fun NoteEditorScreen(
     var showMoreMenu by remember { mutableStateOf(false) }
     var showViewMoreMenu by remember { mutableStateOf(false) }
     var showPagePickerDialog by remember { mutableStateOf(false) }
+    var showInsertSheet by remember { mutableStateOf(false) }
     var showTableDialog by remember { mutableStateOf(false) }
     var editingTableTarget by remember { mutableStateOf<MarkdownTableData?>(null) }
     var isRemovingPage by remember { mutableStateOf(false) }
@@ -1840,19 +1845,49 @@ fun NoteEditorScreen(
                 }
             }
 
-            // 3. Bottom Action Toolbar (visible only in Writing Mode)
+            // 3. Writing Mode Formatting Bar + Bottom Action Toolbar (visible only in Writing Mode)
             AnimatedVisibility(
                 visible = isEditMode,
                 enter = expandVertically(expandFrom = Alignment.Bottom) + fadeIn(),
                 exit = shrinkVertically(shrinkTowards = Alignment.Bottom) + fadeOut()
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                val activePageIdx = pagerState.currentPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
+                val activePageText = pages.getOrElse(activePageIdx) { "" }
+                val activePageSel = (pageSelections[activePageIdx] ?: TextRange(activePageText.length)).let {
+                    TextRange(it.start.coerceIn(0, activePageText.length), it.end.coerceIn(0, activePageText.length))
+                }
+                val activeStyles = remember(activePageText, activePageSel) {
+                    RichTextCodec.inspectActiveStyles(activePageText, activePageSel)
+                }
+
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    WritingFormattingBar(
+                        activeStyles = activeStyles,
+                        isDark = effectiveDark,
+                        isArabic = isArabic,
+                        accentColor = accentColor,
+                        textColor = textColor,
+                        metaColor = metaColor,
+                        pillFill = pillFill,
+                        onFormatAction = { action ->
+                            val currentVal = TextFieldValue(
+                                text = activePageText,
+                                selection = activePageSel,
+                                composition = pageCompositions[activePageIdx]
+                            )
+                            val updatedVal = RichTextCodec.applyRichAction(currentVal, action)
+                            applyRichFieldValue(activePageIdx, updatedVal, recordUndo = true)
+                        },
+                        onOpenAddMenu = { showInsertSheet = true }
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -2138,6 +2173,7 @@ fun NoteEditorScreen(
                         }
                     }
                 }
+                }
             }
         }
 
@@ -2303,6 +2339,79 @@ fun NoteEditorScreen(
                     }
                 }
             }
+        }
+
+        // 20-Tool Insert Bottom Sheet (+ Add button)
+        if (showInsertSheet) {
+            val activeIdx = pagerState.currentPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
+            val curBody = pages.getOrElse(activeIdx) { "" }
+            val curSel = (pageSelections[activeIdx] ?: TextRange(curBody.length)).let {
+                TextRange(it.start.coerceIn(0, curBody.length), it.end.coerceIn(0, curBody.length))
+            }
+            val curVal = TextFieldValue(curBody, curSel, pageCompositions[activeIdx])
+
+            InsertFeaturesBottomSheet(
+                isDark = effectiveDark,
+                isArabic = isArabic,
+                accentColor = accentColor,
+                textColor = textColor,
+                metaColor = metaColor,
+                onDismiss = { showInsertSheet = false },
+                onSelectFeature = { feature ->
+                    showInsertSheet = false
+                    when (feature) {
+                        InsertFeatureType.TABLE -> {
+                            editingTableTarget = null
+                            showTableDialog = true
+                        }
+                        InsertFeatureType.VOICE_MEMO -> showVoiceRecorderDialog = true
+                        InsertFeatureType.NEW_PAGE -> addPageAndNavigate()
+                        InsertFeatureType.CHECKLIST_CARD -> {
+                            if (totalNoteBytes + 32L <= NotePagesCodec.MAX_NOTE_BYTES) {
+                                checklistItems.add(ChecklistItem(text = "", isDone = false))
+                                if (pagerState.currentPage != 0) {
+                                    coroutineScope.launch { pagerState.animateScrollToPage(0) }
+                                }
+                            } else {
+                                triggerLimitWarning(isCountLimit = false)
+                            }
+                        }
+                        InsertFeatureType.TODO_CHECKBOX -> {
+                            applyRichFieldValue(activeIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.CHECKBOX), recordUndo = true)
+                        }
+                        InsertFeatureType.BULLET_LIST -> {
+                            applyRichFieldValue(activeIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.BULLET_LIST), recordUndo = true)
+                        }
+                        InsertFeatureType.NUMBERED_LIST -> {
+                            applyRichFieldValue(activeIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.NUMBERED_LIST), recordUndo = true)
+                        }
+                        InsertFeatureType.QUOTE -> {
+                            applyRichFieldValue(activeIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.QUOTE), recordUndo = true)
+                        }
+                        InsertFeatureType.CALLOUT -> {
+                            applyRichFieldValue(activeIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.CALLOUT), recordUndo = true)
+                        }
+                        InsertFeatureType.CODE_BLOCK -> {
+                            applyRichFieldValue(activeIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.CODE_BLOCK), recordUndo = true)
+                        }
+                        InsertFeatureType.INLINE_CODE -> {
+                            applyRichFieldValue(activeIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.CODE), recordUndo = true)
+                        }
+                        InsertFeatureType.DIVIDER -> {
+                            applyRichFieldValue(activeIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.DIVIDER), recordUndo = true)
+                        }
+                        else -> {
+                            val snippet = RichTextCodec.buildInsertSnippet(feature, isArabic)
+                            val needNewLine = feature == InsertFeatureType.DAILY_HEADER ||
+                                feature == InsertFeatureType.PROGRESS_BAR ||
+                                feature == InsertFeatureType.MEETING_TEMPLATE ||
+                                feature == InsertFeatureType.PROS_CONS_TABLE
+                            val updated = RichTextCodec.insertSnippetAtSelection(curVal, snippet, ensureNewLinePrefix = needNewLine)
+                            applyRichFieldValue(activeIdx, updated, recordUndo = true)
+                        }
+                    }
+                }
+            )
         }
 
         // Interactive Notion-Style Table Builder / Cell Editor Dialog

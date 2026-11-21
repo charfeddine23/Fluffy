@@ -8,36 +8,71 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
+import androidx.compose.material.icons.automirrored.filled.NoteAdd
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.BorderColor
+import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.CompareArrows
+import androidx.compose.material.icons.filled.DataObject
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.EventNote
+import androidx.compose.material.icons.filled.FormatBold
+import androidx.compose.material.icons.filled.FormatItalic
+import androidx.compose.material.icons.filled.FormatListNumbered
+import androidx.compose.material.icons.filled.FormatQuote
+import androidx.compose.material.icons.filled.FormatStrikethrough
+import androidx.compose.material.icons.filled.FormatUnderlined
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.HorizontalRule
+import androidx.compose.material.icons.filled.Label
+import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.TableChart
+import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -48,8 +83,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -62,12 +99,773 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.data.model.GlassTint
+import com.example.data.model.InsertFeatureType
 import com.example.data.model.MarkdownTableData
 import com.example.data.model.RichBlock
+import com.example.data.model.RichFormatAction
 import com.example.data.model.RichTextCodec
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.glass.liquidGlass
 
+/**
+ * Sleek Liquid Glass formatting bar for Writing Mode containing:
+ * - Add (+ إضافة) button launching the 20-tool Insert Menu
+ * - Heading size controls (H1, H2, H3)
+ * - Bold, Italic, Strikethrough, Underline, Highlight
+ */
+@Composable
+fun WritingFormattingBar(
+    activeStyles: Set<RichFormatAction>,
+    isDark: Boolean,
+    isArabic: Boolean,
+    accentColor: Color,
+    textColor: Color,
+    metaColor: Color,
+    pillFill: Color,
+    onFormatAction: (RichFormatAction) -> Unit,
+    onOpenAddMenu: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(22.dp))
+            .background(if (isDark) Color(0xFF0F172A).copy(alpha = 0.72f) else Color.White.copy(alpha = 0.84f))
+            .border(
+                width = 1.dp,
+                color = accentColor.copy(alpha = if (isDark) 0.28f else 0.20f),
+                shape = RoundedCornerShape(22.dp)
+            )
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        // Prominent Add Button (always visible)
+        Row(
+            modifier = Modifier
+                .defaultMinSize(minHeight = 40.dp)
+                .clip(CircleShape)
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(
+                            accentColor.copy(alpha = 0.94f),
+                            accentColor.copy(alpha = 0.78f)
+                        )
+                    )
+                )
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = ripple(bounded = true)
+                ) { onOpenAddMenu() }
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .testTag("editor_insert_add_button"),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = if (isArabic) "إضافة" else "Add",
+                tint = Color.White,
+                modifier = Modifier.size(17.dp)
+            )
+            Text(
+                text = if (isArabic) "إضافة" else "Add",
+                fontSize = 12.5.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = Color.White,
+                maxLines = 1
+            )
+        }
+
+        // Scrollable formatting controls: H1, H2, H3, Bold, Italic, Strikethrough, Underline, Highlight
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .horizontalScroll(rememberScrollState()),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            // Heading Size Group (H1 / H2 / H3)
+            Row(
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(pillFill.copy(alpha = if (isDark) 0.55f else 0.72f))
+                    .border(
+                        width = 0.8.dp,
+                        color = metaColor.copy(alpha = 0.22f),
+                        shape = CircleShape
+                    )
+                    .padding(horizontal = 3.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                FormatHeadingPill(
+                    label = "H1",
+                    fontSizeSp = 13.5f,
+                    isActive = RichFormatAction.H1 in activeStyles,
+                    accentColor = accentColor,
+                    textColor = textColor,
+                    onClick = { onFormatAction(RichFormatAction.H1) },
+                    testTag = "editor_fmt_h1"
+                )
+                FormatHeadingPill(
+                    label = "H2",
+                    fontSizeSp = 12.5f,
+                    isActive = RichFormatAction.H2 in activeStyles,
+                    accentColor = accentColor,
+                    textColor = textColor,
+                    onClick = { onFormatAction(RichFormatAction.H2) },
+                    testTag = "editor_fmt_h2"
+                )
+                FormatHeadingPill(
+                    label = "H3",
+                    fontSizeSp = 11.5f,
+                    isActive = RichFormatAction.H3 in activeStyles,
+                    accentColor = accentColor,
+                    textColor = textColor,
+                    onClick = { onFormatAction(RichFormatAction.H3) },
+                    testTag = "editor_fmt_h3"
+                )
+            }
+
+            FormatIconButton(
+                icon = Icons.Default.FormatBold,
+                contentDescription = if (isArabic) "عريض" else "Bold",
+                isActive = RichFormatAction.BOLD in activeStyles,
+                accentColor = accentColor,
+                textColor = textColor,
+                pillFill = pillFill,
+                isDark = isDark,
+                onClick = { onFormatAction(RichFormatAction.BOLD) },
+                testTag = "editor_fmt_bold"
+            )
+
+            FormatIconButton(
+                icon = Icons.Default.FormatItalic,
+                contentDescription = if (isArabic) "مائل" else "Italic",
+                isActive = RichFormatAction.ITALIC in activeStyles,
+                accentColor = accentColor,
+                textColor = textColor,
+                pillFill = pillFill,
+                isDark = isDark,
+                onClick = { onFormatAction(RichFormatAction.ITALIC) },
+                testTag = "editor_fmt_italic"
+            )
+
+            FormatIconButton(
+                icon = Icons.Default.FormatStrikethrough,
+                contentDescription = if (isArabic) "تشطيب النص" else "Strikethrough",
+                isActive = RichFormatAction.STRIKETHROUGH in activeStyles,
+                accentColor = accentColor,
+                textColor = textColor,
+                pillFill = pillFill,
+                isDark = isDark,
+                onClick = { onFormatAction(RichFormatAction.STRIKETHROUGH) },
+                testTag = "editor_fmt_strikethrough"
+            )
+
+            FormatIconButton(
+                icon = Icons.Default.FormatUnderlined,
+                contentDescription = if (isArabic) "تسطير النص" else "Underline",
+                isActive = RichFormatAction.UNDERLINE in activeStyles,
+                accentColor = accentColor,
+                textColor = textColor,
+                pillFill = pillFill,
+                isDark = isDark,
+                onClick = { onFormatAction(RichFormatAction.UNDERLINE) },
+                testTag = "editor_fmt_underline"
+            )
+
+            // Highlight toggle pill (amber tint when active)
+            val highlightActive = RichFormatAction.HIGHLIGHT in activeStyles
+            val amberColor = Color(0xFFF59E0B)
+            Box(
+                modifier = Modifier
+                    .defaultMinSize(minWidth = 40.dp, minHeight = 40.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (highlightActive) amberColor.copy(alpha = if (isDark) 0.34f else 0.28f)
+                        else pillFill.copy(alpha = if (isDark) 0.55f else 0.72f)
+                    )
+                    .border(
+                        width = if (highlightActive) 1.2.dp else 0.8.dp,
+                        color = if (highlightActive) amberColor else metaColor.copy(alpha = 0.22f),
+                        shape = CircleShape
+                    )
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = ripple(bounded = true)
+                    ) { onFormatAction(RichFormatAction.HIGHLIGHT) }
+                    .padding(horizontal = 9.dp, vertical = 7.dp)
+                    .testTag("editor_fmt_highlight"),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.BorderColor,
+                    contentDescription = if (isArabic) "تمييز النص" else "Highlight",
+                    tint = if (highlightActive) amberColor else textColor,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FormatHeadingPill(
+    label: String,
+    fontSizeSp: Float,
+    isActive: Boolean,
+    accentColor: Color,
+    textColor: Color,
+    onClick: () -> Unit,
+    testTag: String
+) {
+    Box(
+        modifier = Modifier
+            .defaultMinSize(minWidth = 36.dp, minHeight = 36.dp)
+            .clip(CircleShape)
+            .background(if (isActive) accentColor else Color.Transparent)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = ripple(bounded = true)
+            ) { onClick() }
+            .padding(horizontal = 9.dp, vertical = 6.dp)
+            .testTag(testTag),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            fontSize = fontSizeSp.sp,
+            fontWeight = FontWeight.ExtraBold,
+            color = if (isActive) Color.White else textColor
+        )
+    }
+}
+
+@Composable
+private fun FormatIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    isActive: Boolean,
+    accentColor: Color,
+    textColor: Color,
+    pillFill: Color,
+    isDark: Boolean,
+    onClick: () -> Unit,
+    testTag: String
+) {
+    Box(
+        modifier = Modifier
+            .defaultMinSize(minWidth = 40.dp, minHeight = 40.dp)
+            .clip(CircleShape)
+            .background(
+                if (isActive) accentColor.copy(alpha = if (isDark) 0.30f else 0.20f)
+                else pillFill.copy(alpha = if (isDark) 0.55f else 0.72f)
+            )
+            .border(
+                width = if (isActive) 1.2.dp else 0.8.dp,
+                color = if (isActive) accentColor else textColor.copy(alpha = 0.14f),
+                shape = CircleShape
+            )
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = ripple(bounded = true)
+            ) { onClick() }
+            .padding(8.dp)
+            .testTag(testTag),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = if (isActive) accentColor else textColor,
+            modifier = Modifier.size(19.dp)
+        )
+    }
+}
+
+private data class InsertMenuDescriptor(
+    val type: InsertFeatureType,
+    val categoryIdx: Int,
+    val titleAr: String,
+    val titleEn: String,
+    val subtitleAr: String,
+    val subtitleEn: String,
+    val icon: ImageVector,
+    val tint: Color
+)
+
+private val insertFeatureDescriptors: List<InsertMenuDescriptor> = listOf(
+    // 0: Interactive & Media (5 items)
+    InsertMenuDescriptor(
+        type = InsertFeatureType.TABLE,
+        categoryIdx = 0,
+        titleAr = "جدول تفاعلي",
+        titleEn = "Interactive Table",
+        subtitleAr = "إنشاء جدول بصفوف وأعمدة مخصصة",
+        subtitleEn = "Custom rows & columns grid",
+        icon = Icons.Default.TableChart,
+        tint = Color(0xFF38BDF8)
+    ),
+    InsertMenuDescriptor(
+        type = InsertFeatureType.TODO_CHECKBOX,
+        categoryIdx = 0,
+        titleAr = "مهمة داخل النص",
+        titleEn = "Inline Todo Box",
+        subtitleAr = "مربع اختيار تفاعلي - [ ]",
+        subtitleEn = "Checkable task inside page",
+        icon = Icons.Default.CheckBox,
+        tint = Color(0xFF10B981)
+    ),
+    InsertMenuDescriptor(
+        type = InsertFeatureType.CHECKLIST_CARD,
+        categoryIdx = 0,
+        titleAr = "بطاقة مهام سفلية",
+        titleEn = "Checklist Item",
+        subtitleAr = "إضافة بند في قائمة المهام",
+        subtitleEn = "Add item to note checklist",
+        icon = Icons.Default.Checklist,
+        tint = Color(0xFF34D399)
+    ),
+    InsertMenuDescriptor(
+        type = InsertFeatureType.VOICE_MEMO,
+        categoryIdx = 0,
+        titleAr = "تسجيل صوتي",
+        titleEn = "Voice Memo",
+        subtitleAr = "تسجيل مقطع صوتي وإرفاقه",
+        subtitleEn = "Record & attach voice note",
+        icon = Icons.Default.Mic,
+        tint = Color(0xFFF43F5E)
+    ),
+    InsertMenuDescriptor(
+        type = InsertFeatureType.NEW_PAGE,
+        categoryIdx = 0,
+        titleAr = "صفحة جديدة",
+        titleEn = "New Draft Page",
+        subtitleAr = "إضافة صفحة جديدة للمسودة",
+        subtitleEn = "Append a new page now",
+        icon = Icons.AutoMirrored.Filled.NoteAdd,
+        tint = Color(0xFF818CF8)
+    ),
+
+    // 1: Structure & Blocks (7 items)
+    InsertMenuDescriptor(
+        type = InsertFeatureType.BULLET_LIST,
+        categoryIdx = 1,
+        titleAr = "قائمة نقطية",
+        titleEn = "Bullet List",
+        subtitleAr = "تعداد نقطي مرتب للأسطر",
+        subtitleEn = "Clean bullet points",
+        icon = Icons.AutoMirrored.Filled.FormatListBulleted,
+        tint = Color(0xFF60A5FA)
+    ),
+    InsertMenuDescriptor(
+        type = InsertFeatureType.NUMBERED_LIST,
+        categoryIdx = 1,
+        titleAr = "قائمة مرقمة",
+        titleEn = "Numbered List",
+        subtitleAr = "ترقيم تلقائي للخطوات 1، 2",
+        subtitleEn = "Auto-incrementing 1. 2. 3.",
+        icon = Icons.Default.FormatListNumbered,
+        tint = Color(0xFF6366F1)
+    ),
+    InsertMenuDescriptor(
+        type = InsertFeatureType.QUOTE,
+        categoryIdx = 1,
+        titleAr = "اقتباس مميز",
+        titleEn = "Quote Block",
+        subtitleAr = "إبراز مقولة أو عبارة جانبية",
+        subtitleEn = "Styled vertical quote bar",
+        icon = Icons.Default.FormatQuote,
+        tint = Color(0xFFA855F7)
+    ),
+    InsertMenuDescriptor(
+        type = InsertFeatureType.CALLOUT,
+        categoryIdx = 1,
+        titleAr = "صندوق تنبيه",
+        titleEn = "Callout Note",
+        subtitleAr = "بطاقة ملاحظة بأيقونة 💡",
+        subtitleEn = "Highlighted tip card 💡",
+        icon = Icons.Default.Lightbulb,
+        tint = Color(0xFFF59E0B)
+    ),
+    InsertMenuDescriptor(
+        type = InsertFeatureType.CODE_BLOCK,
+        categoryIdx = 1,
+        titleAr = "صندوق كود",
+        titleEn = "Code Block",
+        subtitleAr = "كتلة برمجية متعددة الأسطر",
+        subtitleEn = "Monospace fenced code",
+        icon = Icons.Default.DataObject,
+        tint = Color(0xFF06B6D4)
+    ),
+    InsertMenuDescriptor(
+        type = InsertFeatureType.INLINE_CODE,
+        categoryIdx = 1,
+        titleAr = "كود سطري",
+        titleEn = "Inline Code",
+        subtitleAr = "تنسيق كلمة أو أمر تقني",
+        subtitleEn = "Wrap selected code tag",
+        icon = Icons.Default.Code,
+        tint = Color(0xFF0EA5E9)
+    ),
+    InsertMenuDescriptor(
+        type = InsertFeatureType.DIVIDER,
+        categoryIdx = 1,
+        titleAr = "خط فاصل",
+        titleEn = "Divider Line",
+        subtitleAr = "فاصل أفقي أنيق بين الفقرات",
+        subtitleEn = "Horizontal section divider",
+        icon = Icons.Default.HorizontalRule,
+        tint = Color(0xFF94A3B8)
+    ),
+
+    // 2: Date, Time & Visual Badges (6 items)
+    InsertMenuDescriptor(
+        type = InsertFeatureType.DATE_STAMP,
+        categoryIdx = 2,
+        titleAr = "تاريخ اليوم",
+        titleEn = "Today's Date",
+        subtitleAr = "إدراج التاريخ الحالي تلقائياً",
+        subtitleEn = "Insert current date stamp",
+        icon = Icons.Default.CalendarToday,
+        tint = Color(0xFF22C55E)
+    ),
+    InsertMenuDescriptor(
+        type = InsertFeatureType.TIME_STAMP,
+        categoryIdx = 2,
+        titleAr = "الوقت الحالي",
+        titleEn = "Current Time",
+        subtitleAr = "إدراج الساعة والدقيقة الآن",
+        subtitleEn = "Insert current time stamp",
+        icon = Icons.Default.Schedule,
+        tint = Color(0xFF14B8A6)
+    ),
+    InsertMenuDescriptor(
+        type = InsertFeatureType.DAILY_HEADER,
+        categoryIdx = 2,
+        titleAr = "ترويسة يومية",
+        titleEn = "Daily Entry Header",
+        subtitleAr = "عنوان مع التاريخ والوقت جاهز",
+        subtitleEn = "Heading with date & time",
+        icon = Icons.Default.EventNote,
+        tint = Color(0xFF06B6D4)
+    ),
+    InsertMenuDescriptor(
+        type = InsertFeatureType.STAR_RATING,
+        categoryIdx = 2,
+        titleAr = "تقييم بالنجوم",
+        titleEn = "Star Rating",
+        subtitleAr = "شريط نجوم جاهز ★★★★☆",
+        subtitleEn = "Visual 5-star rating row",
+        icon = Icons.Default.Star,
+        tint = Color(0xFFEAB308)
+    ),
+    InsertMenuDescriptor(
+        type = InsertFeatureType.PROGRESS_BAR,
+        categoryIdx = 2,
+        titleAr = "شريط التقدم",
+        titleEn = "Progress Bar",
+        subtitleAr = "مؤشر نسبة الإنجاز البصري",
+        subtitleEn = "Visual progress meter 60%",
+        icon = Icons.Default.TrendingUp,
+        tint = Color(0xFF10B981)
+    ),
+    InsertMenuDescriptor(
+        type = InsertFeatureType.STATUS_BADGE,
+        categoryIdx = 2,
+        titleAr = "شارة الحالة",
+        titleEn = "Status Badge",
+        subtitleAr = "وسم حالة جاهز قيد التنفيذ",
+        subtitleEn = "Status tag pill marker",
+        icon = Icons.Default.Label,
+        tint = Color(0xFFEC4899)
+    ),
+
+    // 3: Smart Templates (2 items -> total 20!)
+    InsertMenuDescriptor(
+        type = InsertFeatureType.MEETING_TEMPLATE,
+        categoryIdx = 3,
+        titleAr = "قالب محضر اجتماع",
+        titleEn = "Meeting Template",
+        subtitleAr = "هيكل موضوع، حضور، ونقاط عمل",
+        subtitleEn = "Topic, attendees & action list",
+        icon = Icons.Default.Groups,
+        tint = Color(0xFF6366F1)
+    ),
+    InsertMenuDescriptor(
+        type = InsertFeatureType.PROS_CONS_TABLE,
+        categoryIdx = 3,
+        titleAr = "جدول إيجابيات وسلبيات",
+        titleEn = "Pros & Cons Table",
+        subtitleAr = "جدول مقارنة جاهز بعمودين",
+        subtitleEn = "Ready 2-column comparison",
+        icon = Icons.Default.CompareArrows,
+        tint = Color(0xFFF97316)
+    )
+)
+
+/**
+ * Interactive Modal Bottom Sheet presenting 20 categorized insertion tools for Writing Mode.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun InsertFeaturesBottomSheet(
+    isDark: Boolean,
+    isArabic: Boolean,
+    accentColor: Color,
+    textColor: Color,
+    metaColor: Color,
+    onSelectFeature: (InsertFeatureType) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var searchQuery by remember { mutableStateOf("") }
+
+    val filtered = remember(searchQuery, isArabic) {
+        val q = searchQuery.trim()
+        if (q.isEmpty()) insertFeatureDescriptors
+        else insertFeatureDescriptors.filter {
+            it.titleAr.contains(q, ignoreCase = true) ||
+                it.titleEn.contains(q, ignoreCase = true) ||
+                it.subtitleAr.contains(q, ignoreCase = true) ||
+                it.subtitleEn.contains(q, ignoreCase = true)
+        }
+    }
+
+    val categoryTitles = remember(isArabic) {
+        if (isArabic) {
+            listOf(
+                "العناصر التفاعلية والوسائط",
+                "القوائم والهيكلة",
+                "الوقت والشارات والمؤشرات",
+                "القوالب الجاهزة"
+            )
+        } else {
+            listOf(
+                "Interactive & Media",
+                "Lists & Blocks",
+                "Time, Badges & Metrics",
+                "Ready Templates"
+            )
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = if (isDark) Color(0xFF0F172A) else Color(0xFFF8FAFC),
+        contentColor = textColor,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.navigationBars)
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (isArabic) "إدراج في الصفحة" else "Insert Into Page",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = textColor
+                    )
+                    Text(
+                        text = if (isArabic) "اختر من بين 20 ميزة وأداة كتابة ذكية" else "Choose from 20 rich writing tools",
+                        fontSize = 12.sp,
+                        color = metaColor
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .clip(CircleShape)
+                        .background(if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.05f))
+                        .clickable { onDismiss() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = if (isArabic) "إغلاق" else "Close",
+                        tint = metaColor,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            // Quick Filter Bar
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = {
+                    Text(
+                        text = if (isArabic) "ابحث عن ميزة (جدول، تاريخ، قالب...)" else "Search tools (table, date, template...)",
+                        fontSize = 13.sp,
+                        color = metaColor.copy(alpha = 0.7f)
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = null,
+                        tint = accentColor,
+                        modifier = Modifier.size(18.dp)
+                    )
+                },
+                trailingIcon = if (searchQuery.isNotEmpty()) {
+                    {
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .clickable { searchQuery = "" },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = null,
+                                tint = metaColor,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                } else null,
+                singleLine = true,
+                shape = RoundedCornerShape(16.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = textColor,
+                    unfocusedTextColor = textColor,
+                    focusedBorderColor = accentColor,
+                    unfocusedBorderColor = metaColor.copy(alpha = 0.25f)
+                ),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            // 20 Categorized Insert Tools in 2-Column Rows
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 460.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(bottom = 12.dp)
+            ) {
+                val grouped = filtered.groupBy { it.categoryIdx }
+                grouped.toSortedMap().forEach { (catIdx, itemsInCat) ->
+                    item(key = "cat_header_$catIdx") {
+                        Text(
+                            text = categoryTitles.getOrElse(catIdx) { "" },
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = accentColor,
+                            modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
+                        )
+                    }
+                    val pairs = itemsInCat.chunked(2)
+                    items(
+                        count = pairs.size,
+                        key = { rowIdx -> "cat_${catIdx}_row_$rowIdx" }
+                    ) { rowIdx ->
+                        val pair = pairs[rowIdx]
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            pair.forEach { item ->
+                                InsertFeatureCard(
+                                    item = item,
+                                    isDark = isDark,
+                                    isArabic = isArabic,
+                                    textColor = textColor,
+                                    metaColor = metaColor,
+                                    onClick = { onSelectFeature(item.type) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                            if (pair.size == 1) {
+                                Spacer(modifier = Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InsertFeatureCard(
+    item: InsertMenuDescriptor,
+    isDark: Boolean,
+    isArabic: Boolean,
+    textColor: Color,
+    metaColor: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .defaultMinSize(minHeight = 64.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (isDark) Color.White.copy(alpha = 0.05f) else Color.White)
+            .border(
+                width = 1.dp,
+                color = item.tint.copy(alpha = if (isDark) 0.28f else 0.22f),
+                shape = RoundedCornerShape(16.dp)
+            )
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = ripple(bounded = true)
+            ) { onClick() }
+            .padding(horizontal = 10.dp, vertical = 10.dp)
+            .testTag("insert_feature_${item.type.name.lowercase()}"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(9.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(RoundedCornerShape(11.dp))
+                .background(item.tint.copy(alpha = if (isDark) 0.20f else 0.14f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = item.icon,
+                contentDescription = null,
+                tint = item.tint,
+                modifier = Modifier.size(19.dp)
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = if (isArabic) item.titleAr else item.titleEn,
+                fontSize = 12.5.sp,
+                fontWeight = FontWeight.Bold,
+                color = textColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = if (isArabic) item.subtitleAr else item.subtitleEn,
+                fontSize = 10.5.sp,
+                color = metaColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                lineHeight = 13.sp
+            )
+        }
+    }
+}
 
 /**
  * Interactive Notion-style Table Builder & Cell Editor Dialog.

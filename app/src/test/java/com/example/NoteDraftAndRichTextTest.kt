@@ -3,6 +3,7 @@ package com.example
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import com.example.data.model.InsertFeatureType
 import com.example.data.model.NoteEntity
 import com.example.data.model.NotePagesCodec
 import com.example.data.model.RichFormatAction
@@ -190,5 +191,38 @@ class NoteDraftAndRichTextTest {
                 prevOrig = o
             }
         }
+    }
+
+    @Test
+    fun `writing mode formatting toggles strikethrough highlight H3 and 20 insert features cleanly`() {
+        assertEquals(20, InsertFeatureType.entries.size)
+
+        val strike = RichTextCodec.applyRichAction(
+            TextFieldValue("تشطيب", TextRange(0, 5)),
+            RichFormatAction.STRIKETHROUGH
+        )
+        assertEquals("~~تشطيب~~", strike.text)
+        assertTrue(RichFormatAction.STRIKETHROUGH in RichTextCodec.inspectActiveStyles(strike.text, strike.selection))
+
+        val highlight = RichTextCodec.applyRichAction(
+            TextFieldValue("مهم", TextRange(0, 3)),
+            RichFormatAction.HIGHLIGHT
+        )
+        assertEquals("==مهم==", highlight.text)
+        assertTrue(RichFormatAction.HIGHLIGHT in RichTextCodec.inspectActiveStyles(highlight.text, highlight.selection))
+
+        val h3 = RichTextCodec.applyRichAction(TextFieldValue("فرعي", TextRange(4)), RichFormatAction.H3)
+        assertEquals("### فرعي", h3.text)
+        assertTrue(RichFormatAction.H3 in RichTextCodec.inspectActiveStyles(h3.text, h3.selection))
+
+        val prosCons = RichTextCodec.buildInsertSnippet(InsertFeatureType.PROS_CONS_TABLE, isArabic = true)
+        val inserted = RichTextCodec.insertSnippetAtSelection(
+            TextFieldValue("مقارنة:", TextRange(7)),
+            prosCons,
+            ensureNewLinePrefix = true
+        )
+        assertEquals(1, RichTextCodec.parseAllTables(inserted.text).size)
+        assertTrue(RichTextCodec.buildInsertSnippet(InsertFeatureType.DATE_STAMP, isArabic = true, nowMillis = 0L).startsWith("📅"))
+        assertTrue(RichTextCodec.buildInsertSnippet(InsertFeatureType.MEETING_TEMPLATE, isArabic = false).contains("Meeting Notes"))
     }
 }

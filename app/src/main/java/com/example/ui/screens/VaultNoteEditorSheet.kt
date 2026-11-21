@@ -79,11 +79,13 @@ import androidx.compose.ui.window.DialogProperties
 import com.example.audio.rememberAudioPlaybackController
 import com.example.data.model.ChecklistItem
 import com.example.data.model.GlassTint
+import com.example.data.model.InsertFeatureType
 import com.example.data.model.MarkdownTableData
 import com.example.data.model.NoteBackgroundCanvas
 import com.example.data.model.NoteBackgroundCatalog
 import com.example.data.model.NoteEntity
 import com.example.data.model.NotePagesCodec
+import com.example.data.model.RichFormatAction
 import com.example.data.model.RichTextCodec
 import com.example.data.model.VaultItemEntity
 import com.example.data.storage.AudioCloudPolicy
@@ -91,8 +93,10 @@ import com.example.data.storage.AudioStorageManager
 import com.example.ui.components.AudioPlayerCard
 import com.example.ui.components.DocumentStyleBottomSheet
 import com.example.ui.components.InlineTablesPreviewSection
+import com.example.ui.components.InsertFeaturesBottomSheet
 import com.example.ui.components.TableEditorDialog
 import com.example.ui.components.VoiceRecorderDialog
+import com.example.ui.components.WritingFormattingBar
 import com.example.ui.glass.FrostedBackdrop
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.theme.LocalAppThemePreset
@@ -185,6 +189,7 @@ fun VaultNoteEditorSheet(
     val undoStacks = remember(existingItem?.id) { mutableStateMapOf<Int, MutableList<TextFieldValue>>() }
     val redoStacks = remember(existingItem?.id) { mutableStateMapOf<Int, MutableList<TextFieldValue>>() }
     var writingFontSizeSp by remember { mutableFloatStateOf(15.5f) }
+    var showInsertSheet by remember { mutableStateOf(false) }
     var showTableDialog by remember { mutableStateOf(false) }
     var editingTableTarget by remember { mutableStateOf<MarkdownTableData?>(null) }
 
@@ -741,6 +746,25 @@ fun VaultNoteEditorSheet(
                         val activePageTables = remember(activePageText) {
                             RichTextCodec.parseAllTables(activePageText)
                         }
+                        val activeVaultStyles = remember(activePageText, activePageSel) {
+                            RichTextCodec.inspectActiveStyles(activePageText, activePageSel)
+                        }
+
+                        WritingFormattingBar(
+                            activeStyles = activeVaultStyles,
+                            isDark = effectiveDark,
+                            isArabic = isArabic,
+                            accentColor = accentColor,
+                            textColor = textColor,
+                            metaColor = metaColor,
+                            pillFill = surfaceColors.pillFill,
+                            onFormatAction = { action ->
+                                val next = RichTextCodec.applyRichAction(activeFieldValue, action)
+                                applyRichFieldValue(safePageIdx, next, recordUndo = true)
+                            },
+                            onOpenAddMenu = { showInsertSheet = true },
+                            modifier = Modifier.padding(horizontal = 0.dp)
+                        )
 
                         Column(
                             modifier = Modifier
@@ -931,6 +955,63 @@ fun VaultNoteEditorSheet(
                 }
             }
         }
+    }
+
+    if (showInsertSheet) {
+        val curBody = pages.getOrElse(safePageIdx) { "" }
+        val curSel = (pageSelections[safePageIdx] ?: TextRange(curBody.length)).let {
+            TextRange(it.start.coerceIn(0, curBody.length), it.end.coerceIn(0, curBody.length))
+        }
+        val curVal = TextFieldValue(curBody, curSel, pageCompositions[safePageIdx])
+        InsertFeaturesBottomSheet(
+            isDark = effectiveDark,
+            isArabic = isArabic,
+            accentColor = accentColor,
+            textColor = textColor,
+            metaColor = metaColor,
+            onDismiss = { showInsertSheet = false },
+            onSelectFeature = { feature ->
+                showInsertSheet = false
+                when (feature) {
+                    InsertFeatureType.TABLE -> {
+                        editingTableTarget = null
+                        showTableDialog = true
+                    }
+                    InsertFeatureType.VOICE_MEMO -> {
+                        playbackController.stop()
+                        showVoiceRecorder = true
+                    }
+                    InsertFeatureType.NEW_PAGE -> {
+                        if (pages.size < maxAllowedPages) {
+                            pages.add("")
+                            pageTitles.add("")
+                            activePageIndex = pages.lastIndex
+                        } else {
+                            onRequestPremiumUpgrade()
+                        }
+                    }
+                    InsertFeatureType.CHECKLIST_CARD -> {
+                        checklist.add(ChecklistItem(text = if (isArabic) "مهمة جديدة" else "New task", isDone = false))
+                    }
+                    InsertFeatureType.TODO_CHECKBOX -> applyRichFieldValue(safePageIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.CHECKBOX), true)
+                    InsertFeatureType.BULLET_LIST -> applyRichFieldValue(safePageIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.BULLET_LIST), true)
+                    InsertFeatureType.NUMBERED_LIST -> applyRichFieldValue(safePageIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.NUMBERED_LIST), true)
+                    InsertFeatureType.QUOTE -> applyRichFieldValue(safePageIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.QUOTE), true)
+                    InsertFeatureType.CALLOUT -> applyRichFieldValue(safePageIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.CALLOUT), true)
+                    InsertFeatureType.CODE_BLOCK -> applyRichFieldValue(safePageIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.CODE_BLOCK), true)
+                    InsertFeatureType.INLINE_CODE -> applyRichFieldValue(safePageIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.CODE), true)
+                    InsertFeatureType.DIVIDER -> applyRichFieldValue(safePageIdx, RichTextCodec.applyRichAction(curVal, RichFormatAction.DIVIDER), true)
+                    else -> {
+                        val snippet = RichTextCodec.buildInsertSnippet(feature, isArabic)
+                        val needNewLine = feature == InsertFeatureType.DAILY_HEADER ||
+                            feature == InsertFeatureType.PROGRESS_BAR ||
+                            feature == InsertFeatureType.MEETING_TEMPLATE ||
+                            feature == InsertFeatureType.PROS_CONS_TABLE
+                        applyRichFieldValue(safePageIdx, RichTextCodec.insertSnippetAtSelection(curVal, snippet, needNewLine), true)
+                    }
+                }
+            }
+        )
     }
 
     if (showTableDialog) {
