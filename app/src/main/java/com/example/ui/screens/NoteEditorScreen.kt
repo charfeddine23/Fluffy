@@ -547,10 +547,25 @@ fun NoteEditorScreen(
     fun applyInsertFeatureToPage(pageIndex: Int, feature: InsertFeatureType) {
         if (pageIndex !in pages.indices) return
         val snippet = RichTextCodec.buildInsertSnippet(feature, isArabic)
+        if (feature == InsertFeatureType.PROS_CONS_TABLE) {
+            val updatedPageText = insertTableInSegmentedPage(
+                pageText = pages[pageIndex],
+                preferredSegmentIndex = activeSegmentByPage[pageIndex] ?: 0,
+                segmentSelections = pageSegmentSelections(pageIndex),
+                tableMarkdown = snippet.trimEnd('\n')
+            )
+            updatePageTextBounded(pageIndex, updatedPageText)
+            val latestSegments = RichTextCodec.splitPageIntoEditorSegments(pages[pageIndex])
+            clearPageSegments(pageIndex)
+            val tailIdx = latestSegments.indexOfLast { it is EditorPageSegment.TextSegment }.coerceAtLeast(0)
+            activeSegmentByPage[pageIndex] = tailIdx
+            segmentSelections["$pageIndex:$tailIdx"] = TextRange(0)
+            pendingStylesByPage.remove(pageIndex)
+            return
+        }
         val needNewLine = feature == InsertFeatureType.DAILY_HEADER ||
             feature == InsertFeatureType.PROGRESS_BAR ||
-            feature == InsertFeatureType.MEETING_TEMPLATE ||
-            feature == InsertFeatureType.PROS_CONS_TABLE
+            feature == InsertFeatureType.MEETING_TEMPLATE
         val result = insertSnippetInSegmentedPage(
             pageText = pages[pageIndex],
             preferredSegmentIndex = activeSegmentByPage[pageIndex] ?: 0,
@@ -560,24 +575,17 @@ fun NoteEditorScreen(
         )
         val truncated = updatePageTextBounded(pageIndex, result.updatedPageText)
         val latestSegments = RichTextCodec.splitPageIntoEditorSegments(pages[pageIndex])
-        if (feature == InsertFeatureType.PROS_CONS_TABLE) {
-            clearPageSegments(pageIndex)
-            val tailIdx = latestSegments.indexOfLast { it is EditorPageSegment.TextSegment }.coerceAtLeast(0)
-            activeSegmentByPage[pageIndex] = tailIdx
-            segmentSelections["$pageIndex:$tailIdx"] = TextRange(0)
+        val (_, newSeg) = resolveActiveTextSegment(latestSegments, result.targetSegmentIndex)
+        activeSegmentByPage[pageIndex] = result.targetSegmentIndex
+        segmentSelections["$pageIndex:${result.targetSegmentIndex}"] = if (truncated) {
+            TextRange(newSeg.text.length)
         } else {
-            val (_, newSeg) = resolveActiveTextSegment(latestSegments, result.targetSegmentIndex)
-            activeSegmentByPage[pageIndex] = result.targetSegmentIndex
-            segmentSelections["$pageIndex:${result.targetSegmentIndex}"] = if (truncated) {
-                TextRange(newSeg.text.length)
-            } else {
-                TextRange(
-                    result.updatedSelection.start.coerceIn(0, newSeg.text.length),
-                    result.updatedSelection.end.coerceIn(0, newSeg.text.length)
-                )
-            }
-            segmentCompositions["$pageIndex:${result.targetSegmentIndex}"] = null
+            TextRange(
+                result.updatedSelection.start.coerceIn(0, newSeg.text.length),
+                result.updatedSelection.end.coerceIn(0, newSeg.text.length)
+            )
         }
+        segmentCompositions["$pageIndex:${result.targetSegmentIndex}"] = null
         pendingStylesByPage.remove(pageIndex)
     }
 

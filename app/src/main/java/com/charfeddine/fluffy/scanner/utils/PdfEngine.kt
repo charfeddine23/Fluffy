@@ -10,6 +10,7 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.pdf.PdfDocument
 import android.graphics.pdf.PdfRenderer
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -24,11 +25,13 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
+import kotlin.math.abs
 import kotlin.math.min
 
 data class PdfRenderedPageInput(
     val bitmap: Bitmap,
-    val ocrLines: List<OcrTextBox> = emptyList()
+    val ocrLines: List<OcrTextBox> = emptyList(),
+    val exactA4Sheet: Boolean = false
 )
 
 /**
@@ -58,6 +61,9 @@ object PdfEngine {
             }
 
             pages.forEachIndexed { idx, item ->
+                val srcAspect = item.bitmap.width.toFloat() / item.bitmap.height.coerceAtLeast(1).toFloat()
+                val isPrecomposedA4 = item.exactA4Sheet ||
+                    (item.bitmap.width >= 1600 && abs(srcAspect - (210f / 297f)) < 0.012f)
                 val bmp = downscaleIfLarger(item.bitmap, jpegDownscaleMaxSide)
                 val pageW = if (pageSizePreset == PdfPageSizePreset.AUTO_FIT) {
                     bmp.width.coerceIn(300, 1800)
@@ -75,7 +81,13 @@ object PdfEngine {
                 val canvas = page.canvas
                 canvas.drawColor(Color.WHITE)
 
-                val margin = if (pageSizePreset == PdfPageSizePreset.AUTO_FIT) 0f else 18f
+                val margin = if (pageSizePreset == PdfPageSizePreset.AUTO_FIT ||
+                    (pageSizePreset == PdfPageSizePreset.A4 && isPrecomposedA4)
+                ) {
+                    0f
+                } else {
+                    18f
+                }
                 val availW = pageW - margin * 2f
                 val availH = pageH - margin * 2f
                 val scale = min(availW / bmp.width.coerceAtLeast(1), availH / bmp.height.coerceAtLeast(1))
@@ -409,6 +421,58 @@ object PdfEngine {
             val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS), "FluffyScans").apply { mkdirs() }
             val dest = File(dir, displayName)
             sourceFile.copyTo(dest, overwrite = true)
+            dest.absolutePath
+        }
+    }
+
+    /**
+     * Saves an image directly into the device Gallery (`Pictures/FluffyScans`) via MediaStore (API 29+)
+     * or triggers [MediaScannerConnection.scanFile] on older Android versions without broad permissions.
+     */
+    suspend fun saveImageToGallery(
+        context: Context,
+        sourceFile: File,
+        displayName: String,
+        mimeType: String = "image/jpeg"
+    ): String? = withContext(Dispatchers.IO) {
+        if (!sourceFile.exists()) return@withContext null
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
+                put(MediaStore.Images.Media.MIME_TYPE, mimeType)
+                put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/FluffyScans")
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+            val resolver = context.contentResolver
+            val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                ?: return@withContext null
+            val copied = runCatching {
+                resolver.openOutputStream(uri)?.use { out ->
+                    sourceFile.inputStream().use { it.copyTo(out) }
+                } ?: throw IllegalStateException("Cannot open gallery output stream")
+            }.isSuccess
+            if (!copied) {
+                runCatching { resolver.delete(uri, null, null) }
+                return@withContext null
+            }
+            val publishValues = ContentValues().apply {
+                put(MediaStore.Images.Media.IS_PENDING, 0)
+            }
+            runCatching { resolver.update(uri, publishValues, null, null) }
+            "Pictures/FluffyScans/$displayName"
+        } else {
+            val dir = File(
+                context.getExternalFilesDir(Environment.DIRECTORY_PICTURES),
+                "FluffyScans"
+            ).apply { mkdirs() }
+            val dest = File(dir, displayName)
+            sourceFile.copyTo(dest, overwrite = true)
+            MediaScannerConnection.scanFile(
+                context,
+                arrayOf(dest.absolutePath),
+                arrayOf(mimeType),
+                null
+            )
             dest.absolutePath
         }
     }

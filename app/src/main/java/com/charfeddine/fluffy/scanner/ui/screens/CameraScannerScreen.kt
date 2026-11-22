@@ -57,8 +57,10 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -83,6 +85,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.FlashAuto
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material.icons.filled.GridOff
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.OpenInBrowser
@@ -129,6 +132,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -136,6 +140,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil.compose.rememberAsyncImagePainter
 import com.charfeddine.fluffy.scanner.data.model.BarcodeScanResult
+import com.charfeddine.fluffy.scanner.data.model.IdCardPrintMode
 import com.charfeddine.fluffy.scanner.data.model.ScanMode
 import com.charfeddine.fluffy.scanner.domain.ScannerViewModel
 import com.charfeddine.fluffy.scanner.ui.theme.ScannerDarkLiquidBackdrop
@@ -172,6 +177,7 @@ fun CameraScannerScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
 
     val activeMode by scannerViewModel.activeScanMode.collectAsState()
+    val idCardPrintMode by scannerViewModel.idCardPrintMode.collectAsState()
     val batchFrames by scannerViewModel.batchFrames.collectAsState()
     val idCardFrontPath by scannerViewModel.idCardFrontRawPath.collectAsState()
     val isBusy by scannerViewModel.isBusy.collectAsState()
@@ -659,7 +665,10 @@ fun CameraScannerScreen(
                             }
                         } else {
                             val rawRes = runCatching {
-                                DocumentImageProcessor.detectDocumentQuadFromImageProxy(imageProxy)
+                                DocumentImageProcessor.detectDocumentQuadFromImageProxy(
+                                    imageProxy = imageProxy,
+                                    isIdCardHint = (modeNow == ScanMode.ID_CARD)
+                                )
                             }.getOrNull()
                             imageProxy.close()
                             if (rawRes != null && !isDisposed.get()) {
@@ -837,6 +846,54 @@ fun CameraScannerScreen(
                         size = Size(cardW, cardH),
                         cornerRadius = CornerRadius(18.dp.toPx(), 18.dp.toPx()),
                         style = Stroke(width = 2.5.dp.toPx())
+                    )
+                }
+            }
+
+            // Live detected document / ID card 4-corner polygon overlay
+            if ((activeMode == ScanMode.BOOK || activeMode == ScanMode.ID_CARD) && edgeState.isLocked) {
+                val camAspect = edgeState.frameAspectRatio.coerceIn(0.4f, 2.5f)
+                val fillScale = max(w / camAspect, h)
+                val renderedW = camAspect * fillScale
+                val renderedH = fillScale
+                val offX = (w - renderedW) * 0.5f
+                val offY = (h - renderedH) * 0.5f
+                fun toCanvasPt(nx: Float, ny: Float) = Offset(offX + nx * renderedW, offY + ny * renderedH)
+
+                val pts = listOf(
+                    toCanvasPt(edgeState.quad.topLeft.x, edgeState.quad.topLeft.y),
+                    toCanvasPt(edgeState.quad.topRight.x, edgeState.quad.topRight.y),
+                    toCanvasPt(edgeState.quad.bottomRight.x, edgeState.quad.bottomRight.y),
+                    toCanvasPt(edgeState.quad.bottomLeft.x, edgeState.quad.bottomLeft.y)
+                )
+                val polyPath = Path().apply {
+                    moveTo(pts[0].x, pts[0].y)
+                    lineTo(pts[1].x, pts[1].y)
+                    lineTo(pts[2].x, pts[2].y)
+                    lineTo(pts[3].x, pts[3].y)
+                    close()
+                }
+                drawPath(
+                    path = polyPath,
+                    color = ScannerGlassPalette.EmeraldGlow.copy(alpha = 0.14f)
+                )
+                drawPath(
+                    path = polyPath,
+                    brush = Brush.linearGradient(
+                        listOf(ScannerGlassPalette.EmeraldGlow, ScannerGlassPalette.EdgeOverlayCyan)
+                    ),
+                    style = Stroke(width = 2.6.dp.toPx(), join = StrokeJoin.Round, cap = StrokeCap.Round)
+                )
+                pts.forEach { pt ->
+                    drawCircle(
+                        color = ScannerGlassPalette.DeepObsidian,
+                        radius = 6.dp.toPx(),
+                        center = pt
+                    )
+                    drawCircle(
+                        color = ScannerGlassPalette.EmeraldGlow,
+                        radius = 4.2.dp.toPx(),
+                        center = pt
                     )
                 }
             }
@@ -1087,9 +1144,17 @@ fun CameraScannerScreen(
                             showCapturedBanner ->
                                 if (isArabic) "تم الالتقاط!" else "Captured!"
                             activeMode == ScanMode.ID_CARD && idCardFrontPath == null ->
-                                if (isArabic) "صوّر الوجه الأمامي للبطاقة" else "Scan Front of ID"
+                                if (edgeState.isLocked) {
+                                    if (isArabic) "تم تحديد حواف البطاقة ✓ • صوّر الأمام" else "ID Edges Locked ✓ • Scan Front"
+                                } else {
+                                    if (isArabic) "صوّر الوجه الأمامي للبطاقة" else "Scan Front of ID"
+                                }
                             activeMode == ScanMode.ID_CARD && idCardFrontPath != null ->
-                                if (isArabic) "صوّر الوجه الخلفي للبطاقة" else "Scan Back of ID"
+                                if (edgeState.isLocked) {
+                                    if (isArabic) "تم تحديد حواف البطاقة ✓ • صوّر الخلف" else "ID Edges Locked ✓ • Scan Back"
+                                } else {
+                                    if (isArabic) "صوّر الوجه الخلفي للبطاقة" else "Scan Back of ID"
+                                }
                             activeMode == ScanMode.QR_BARCODE ->
                                 if (isArabic) "وجّه الكاميرا نحو الرمز" else "Point at QR / Code"
                             edgeState.isLocked ->
@@ -1418,6 +1483,62 @@ fun CameraScannerScreen(
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        // 6. Floating `Recto` / `Recto Verso` Toggle Button Anchored Directly Below the ID Card Frame
+        if (activeMode == ScanMode.ID_CARD) {
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                val wPx = constraints.maxWidth.toFloat()
+                val hPx = constraints.maxHeight.toFloat()
+                val cardW = wPx * 0.86f
+                val cardH = cardW / 1.586f
+                val guideBottomPx = (hPx + cardH) / 2f - idGuideTopOffsetPx
+                val buttonTopPx = (guideBottomPx + with(density) { 12.dp.toPx() })
+                    .coerceIn(with(density) { 120.dp.toPx() }, (hPx - with(density) { 245.dp.toPx() }).coerceAtLeast(with(density) { 120.dp.toPx() }))
+                val isVerso = idCardPrintMode == IdCardPrintMode.RECTO_VERSO
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .offset { IntOffset(0, buttonTopPx.toInt()) },
+                    contentAlignment = Alignment.TopCenter
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .height(48.dp)
+                            .shadow(14.dp, CircleShape, ambientColor = ScannerGlassPalette.EdgeOverlayCyan, spotColor = Color.Black)
+                            .testTag("id_recto_verso_btn")
+                            .iosLiquidGlass(CircleShape, glowAccent = isVerso, fillAlpha = 0.80f)
+                            .border(
+                                width = 1.dp,
+                                color = if (isVerso) ScannerGlassPalette.VioletGlow.copy(alpha = 0.85f)
+                                else ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.65f),
+                                shape = CircleShape
+                            )
+                            .clickable {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                scannerViewModel.toggleIdCardPrintMode()
+                            }
+                            .padding(horizontal = 20.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Flip,
+                            contentDescription = idCardPrintMode.label,
+                            tint = if (isVerso) ScannerGlassPalette.VioletGlow else ScannerGlassPalette.EdgeOverlayCyan,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = idCardPrintMode.label,
+                            color = ScannerGlassPalette.TextPrimary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
                     }
                 }
             }

@@ -323,10 +323,25 @@ fun VaultNoteEditorSheet(
     fun applyInsertFeatureToPage(pageIdx: Int, feature: InsertFeatureType) {
         if (pageIdx !in pages.indices) return
         val snippet = RichTextCodec.buildInsertSnippet(feature, isArabic)
+        if (feature == InsertFeatureType.PROS_CONS_TABLE) {
+            val updatedPageText = insertTableInSegmentedPage(
+                pageText = pages[pageIdx],
+                preferredSegmentIndex = activeSegmentByPage[pageIdx] ?: 0,
+                segmentSelections = pageSegmentSelections(pageIdx),
+                tableMarkdown = snippet.trimEnd('\n')
+            )
+            pages[pageIdx] = updatedPageText
+            val latestSegments = RichTextCodec.splitPageIntoEditorSegments(pages[pageIdx])
+            clearPageSegments(pageIdx)
+            val tailIdx = latestSegments.indexOfLast { it is EditorPageSegment.TextSegment }.coerceAtLeast(0)
+            activeSegmentByPage[pageIdx] = tailIdx
+            segmentSelections["$pageIdx:$tailIdx"] = TextRange(0)
+            pendingStylesByPage.remove(pageIdx)
+            return
+        }
         val needNewLine = feature == InsertFeatureType.DAILY_HEADER ||
             feature == InsertFeatureType.PROGRESS_BAR ||
-            feature == InsertFeatureType.MEETING_TEMPLATE ||
-            feature == InsertFeatureType.PROS_CONS_TABLE
+            feature == InsertFeatureType.MEETING_TEMPLATE
         val result = insertSnippetInSegmentedPage(
             pageText = pages[pageIdx],
             preferredSegmentIndex = activeSegmentByPage[pageIdx] ?: 0,
@@ -336,20 +351,13 @@ fun VaultNoteEditorSheet(
         )
         pages[pageIdx] = result.updatedPageText
         val latestSegments = RichTextCodec.splitPageIntoEditorSegments(pages[pageIdx])
-        if (feature == InsertFeatureType.PROS_CONS_TABLE) {
-            clearPageSegments(pageIdx)
-            val tailIdx = latestSegments.indexOfLast { it is EditorPageSegment.TextSegment }.coerceAtLeast(0)
-            activeSegmentByPage[pageIdx] = tailIdx
-            segmentSelections["$pageIdx:$tailIdx"] = TextRange(0)
-        } else {
-            val (_, newSeg) = resolveActiveTextSegment(latestSegments, result.targetSegmentIndex)
-            activeSegmentByPage[pageIdx] = result.targetSegmentIndex
-            segmentSelections["$pageIdx:${result.targetSegmentIndex}"] = TextRange(
-                result.updatedSelection.start.coerceIn(0, newSeg.text.length),
-                result.updatedSelection.end.coerceIn(0, newSeg.text.length)
-            )
-            segmentCompositions["$pageIdx:${result.targetSegmentIndex}"] = null
-        }
+        val (_, newSeg) = resolveActiveTextSegment(latestSegments, result.targetSegmentIndex)
+        activeSegmentByPage[pageIdx] = result.targetSegmentIndex
+        segmentSelections["$pageIdx:${result.targetSegmentIndex}"] = TextRange(
+            result.updatedSelection.start.coerceIn(0, newSeg.text.length),
+            result.updatedSelection.end.coerceIn(0, newSeg.text.length)
+        )
+        segmentCompositions["$pageIdx:${result.targetSegmentIndex}"] = null
         pendingStylesByPage.remove(pageIdx)
     }
 

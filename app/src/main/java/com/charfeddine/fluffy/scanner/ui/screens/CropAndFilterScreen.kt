@@ -117,6 +117,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.charfeddine.fluffy.scanner.data.model.DocumentQuad
+import com.charfeddine.fluffy.scanner.data.model.IdCardPrintMode
 import com.charfeddine.fluffy.scanner.data.model.IdCardSide
 import com.charfeddine.fluffy.scanner.data.model.PointNorm
 import com.charfeddine.fluffy.scanner.data.model.ScannerFilterType
@@ -246,11 +247,22 @@ fun CropAndFilterScreen(
     }
 
     // Generate crisp miniature previews for all 5 filters once per warp/rotation
+    val effectiveIdPrintMode = remember(frame.idCardPrintMode, pairedPartner?.idCardPrintMode) {
+        if (frame.idCardPrintMode == IdCardPrintMode.RECTO_VERSO ||
+            pairedPartner?.idCardPrintMode == IdCardPrintMode.RECTO_VERSO
+        ) {
+            IdCardPrintMode.RECTO_VERSO
+        } else {
+            IdCardPrintMode.RECTO
+        }
+    }
+
     LaunchedEffect(
         isCropPhase,
         rawBitmap,
         frame.detectedQuad,
         frame.rotationDeg,
+        effectiveIdPrintMode,
         pairedPartner?.id,
         pairedPartner?.detectedQuad
     ) {
@@ -258,24 +270,12 @@ fun CropAndFilterScreen(
         if (!isCropPhase) {
             val thumbs = withContext(Dispatchers.Default) {
                 val baseThumbSource = if (pairedPartner != null) {
-                    val partnerRaw = withContext(Dispatchers.IO) {
-                        DocumentImageProcessor.decodeSampledBitmap(File(pairedPartner.rawImagePath), 700)
-                    }
-                    if (partnerRaw != null) {
-                        val isFrameFront = frame.idCardSide == IdCardSide.FRONT || pairedPartner.idCardSide == IdCardSide.BACK
-                        val frontBmp = if (isFrameFront) raw else partnerRaw
-                        val backBmp = if (isFrameFront) partnerRaw else raw
-                        val frontQuad = if (isFrameFront) frame.detectedQuad else pairedPartner.detectedQuad
-                        val backQuad = if (isFrameFront) pairedPartner.detectedQuad else frame.detectedQuad
-
-                        val fMini = DocumentImageProcessor.warpPerspective(frontBmp, frontQuad, 180)
-                        val bMini = DocumentImageProcessor.warpPerspective(backBmp, backQuad, 180)
-                        partnerRaw.recycle()
-                        val merged = DocumentImageProcessor.mergeIdCardFrontAndBack(fMini, bMini)
-                        if (fMini !== frontBmp) fMini.recycle()
-                        if (bMini !== backBmp) bMini.recycle()
-                        val scaled = Bitmap.createScaledBitmap(merged, 120, 170, true)
-                        if (scaled !== merged) merged.recycle()
+                    if (effectiveIdPrintMode == IdCardPrintMode.RECTO_VERSO) {
+                        val miniWarped = DocumentImageProcessor.warpPerspective(raw, frame.detectedQuad, 180)
+                        val sheet = DocumentImageProcessor.createIdCardSingleFaceSheet(miniWarped)
+                        if (miniWarped !== raw && !miniWarped.isRecycled) miniWarped.recycle()
+                        val scaled = Bitmap.createScaledBitmap(sheet, 120, 170, true)
+                        if (scaled !== sheet) sheet.recycle()
                         if (frame.rotationDeg % 360 != 0) {
                             val rot = DocumentImageProcessor.rotateBitmap(scaled, frame.rotationDeg.toFloat())
                             if (rot !== scaled) scaled.recycle()
@@ -284,11 +284,38 @@ fun CropAndFilterScreen(
                             scaled
                         }
                     } else {
-                        val miniWarped = DocumentImageProcessor.warpPerspective(raw, frame.detectedQuad, 150)
-                        if (frame.rotationDeg % 360 != 0) {
-                            DocumentImageProcessor.rotateBitmap(miniWarped, frame.rotationDeg.toFloat())
+                        val partnerRaw = withContext(Dispatchers.IO) {
+                            DocumentImageProcessor.decodeSampledBitmap(File(pairedPartner.rawImagePath), 700)
+                        }
+                        if (partnerRaw != null) {
+                            val isFrameFront = frame.idCardSide == IdCardSide.FRONT || pairedPartner.idCardSide == IdCardSide.BACK
+                            val frontBmp = if (isFrameFront) raw else partnerRaw
+                            val backBmp = if (isFrameFront) partnerRaw else raw
+                            val frontQuad = if (isFrameFront) frame.detectedQuad else pairedPartner.detectedQuad
+                            val backQuad = if (isFrameFront) pairedPartner.detectedQuad else frame.detectedQuad
+
+                            val fMini = DocumentImageProcessor.warpPerspective(frontBmp, frontQuad, 180)
+                            val bMini = DocumentImageProcessor.warpPerspective(backBmp, backQuad, 180)
+                            partnerRaw.recycle()
+                            val merged = DocumentImageProcessor.mergeIdCardFrontAndBack(fMini, bMini)
+                            if (fMini !== frontBmp) fMini.recycle()
+                            if (bMini !== backBmp) bMini.recycle()
+                            val scaled = Bitmap.createScaledBitmap(merged, 120, 170, true)
+                            if (scaled !== merged) merged.recycle()
+                            if (frame.rotationDeg % 360 != 0) {
+                                val rot = DocumentImageProcessor.rotateBitmap(scaled, frame.rotationDeg.toFloat())
+                                if (rot !== scaled) scaled.recycle()
+                                rot
+                            } else {
+                                scaled
+                            }
                         } else {
-                            miniWarped
+                            val miniWarped = DocumentImageProcessor.warpPerspective(raw, frame.detectedQuad, 150)
+                            if (frame.rotationDeg % 360 != 0) {
+                                DocumentImageProcessor.rotateBitmap(miniWarped, frame.rotationDeg.toFloat())
+                            } else {
+                                miniWarped
+                            }
                         }
                     }
                 } else {
@@ -325,6 +352,7 @@ fun CropAndFilterScreen(
         frame.contrast,
         frame.sharpness,
         frame.rotationDeg,
+        effectiveIdPrintMode,
         pairedPartner?.id,
         pairedPartner?.detectedQuad
     ) {
@@ -333,6 +361,48 @@ fun CropAndFilterScreen(
             isRenderingPreview = true
             try {
                 withContext(Dispatchers.Default) {
+                    if (pairedPartner != null && effectiveIdPrintMode == IdCardPrintMode.RECTO_VERSO) {
+                        val sideWarped = DocumentImageProcessor.warpPerspective(raw, frame.detectedQuad, 960)
+                        val sideBeforeRaw = DocumentImageProcessor.createIdCardSingleFaceSheet(sideWarped)
+                        val sideAuto = DocumentImageProcessor.autoEnhanceCapturedDocument(sideWarped, isIdCardMode = true)
+                        if (sideWarped !== sideAuto && !sideWarped.isRecycled) sideWarped.recycle()
+
+                        val sideEnh = DocumentImageProcessor.applyEnhancements(
+                            source = sideAuto,
+                            filter = frame.filter,
+                            brightness = frame.brightness,
+                            contrast = frame.contrast,
+                            sharpness = frame.sharpness,
+                            rotationDeg = 0,
+                            enableSuperRes = false
+                        )
+                        if (sideAuto !== sideEnh && !sideAuto.isRecycled) sideAuto.recycle()
+
+                        val sideAfterRaw = DocumentImageProcessor.createIdCardSingleFaceSheet(sideEnh)
+                        if (!sideEnh.isRecycled) sideEnh.recycle()
+
+                        val beforeSheet = if (frame.rotationDeg % 360 != 0) {
+                            val rot = DocumentImageProcessor.rotateBitmap(sideBeforeRaw, frame.rotationDeg.toFloat())
+                            if (rot !== sideBeforeRaw && !sideBeforeRaw.isRecycled) sideBeforeRaw.recycle()
+                            rot
+                        } else {
+                            sideBeforeRaw
+                        }
+                        val afterSheet = if (frame.rotationDeg % 360 != 0) {
+                            val rot = DocumentImageProcessor.rotateBitmap(sideAfterRaw, frame.rotationDeg.toFloat())
+                            if (rot !== sideAfterRaw && !sideAfterRaw.isRecycled) sideAfterRaw.recycle()
+                            rot
+                        } else {
+                            sideAfterRaw
+                        }
+
+                        withContext(Dispatchers.Main) {
+                            warpedBitmap = beforeSheet
+                            enhancedBitmap = afterSheet
+                        }
+                        return@withContext
+                    }
+
                     if (pairedPartner != null) {
                         val partnerRaw = withContext(Dispatchers.IO) {
                             DocumentImageProcessor.decodeSampledBitmap(File(pairedPartner.rawImagePath), 1280)
@@ -731,10 +801,14 @@ fun CropAndFilterScreen(
                                 uiScope.launch {
                                     try {
                                         val auto = withContext(Dispatchers.Default) {
-                                            DocumentImageProcessor.detectQuadFromBitmap(
-                                                bitmap = bmp,
-                                                isIdCardHint = frame.idCardSide != IdCardSide.NONE
-                                            )
+                                            if (frame.idCardSide != IdCardSide.NONE) {
+                                                DocumentImageProcessor.detectIdCardQuad(bmp)
+                                            } else {
+                                                DocumentImageProcessor.detectQuadFromBitmap(
+                                                    bitmap = bmp,
+                                                    isIdCardHint = false
+                                                )
+                                            }
                                         }
                                         scannerViewModel.updateFrameQuad(activeIdx, auto)
                                     } finally {
@@ -1245,6 +1319,26 @@ fun CropAndFilterScreen(
                             )
                         }
 
+                        val outputPageCount = remember(batchFrames) {
+                            val seenGroups = mutableSetOf<String>()
+                            var count = 0
+                            batchFrames.forEach { item ->
+                                val gid = item.idCardGroupId
+                                val hasPartner = gid != null && batchFrames.count { it.idCardGroupId == gid } >= 2
+                                if (hasPartner && gid != null) {
+                                    if (seenGroups.add(gid)) {
+                                        val groupVerso = batchFrames.any {
+                                            it.idCardGroupId == gid && it.idCardPrintMode == IdCardPrintMode.RECTO_VERSO
+                                        }
+                                        count += if (groupVerso) 2 else 1
+                                    }
+                                } else {
+                                    count += 1
+                                }
+                            }
+                            count
+                        }
+
                         Button(
                             onClick = { scannerViewModel.commitBatchToDocument(docTitle, appendToDocId, isArabic) },
                             enabled = !isBusy,
@@ -1260,7 +1354,7 @@ fun CropAndFilterScreen(
                                 Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFF04101B))
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = if (isArabic) "حفظ (${batchFrames.size})" else "Save (${batchFrames.size})",
+                                    text = if (isArabic) "حفظ ($outputPageCount)" else "Save ($outputPageCount)",
                                     color = Color(0xFF04101B),
                                     fontWeight = FontWeight.ExtraBold
                                 )

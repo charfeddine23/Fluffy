@@ -70,6 +70,8 @@ object DocumentEdgeDetector {
         val blurred = IntArray(maxPixels)
         val closed = IntArray(maxPixels)
         val hDil = IntArray(maxPixels)
+        val gx = IntArray(maxPixels)
+        val gy = IntArray(maxPixels)
         val mag = IntArray(maxPixels)
         val dir = ByteArray(maxPixels)
         val nms = IntArray(maxPixels)
@@ -99,7 +101,10 @@ object DocumentEdgeDetector {
      * Real-time zero-allocation CameraX Y-plane analyzer with upright axis normalization,
      * tile CLAHE local contrast enhancement, morphological text suppression, and line-intersection corners.
      */
-    fun detectFromImageProxy(imageProxy: ImageProxy): EdgeDetectionFrameResult {
+    fun detectFromImageProxy(
+        imageProxy: ImageProxy,
+        isIdCardHint: Boolean = false
+    ): EdgeDetectionFrameResult {
         val plane = imageProxy.planes.firstOrNull()
             ?: return EdgeDetectionFrameResult(DocumentQuad.SAFE_DEFAULT_MARGIN, 0f, false)
         val srcW = imageProxy.width
@@ -179,7 +184,8 @@ object DocumentEdgeDetector {
         val res = runLiveFastPass(
             ws = ws,
             w = gridW,
-            h = gridH
+            h = gridH,
+            isIdCardHint = isIdCardHint
         )
         return res.copy(
             frameAspectRatio = rotAspect,
@@ -195,7 +201,8 @@ object DocumentEdgeDetector {
     private fun runLiveFastPass(
         ws: LiveWorkspace,
         w: Int,
-        h: Int
+        h: Int,
+        isIdCardHint: Boolean = false
     ): EdgeDetectionFrameResult {
         val n = w * h
         val luma = ws.luma
@@ -284,7 +291,9 @@ object DocumentEdgeDetector {
             }
         }
 
-        // 4. Zero-alloc Sobel + NMS + BFS Canny Edge Detection
+        // 4. Zero-alloc Scharr/Sobel + NMS + BFS Canny Edge Detection
+        val gxArr = ws.gx
+        val gyArr = ws.gy
         val mag = ws.mag
         val dir = ws.dir
         val nms = ws.nms
@@ -292,6 +301,8 @@ object DocumentEdgeDetector {
         val weak = ws.weak
         val queue = ws.queue
         val histBins = ws.histBins
+        gxArr.fill(0, 0, n)
+        gyArr.fill(0, 0, n)
         mag.fill(0, 0, n)
         nms.fill(0, 0, n)
         strong.fill(false, 0, n)
@@ -303,13 +314,27 @@ object DocumentEdgeDetector {
             val y0 = y * w
             val yp = (y + 1) * w
             for (x in 2 until w - 2) {
-                val gx = -closed[ym + x - 1] + closed[ym + x + 1] -
-                    2 * closed[y0 + x - 1] + 2 * closed[y0 + x + 1] -
-                    closed[yp + x - 1] + closed[yp + x + 1]
-                val gy = -closed[ym + x - 1] - 2 * closed[ym + x] - closed[ym + x + 1] +
-                    closed[yp + x - 1] + 2 * closed[yp + x] + closed[yp + x + 1]
+                val gx = if (isIdCardHint) {
+                    // Scharr 3x3 for superior rotational invariance on tilted ID cards
+                    (-3 * closed[ym + x - 1] + 3 * closed[ym + x + 1] -
+                        10 * closed[y0 + x - 1] + 10 * closed[y0 + x + 1] -
+                        3 * closed[yp + x - 1] + 3 * closed[yp + x + 1]) shr 2
+                } else {
+                    -closed[ym + x - 1] + closed[ym + x + 1] -
+                        2 * closed[y0 + x - 1] + 2 * closed[y0 + x + 1] -
+                        closed[yp + x - 1] + closed[yp + x + 1]
+                }
+                val gy = if (isIdCardHint) {
+                    (-3 * closed[ym + x - 1] - 10 * closed[ym + x] - 3 * closed[ym + x + 1] +
+                        3 * closed[yp + x - 1] + 10 * closed[yp + x] + 3 * closed[yp + x + 1]) shr 2
+                } else {
+                    -closed[ym + x - 1] - 2 * closed[ym + x] - closed[ym + x + 1] +
+                        closed[yp + x - 1] + 2 * closed[yp + x] + closed[yp + x + 1]
+                }
                 val m = abs(gx) + abs(gy)
                 val idx = y0 + x
+                gxArr[idx] = gx
+                gyArr[idx] = gy
                 mag[idx] = m
                 if (m > 10) {
                     val ax = abs(gx)
@@ -399,7 +424,7 @@ object DocumentEdgeDetector {
             }
         }
 
-        return findBestDocumentQuad(
+        val contourRes = findBestDocumentQuad(
             edges = strong,
             w = w,
             h = h,
@@ -408,18 +433,138 @@ object DocumentEdgeDetector {
             scaleX = 1f,
             scaleY = 1f,
             reusableVisited = ws.visited,
-            reusableStack = ws.stack
+            reusableStack = ws.stack,
+            isIdCardHint = isIdCardHint
         )
+        if (!isIdCardHint || (contourRes.isLocked && contourRes.confidence >= 0.62f && !isBorderHuggingQuad(contourRes.quad))) {
+            return contourRes
+        }
+        val houghRes = runHoughRansacRectanglePass(
+            edges = strong,
+            gradMag = mag,
+            gxArr = gxArr,
+            gyArr = gyArr,
+            w = w,
+            h = h,
+            origW = w,
+            origH = h,
+            scaleX = 1f,
+            scaleY = 1f,
+            isIdCardHint = true
+        )
+        return when {
+            houghRes.isLocked && contourRes.isLocked ->
+                if (houghRes.confidence >= contourRes.confidence) houghRes else contourRes
+            houghRes.isLocked -> houghRes
+            else -> contourRes
+        }
+    }
+
+    /**
+     * Multi-scale Guided ROI + Full-Frame ID Card Detector:
+     * Combines full-frame modern multi-cue detection with a cropped high-resolution ROI centered
+     * around the viewfinder guide quad so printed edges, rounded corners, and tilted cards lock reliably
+     * even when fingers hold the card or busy backgrounds surround it.
+     */
+    fun detectIdCardWithGuidance(bitmap: Bitmap, guideQuad: DocumentQuad? = null): DocumentQuad {
+        val fullRes = detectFromBitmapInternal(bitmap, isIdCardHint = true)
+        val effectiveGuide = guideQuad ?: DocumentQuad(
+            topLeft = PointNorm(0.05f, 0.16f),
+            topRight = PointNorm(0.95f, 0.16f),
+            bottomRight = PointNorm(0.95f, 0.80f),
+            bottomLeft = PointNorm(0.05f, 0.80f)
+        )
+
+        val gPts = effectiveGuide.asList()
+        val gMinX = gPts.minOf { it.x }
+        val gMaxX = gPts.maxOf { it.x }
+        val gMinY = gPts.minOf { it.y }
+        val gMaxY = gPts.maxOf { it.y }
+        val gW = (gMaxX - gMinX).coerceAtLeast(0.15f)
+        val gH = (gMaxY - gMinY).coerceAtLeast(0.12f)
+
+        val roiMinX = (gMinX - gW * 0.28f).coerceIn(0f, 0.85f)
+        val roiMaxX = (gMaxX + gW * 0.28f).coerceIn(roiMinX + 0.15f, 1f)
+        val roiMinY = (gMinY - gH * 0.42f).coerceIn(0f, 0.85f)
+        val roiMaxY = (gMaxY + gH * 0.42f).coerceIn(roiMinY + 0.15f, 1f)
+
+        val cropX = (roiMinX * bitmap.width).roundToInt().coerceIn(0, (bitmap.width - 64).coerceAtLeast(0))
+        val cropY = (roiMinY * bitmap.height).roundToInt().coerceIn(0, (bitmap.height - 64).coerceAtLeast(0))
+        val cropW = ((roiMaxX - roiMinX) * bitmap.width).roundToInt().coerceIn(1, bitmap.width - cropX)
+        val cropH = ((roiMaxY - roiMinY) * bitmap.height).roundToInt().coerceIn(1, bitmap.height - cropY)
+
+        val shouldRunRoi = cropW >= 120 && cropH >= 90 &&
+            (cropW < bitmap.width * 0.90f || cropH < bitmap.height * 0.90f)
+
+        if (!shouldRunRoi) {
+            return if (fullRes.isLocked) fullRes.quad else DocumentQuad.SAFE_DEFAULT_MARGIN
+        }
+
+        val roiBmp = runCatching { Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH) }.getOrNull()
+            ?: return if (fullRes.isLocked) fullRes.quad else DocumentQuad.SAFE_DEFAULT_MARGIN
+
+        val roiRes = try {
+            detectFromBitmapInternal(roiBmp, isIdCardHint = true)
+        } finally {
+            if (roiBmp !== bitmap && !roiBmp.isRecycled) roiBmp.recycle()
+        }
+
+        if (!roiRes.isLocked || isBorderHuggingQuad(roiRes.quad)) {
+            return if (fullRes.isLocked) fullRes.quad else DocumentQuad.SAFE_DEFAULT_MARGIN
+        }
+
+        fun mapPointFromRoi(p: PointNorm): PointNorm = PointNorm(
+            x = ((cropX + p.x * cropW) / bitmap.width.toFloat()).coerceIn(0.01f, 0.99f),
+            y = ((cropY + p.y * cropH) / bitmap.height.toFloat()).coerceIn(0.01f, 0.99f)
+        )
+
+        val mappedRoiQuad = DocumentQuad(
+            topLeft = mapPointFromRoi(roiRes.quad.topLeft),
+            topRight = mapPointFromRoi(roiRes.quad.topRight),
+            bottomRight = mapPointFromRoi(roiRes.quad.bottomRight),
+            bottomLeft = mapPointFromRoi(roiRes.quad.bottomLeft)
+        )
+
+        if (!fullRes.isLocked || isBorderHuggingQuad(fullRes.quad)) {
+            return mappedRoiQuad
+        }
+
+        val fullAspectBonus = idAspectClosuresScore(fullRes.quad, bitmap.width, bitmap.height)
+        val roiAspectBonus = idAspectClosuresScore(mappedRoiQuad, bitmap.width, bitmap.height)
+        val fullTotal = fullRes.confidence + fullAspectBonus
+        val roiTotal = roiRes.confidence + roiAspectBonus + 0.04f
+        return if (roiTotal >= fullTotal) mappedRoiQuad else fullRes.quad
+    }
+
+    private fun idAspectClosuresScore(quad: DocumentQuad, w: Int, h: Int): Float {
+        val topW = hypot(((quad.topRight.x - quad.topLeft.x) * w).toDouble(), ((quad.topRight.y - quad.topLeft.y) * h).toDouble())
+        val botW = hypot(((quad.bottomRight.x - quad.bottomLeft.x) * w).toDouble(), ((quad.bottomRight.y - quad.bottomLeft.y) * h).toDouble())
+        val leftH = hypot(((quad.bottomLeft.x - quad.topLeft.x) * w).toDouble(), ((quad.bottomLeft.y - quad.topLeft.y) * h).toDouble())
+        val rightH = hypot(((quad.bottomRight.x - quad.topRight.x) * w).toDouble(), ((quad.bottomRight.y - quad.topRight.y) * h).toDouble())
+        val avgW = (topW + botW) * 0.5
+        val avgH = (leftH + rightH) * 0.5
+        val ratio = (max(avgW, avgH) / min(avgW, avgH).coerceAtLeast(1.0)).toFloat()
+        return (1f - (abs(ratio - 1.586f) / 0.70f)).coerceIn(0f, 1f) * 0.14f
     }
 
     /**
      * High-accuracy multi-stage document boundary detection for Gallery photos and captured Bitmaps.
      * Should be invoked on `Dispatchers.Default`.
      */
-    fun detectFromBitmap(bitmap: Bitmap, isIdCardHint: Boolean = false): DocumentQuad {
+    fun detectFromBitmap(bitmap: Bitmap, isIdCardHint: Boolean = false): DocumentQuad =
+        detectFromBitmapInternal(bitmap, isIdCardHint).let {
+            if (it.isLocked) it.quad else DocumentQuad.SAFE_DEFAULT_MARGIN
+        }
+
+    private fun detectFromBitmapInternal(
+        bitmap: Bitmap,
+        isIdCardHint: Boolean = false
+    ): EdgeDetectionFrameResult {
         val origW = bitmap.width
         val origH = bitmap.height
-        if (origW < 32 || origH < 32) return DocumentQuad.SAFE_DEFAULT_MARGIN
+        if (origW < 32 || origH < 32) {
+            return EdgeDetectionFrameResult(DocumentQuad.SAFE_DEFAULT_MARGIN, 0f, false)
+        }
 
         // 1. Create temporary downscaled working copy (~800px max dimension) to suppress
         //    high-resolution inner text/paper grain noise while preserving outer boundaries.
@@ -452,7 +597,7 @@ object DocumentEdgeDetector {
 
         val closingRadius = if (max(workW, workH) >= 420) 3 else 1
 
-        // ID Card Mode: run solid-silhouette card isolation FIRST (resistant to couch/wood/fabric textures & dark portraits)
+        // ID Card Mode: run CIE-Lab glare-suppressed isolation + multi-channel Scharr Hough-RANSAC passes
         val cardPass = if (isIdCardHint) {
             runIdCardIsolationPass(
                 pixels = pixels,
@@ -468,8 +613,21 @@ object DocumentEdgeDetector {
         } else {
             null
         }
-        if (cardPass != null && cardPass.isLocked && cardPass.confidence >= 0.62f && !isBorderHuggingQuad(cardPass.quad)) {
-            return cardPass.quad
+        val houghPass = if (isIdCardHint) {
+            runMultiChannelHoughPass(
+                pixels = pixels,
+                rawLuma = rawLuma,
+                w = workW,
+                h = workH,
+                closingRadius = closingRadius,
+                origW = origW,
+                origH = origH,
+                scaleX = scaleX,
+                scaleY = scaleY,
+                isIdCardHint = true
+            )
+        } else {
+            null
         }
 
         // 2. Pass 1: Standard Contrast (Grayscale -> CLAHE -> 5x5 Gaussian -> Morphological Closing -> Canny)
@@ -485,12 +643,11 @@ object DocumentEdgeDetector {
             isIdCardHint = isIdCardHint
         )
 
-        if (pass1.isLocked && pass1.confidence >= 0.78f && !isBorderHuggingQuad(pass1.quad)) {
-            return pass1.quad
+        if (!isIdCardHint && pass1.isLocked && pass1.confidence >= 0.78f && !isBorderHuggingQuad(pass1.quad)) {
+            return pass1
         }
 
         // 3. Pass 2: Fallback for White-on-Light / Low-Contrast / Colored Backgrounds
-        //    Uses HSV Saturation/Value extraction + Border Chroma contrast + Adaptive Thresholding
         val pass2 = runWhiteOnLightFallbackPass(
             pixels = pixels,
             rawLuma = rawLuma,
@@ -504,7 +661,7 @@ object DocumentEdgeDetector {
             isIdCardHint = isIdCardHint
         )
 
-        val fallbackCardPass = cardPass ?: if (!pass1.isLocked || isBorderHuggingQuad(pass1.quad) || (!pass2.isLocked)) {
+        val fallbackCardPass = cardPass ?: if (!pass1.isLocked || isBorderHuggingQuad(pass1.quad) || !pass2.isLocked) {
             runIdCardIsolationPass(
                 pixels = pixels,
                 rawLuma = rawLuma,
@@ -514,18 +671,39 @@ object DocumentEdgeDetector {
                 origH = origH,
                 scaleX = scaleX,
                 scaleY = scaleY,
-                isIdCardHint = false
+                isIdCardHint = isIdCardHint
+            )
+        } else {
+            null
+        }
+        val fallbackHoughPass = houghPass ?: if (!pass1.isLocked || isBorderHuggingQuad(pass1.quad)) {
+            runMultiChannelHoughPass(
+                pixels = pixels,
+                rawLuma = rawLuma,
+                w = workW,
+                h = workH,
+                closingRadius = closingRadius,
+                origW = origW,
+                origH = origH,
+                scaleX = scaleX,
+                scaleY = scaleY,
+                isIdCardHint = isIdCardHint
             )
         } else {
             null
         }
 
-        val candidates = listOfNotNull(pass1, pass2, fallbackCardPass)
+        val lockedCandidates = listOfNotNull(cardPass, houghPass, pass1, pass2, fallbackCardPass, fallbackHoughPass)
             .filter { it.isLocked }
-        val winner = candidates.maxByOrNull { it.confidence }
+        val nonBorderWinner = lockedCandidates
+            .filterNot { isBorderHuggingQuad(it.quad) }
+            .maxByOrNull { candidate ->
+                val aspectBoost = if (isIdCardHint) idAspectClosuresScore(candidate.quad, origW, origH) else 0f
+                candidate.confidence + aspectBoost
+            }
+        val winner = nonBorderWinner ?: lockedCandidates.maxByOrNull { it.confidence }
 
-        // 4. Graceful Safe Default Margin (8% inset rectangle; never 0,0 full frame)
-        return winner?.quad ?: DocumentQuad.SAFE_DEFAULT_MARGIN
+        return winner ?: EdgeDetectionFrameResult(DocumentQuad.SAFE_DEFAULT_MARGIN, 0f, false)
     }
 
     private fun runStandardPass(
@@ -563,11 +741,10 @@ object DocumentEdgeDetector {
     }
 
     /**
-     * Dedicated ID Card & Small-Card Isolation Pass:
-     * Flattens textured surfaces (couches, wood, carpet, fabric) with Gaussian smoothing,
-     * isolates foreground cards from border background via Otsu separation on smoothed
-     * luminance + color distance, fills all enclosed interior holes (portraits/chips/text)
-     * with an outside-in flood fill, and fits sharp 4 corners from the solid perimeter.
+     * Dedicated ID Card & Small-Card Isolation Pass (Modernized CIE-Lab + 4-Edge Background Model):
+     * Samples 4 independent border zones (top, bottom, left, right) in perceptual CIE-Lab space so
+     * fingers/hands on one edge don't corrupt background estimation, suppresses PVC specular glare hotspots,
+     * fills interior holes (portraits/chips/text) via outside-in flood fill, and fits sharp 4-line intersections.
      */
     private fun runIdCardIsolationPass(
         pixels: IntArray,
@@ -581,63 +758,68 @@ object DocumentEdgeDetector {
         isIdCardHint: Boolean
     ): EdgeDetectionFrameResult {
         val n = w * h
-        val borderBand = max(4, min(w, h) / 24)
-        val rHist = IntArray(256)
-        val gHist = IntArray(256)
-        val bHist = IntArray(256)
-        val lHist = IntArray(256)
-        var bgSamples = 0
+        val labL = FloatArray(n)
+        val labA = FloatArray(n)
+        val labB = FloatArray(n)
+        computeFastLab(pixels, labL, labA, labB)
 
-        for (y in 0 until h) {
-            val isEdgeY = y < borderBand || y >= h - borderBand
-            val row = y * w
-            for (x in 0 until w) {
-                if (isEdgeY || x < borderBand || x >= w - borderBand) {
+        val borderBand = max(4, min(w, h) / 24)
+        // Compute independent median CIE-Lab across top, bottom, left, right outer border strips
+        fun stripMedian(xRange: IntRange, yRange: IntRange): Triple<Float, Float, Float> {
+            val lArr = ArrayList<Float>(128)
+            val aArr = ArrayList<Float>(128)
+            val bArr = ArrayList<Float>(128)
+            for (y in yRange) {
+                val row = y * w
+                for (x in xRange step 2) {
                     val idx = row + x
-                    val c = pixels[idx]
-                    rHist[Color.red(c)]++
-                    gHist[Color.green(c)]++
-                    bHist[Color.blue(c)]++
-                    lHist[rawLuma[idx].coerceIn(0, 255)]++
-                    bgSamples++
+                    lArr.add(labL[idx])
+                    aArr.add(labA[idx])
+                    bArr.add(labB[idx])
                 }
             }
+            if (lArr.isEmpty()) return Triple(50f, 0f, 0f)
+            lArr.sort(); aArr.sort(); bArr.sort()
+            val mid = lArr.size / 2
+            return Triple(lArr[mid], aArr[mid], bArr[mid])
         }
-        fun histMedian(hist: IntArray, total: Int): Int {
-            val half = total / 2
-            var acc = 0
-            for (i in 0 until 256) {
-                acc += hist[i]
-                if (acc >= half) return i
-            }
-            return 128
-        }
-        val bgR = histMedian(rHist, bgSamples)
-        val bgG = histMedian(gHist, bgSamples)
-        val bgB = histMedian(bHist, bgSamples)
-        val bgLum = histMedian(lHist, bgSamples)
+
+        val topBg = stripMedian(0 until w, 0 until borderBand)
+        val botBg = stripMedian(0 until w, max(0, h - borderBand) until h)
+        val leftBg = stripMedian(0 until borderBand, 0 until h)
+        val rightBg = stripMedian(max(0, w - borderBand) until w, 0 until h)
+        val bgRefs = listOf(topBg, botBg, leftBg, rightBg)
 
         val signal = IntArray(n)
         for (i in 0 until n) {
-            val c = pixels[i]
-            val r = Color.red(c)
-            val g = Color.green(c)
-            val b = Color.blue(c)
-            val chromaDiff = (abs(r - bgR) + abs(g - bgG) + abs(b - bgB)) / 3f
-            val lumaDiff = abs(rawLuma[i] - bgLum).toFloat()
-            val maxC = max(r, max(g, b))
-            val minC = min(r, min(g, b))
-            val sat = if (maxC == 0) 0f else ((maxC - minC) * 255f) / maxC.toFloat()
-            // Bright / neutral-white or color-distinct card stands sharply apart from textured desks/couches
-            val s = chromaDiff * 1.15f + lumaDiff * 0.75f + (rawLuma[i] - bgLum) * 0.35f - sat * 0.12f
-            signal[i] = s.roundToInt().coerceIn(0, 255)
+            val l = labL[i]
+            val a = labA[i]
+            val b = labB[i]
+            // Compare against closest 2 border strips (if a finger covers 1 strip, other strips stay accurate)
+            var minD = Float.MAX_VALUE
+            var secondD = Float.MAX_VALUE
+            for (ref in bgRefs) {
+                val d = hypot((l - ref.first) * 0.9f, hypot(a - ref.second, b - ref.third) * 1.45f)
+                if (d < minD) {
+                    secondD = minD
+                    minD = d
+                } else if (d < secondD) {
+                    secondD = d
+                }
+            }
+            val deltaE = (minD * 0.55f + secondD * 0.45f)
+            val chroma = hypot(a, b)
+            // Specular PVC glare boost keeps bright shiny lamination inside the card silhouette
+            val glarePreserve = if (l > 86f && chroma < 10f) 18f else 0f
+            val neutralBrightBoost = if (l > 62f && chroma < 14f) (l - 62f) * 0.35f else 0f
+            signal[i] = (deltaE * 2.4f + glarePreserve + neutralBrightBoost).roundToInt().coerceIn(0, 255)
         }
 
         // Smooth out leather/fabric/wood texture speckles before thresholding
         val smoothed1 = applyGaussianBlur5x5(signal, w, h)
         val smoothed = applyGaussianBlur5x5(smoothed1, w, h)
 
-        // Otsu threshold on smoothed foreground signal
+        // Otsu threshold on smoothed CIE-Lab foreground distance signal
         val hist = IntArray(256)
         for (v in smoothed) hist[v.coerceIn(0, 255)]++
         var sumAll = 0.0
@@ -645,7 +827,7 @@ object DocumentEdgeDetector {
         var sumB = 0.0
         var wB = 0
         var maxVar = -1.0
-        var otsuThresh = 48
+        var otsuThresh = 42
         for (t in 0 until 256) {
             wB += hist[t]
             if (wB == 0) continue
@@ -660,10 +842,9 @@ object DocumentEdgeDetector {
                 otsuThresh = t
             }
         }
-        val thresh = otsuThresh.coerceIn(28, 175)
+        val thresh = otsuThresh.coerceIn(22, 175)
 
         val mask = BooleanArray(n) { smoothed[it] >= thresh }
-        // Clear outer 2px border so edge artifacts don't touch frame border
         for (y in 0 until h) {
             for (x in 0 until w) {
                 if (x < 2 || x >= w - 2 || y < 2 || y >= h - 2) {
@@ -723,6 +904,435 @@ object DocumentEdgeDetector {
             scaleY = scaleY,
             isIdCardHint = isIdCardHint
         )
+    }
+
+    /**
+     * Multi-Channel Scharr 3x3 + Oriented Hough-Peak + RANSAC 4-Line Rectangle Pass:
+     * Combines perceptual CIE-Lab chroma + CLAHE luminance Scharr gradients so tilted, glare-lit,
+     * partially occluded (by fingers), or low-luminance-contrast cards form sharp 4-line intersections.
+     */
+    private fun runMultiChannelHoughPass(
+        pixels: IntArray,
+        rawLuma: IntArray,
+        w: Int,
+        h: Int,
+        closingRadius: Int,
+        origW: Int,
+        origH: Int,
+        scaleX: Float,
+        scaleY: Float,
+        isIdCardHint: Boolean
+    ): EdgeDetectionFrameResult {
+        val n = w * h
+        val labL = FloatArray(n)
+        val labA = FloatArray(n)
+        val labB = FloatArray(n)
+        computeFastLab(pixels, labL, labA, labB)
+
+        val lumaClahe = applyClahe(rawLuma, w, h)
+        val lumaSmooth = applySeparableMorphClosing(applyGaussianBlur5x5(lumaClahe, w, h), w, h, max(1, closingRadius - 1))
+        val aInt = applyGaussianBlur5x5(IntArray(n) { (labA[it] + 128f).roundToInt().coerceIn(0, 255) }, w, h)
+        val bInt = applyGaussianBlur5x5(IntArray(n) { (labB[it] + 128f).roundToInt().coerceIn(0, 255) }, w, h)
+
+        val gxArr = IntArray(n)
+        val gyArr = IntArray(n)
+        val mag = IntArray(n)
+        val dir = ByteArray(n)
+
+        for (y in 2 until h - 2) {
+            val ym = (y - 1) * w
+            val y0 = y * w
+            val yp = (y + 1) * w
+            for (x in 2 until w - 2) {
+                fun scharrX(arr: IntArray): Int =
+                    (-3 * arr[ym + x - 1] + 3 * arr[ym + x + 1] -
+                        10 * arr[y0 + x - 1] + 10 * arr[y0 + x + 1] -
+                        3 * arr[yp + x - 1] + 3 * arr[yp + x + 1]) shr 2
+
+                fun scharrY(arr: IntArray): Int =
+                    (-3 * arr[ym + x - 1] - 10 * arr[ym + x] - 3 * arr[ym + x + 1] +
+                        3 * arr[yp + x - 1] + 10 * arr[yp + x] + 3 * arr[yp + x + 1]) shr 2
+
+                val gxl = scharrX(lumaSmooth)
+                val gyl = scharrY(lumaSmooth)
+                val gxa = (scharrX(aInt) * 1.45f).roundToInt()
+                val gya = (scharrY(aInt) * 1.45f).roundToInt()
+                val gxb = (scharrX(bInt) * 1.45f).roundToInt()
+                val gyb = (scharrY(bInt) * 1.45f).roundToInt()
+
+                val ml = abs(gxl) + abs(gyl)
+                val ma = abs(gxa) + abs(gya)
+                val mb = abs(gxb) + abs(gyb)
+
+                val domGx: Int
+                val domGy: Int
+                val domM: Int
+                when {
+                    ma >= ml && ma >= mb -> { domGx = gxa; domGy = gya; domM = ma }
+                    mb >= ml && mb >= ma -> { domGx = gxb; domGy = gyb; domM = mb }
+                    else -> { domGx = gxl; domGy = gyl; domM = ml }
+                }
+
+                val idx = y0 + x
+                gxArr[idx] = domGx
+                gyArr[idx] = domGy
+                mag[idx] = domM
+                if (domM > 12) {
+                    val ax = abs(domGx)
+                    val ay = abs(domGy)
+                    dir[idx] = when {
+                        ay * 2.414f < ax -> 0
+                        ax * 2.414f < ay -> 2
+                        (domGx xor domGy) >= 0 -> 3
+                        else -> 1
+                    }.toByte()
+                }
+            }
+        }
+
+        val nms = IntArray(n)
+        val histBins = IntArray(256)
+        var nonZero = 0
+        for (y in 3 until h - 3) {
+            val y0 = y * w
+            for (x in 3 until w - 3) {
+                val idx = y0 + x
+                val m = mag[idx]
+                if (m <= 14) continue
+                val (n1, n2) = when (dir[idx].toInt()) {
+                    0 -> mag[idx - 1] to mag[idx + 1]
+                    1 -> mag[idx - w + 1] to mag[idx + w - 1]
+                    2 -> mag[idx - w] to mag[idx + w]
+                    else -> mag[idx - w - 1] to mag[idx + w + 1]
+                }
+                if (m >= n1 && m >= n2) {
+                    nms[idx] = m
+                    histBins[min(255, m shr 2)]++
+                    nonZero++
+                }
+            }
+        }
+        if (nonZero < 30) return EdgeDetectionFrameResult(DocumentQuad.SAFE_DEFAULT_MARGIN, 0f, false)
+
+        val targetRank = (nonZero * 0.72f).toInt()
+        var acc = 0
+        var highThresh = 46
+        for (b in 0 until 256) {
+            acc += histBins[b]
+            if (acc >= targetRank) {
+                highThresh = max(34, b shl 2)
+                break
+            }
+        }
+        val lowThresh = max(14, (highThresh * 0.42f).toInt())
+        val edges = BooleanArray(n)
+        val weak = BooleanArray(n)
+        val queue = IntArray(n)
+        var head = 0
+        var tail = 0
+        for (y in 3 until h - 3) {
+            val row = y * w
+            for (x in 3 until w - 3) {
+                val idx = row + x
+                val v = nms[idx]
+                if (v >= highThresh) {
+                    edges[idx] = true
+                    queue[tail++] = idx
+                } else if (v >= lowThresh) {
+                    weak[idx] = true
+                }
+            }
+        }
+        while (head < tail) {
+            val cur = queue[head++]
+            val cy = cur / w
+            val cx = cur - cy * w
+            for (dy in -1..1) {
+                val ny = cy + dy
+                if (ny !in 2 until h - 2) continue
+                val row = ny * w
+                for (dx in -1..1) {
+                    if (dx == 0 && dy == 0) continue
+                    val nx = cx + dx
+                    if (nx !in 2 until w - 2) continue
+                    val nIdx = row + nx
+                    if (weak[nIdx] && !edges[nIdx]) {
+                        edges[nIdx] = true
+                        queue[tail++] = nIdx
+                    }
+                }
+            }
+        }
+
+        val houghCandidate = runHoughRansacRectanglePass(
+            edges = edges,
+            gradMag = nms,
+            gxArr = gxArr,
+            gyArr = gyArr,
+            w = w,
+            h = h,
+            origW = origW,
+            origH = origH,
+            scaleX = scaleX,
+            scaleY = scaleY,
+            isIdCardHint = isIdCardHint
+        )
+        val contourCandidate = findBestDocumentQuad(
+            edges = edges,
+            w = w,
+            h = h,
+            origW = origW,
+            origH = origH,
+            scaleX = scaleX,
+            scaleY = scaleY,
+            isIdCardHint = isIdCardHint
+        )
+        return when {
+            houghCandidate.isLocked && contourCandidate.isLocked ->
+                if (houghCandidate.confidence >= contourCandidate.confidence) houghCandidate else contourCandidate
+            houghCandidate.isLocked -> houghCandidate
+            else -> contourCandidate
+        }
+    }
+
+    /**
+     * Oriented Hough-Space + RANSAC 4-Line Rectangle Detector:
+     * Maps NMS gradient edge points (weighted by magnitude and aligned with normal vector atan2(gy, gx))
+     * into 2-degree (theta, rho) accumulator space, extracts top parallel/tapered line families
+     * separated by >= 72 deg, fits outlier-resistant orthogonal lines, and validates closed quads.
+     */
+    private fun runHoughRansacRectanglePass(
+        edges: BooleanArray,
+        gradMag: IntArray,
+        gxArr: IntArray,
+        gyArr: IntArray,
+        w: Int,
+        h: Int,
+        origW: Int,
+        origH: Int,
+        scaleX: Float,
+        scaleY: Float,
+        isIdCardHint: Boolean
+    ): EdgeDetectionFrameResult {
+        val thetaBins = 90 // 0..178 deg in 2-deg steps
+        val diag = hypot(w.toDouble(), h.toDouble()).toFloat()
+        val rhoStep = max(2f, diag / 160f)
+        val numRho = ((2f * diag) / rhoStep).toInt() + 4
+        val rhoCenterOffset = numRho / 2
+
+        val cosTab = FloatArray(thetaBins)
+        val sinTab = FloatArray(thetaBins)
+        for (t in 0 until thetaBins) {
+            val rad = Math.toRadians((t * 2).toDouble())
+            cosTab[t] = cos(rad).toFloat()
+            sinTab[t] = sin(rad).toFloat()
+        }
+
+        val acc = FloatArray(thetaBins * numRho)
+        val thetaPower = FloatArray(thetaBins)
+        val edgePts = ArrayList<FloatPt>(1200)
+        val edgeGx = ArrayList<Int>(1200)
+        val edgeGy = ArrayList<Int>(1200)
+
+        val step = if (max(w, h) > 420) 2 else 1
+        for (y in 4 until h - 4 step step) {
+            val row = y * w
+            for (x in 4 until w - 4 step step) {
+                val idx = row + x
+                if (!edges[idx]) continue
+                val m = max(16, gradMag[idx]).toFloat()
+                val gx = gxArr[idx]
+                val gy = gyArr[idx]
+                edgePts.add(FloatPt(x.toFloat(), y.toFloat()))
+                edgeGx.add(gx)
+                edgeGy.add(gy)
+
+                var deg = Math.toDegrees(atan2(gy.toDouble(), gx.toDouble()))
+                if (deg < 0.0) deg += 180.0
+                if (deg >= 180.0) deg -= 180.0
+                val centerBin = ((deg / 2.0).roundToInt()) % thetaBins
+
+                for (dt in -2..2) {
+                    val tBin = (centerBin + dt + thetaBins) % thetaBins
+                    val wgt = m * when (abs(dt)) {
+                        0 -> 1.0f
+                        1 -> 0.72f
+                        else -> 0.40f
+                    }
+                    val rho = x * cosTab[tBin] + y * sinTab[tBin]
+                    val rBin = (rho / rhoStep).roundToInt() + rhoCenterOffset
+                    if (rBin in 1 until numRho - 1) {
+                        val binIdx = tBin * numRho + rBin
+                        acc[binIdx] += wgt
+                        acc[binIdx - 1] += wgt * 0.35f
+                        acc[binIdx + 1] += wgt * 0.35f
+                        thetaPower[tBin] += wgt
+                    }
+                }
+            }
+        }
+        if (edgePts.size < 36) return EdgeDetectionFrameResult(DocumentQuad.SAFE_DEFAULT_MARGIN, 0f, false)
+
+        // Find dominant angle peaks for family 1 and nearly-perpendicular family 2
+        val sortedThetas = (0 until thetaBins).sortedByDescending { thetaPower[it] }
+        val angleSeeds1 = ArrayList<Int>(3)
+        for (tb in sortedThetas) {
+            val minDiff = angleSeeds1.minOfOrNull { prev ->
+                val d = abs(tb - prev)
+                min(d, thetaBins - d)
+            } ?: thetaBins
+            if (minDiff >= 6) {
+                angleSeeds1.add(tb)
+                if (angleSeeds1.size >= 3) break
+            }
+        }
+
+        val minSepRhoBins = max(6, (min(w, h) * (if (isIdCardHint) 0.06f else 0.12f) / rhoStep).roundToInt())
+        fun extractPeakLinesNear(targetTheta: Int): List<OrthoLine> {
+            // Collect local maxima over [targetTheta - 3 .. targetTheta + 3] x rho
+            data class HoughPeak(val t: Int, val r: Int, val score: Float)
+            val peaks = ArrayList<HoughPeak>(16)
+            for (dt in -3..3) {
+                val tb = (targetTheta + dt + thetaBins) % thetaBins
+                val base = tb * numRho
+                for (r in 3 until numRho - 3) {
+                    val v = acc[base + r]
+                    if (v > acc[base + r - 1] && v >= acc[base + r + 1] && v > 120f) {
+                        peaks.add(HoughPeak(tb, r, v))
+                    }
+                }
+            }
+            peaks.sortByDescending { it.score }
+            val chosen = ArrayList<HoughPeak>(4)
+            for (p in peaks) {
+                val rhoSigned = (p.r - rhoCenterOffset) * rhoStep
+                val tooClose = chosen.any { c ->
+                    val prevRho = (c.r - rhoCenterOffset) * rhoStep
+                    abs(abs(rhoSigned) - abs(prevRho)) < minSepRhoBins * rhoStep &&
+                        (rhoSigned * prevRho > 0f || abs(rhoSigned - prevRho) < minSepRhoBins * rhoStep)
+                }
+                if (!tooClose) {
+                    chosen.add(p)
+                    if (chosen.size >= 4) break
+                }
+            }
+
+            // Refine each Hough line against raw edge points matching its normal orientation (RANSAC / PCA trim)
+            val tol = max(4.0, min(w, h) * 0.016)
+            return chosen.mapNotNull { pk ->
+                val ca = cosTab[pk.t].toDouble()
+                val cb = sinTab[pk.t].toDouble()
+                val rho = ((pk.r - rhoCenterOffset) * rhoStep).toDouble()
+                val cc = -rho
+                val inliers = ArrayList<FloatPt>(64)
+                for (i in edgePts.indices) {
+                    val pt = edgePts[i]
+                    val dist = abs(ca * pt.x + cb * pt.y + cc)
+                    if (dist <= tol) {
+                        val gNorm = hypot(edgeGx[i].toDouble(), edgeGy[i].toDouble())
+                        if (gNorm > 1.0) {
+                            val cosAlign = abs((edgeGx[i] * ca + edgeGy[i] * cb) / gNorm)
+                            if (cosAlign >= 0.72) inliers.add(pt)
+                        } else {
+                            inliers.add(pt)
+                        }
+                    }
+                }
+                if (inliers.size >= 8) fitRobustOrthogonalLine(inliers) ?: OrthoLine(ca, cb, cc)
+                else null
+            }
+        }
+
+        var bestScore = -1f
+        var bestCorners: List<FloatPt>? = null
+
+        for (t1 in angleSeeds1) {
+            val orthoCenter = (t1 + 45) % thetaBins // +90 deg
+            var bestT2 = orthoCenter
+            var bestT2Pow = -1f
+            for (dt in -9..9) { // +/- 18 deg perspective skew allowance
+                val candT = (orthoCenter + dt + thetaBins) % thetaBins
+                if (thetaPower[candT] > bestT2Pow) {
+                    bestT2Pow = thetaPower[candT]
+                    bestT2 = candT
+                }
+            }
+
+            val family1 = extractPeakLinesNear(t1)
+            val family2 = extractPeakLinesNear(bestT2)
+            if (family1.size < 2 || family2.size < 2) continue
+
+            for (i in 0 until family1.size) {
+                for (j in i + 1 until family1.size) {
+                    val lA = family1[i]
+                    val lB = family1[j]
+                    for (m in 0 until family2.size) {
+                        for (k in m + 1 until family2.size) {
+                            val lC = family2[m]
+                            val lD = family2[k]
+                            val p1 = intersectLines(lA, lC) ?: continue
+                            val p2 = intersectLines(lA, lD) ?: continue
+                            val p3 = intersectLines(lB, lD) ?: continue
+                            val p4 = intersectLines(lB, lC) ?: continue
+                            val raw = listOf(p1, p2, p3, p4)
+                            val marginX = w * 0.03f
+                            val marginY = h * 0.03f
+                            if (raw.any { it.x < -marginX || it.x > w + marginX || it.y < -marginY || it.y > h + marginY }) {
+                                continue
+                            }
+                            val ordered = orderFloatCornersClockwise(
+                                raw.map {
+                                    FloatPt(
+                                        x = it.x.coerceIn(1f, (w - 2).toFloat()),
+                                        y = it.y.coerceIn(1f, (h - 2).toFloat())
+                                    )
+                                }
+                            )
+                            val score = evaluateCandidateWorkQuad(ordered, edges, w, h, isIdCardHint)
+                            if (score > bestScore) {
+                                bestScore = score
+                                bestCorners = ordered
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return if (bestCorners != null && bestScore > 0.34f) {
+            EdgeDetectionFrameResult(
+                quad = mapWorkCornersToOriginalQuad(bestCorners, origW, origH, scaleX, scaleY),
+                confidence = bestScore.coerceIn(0.35f, 0.99f),
+                isLocked = true
+            )
+        } else {
+            EdgeDetectionFrameResult(DocumentQuad.SAFE_DEFAULT_MARGIN, 0f, false)
+        }
+    }
+
+    /**
+     * Converts sRGB pixels into perceptual CIE-Lab (L* 0..100, a* -128..127, b* -128..127).
+     */
+    private fun computeFastLab(pixels: IntArray, outL: FloatArray, outA: FloatArray, outB: FloatArray) {
+        val inv255 = 1f / 255f
+        fun fLab(t: Double): Float {
+            return if (t > 0.008856) Math.cbrt(t).toFloat() else (7.787 * t + 16.0 / 116.0).toFloat()
+        }
+        for (i in pixels.indices) {
+            val c = pixels[i]
+            val r = ((c ushr 16) and 0xFF) * inv255
+            val g = ((c ushr 8) and 0xFF) * inv255
+            val b = (c and 0xFF) * inv255
+            val x = (r * 0.4124564 + g * 0.3575761 + b * 0.1804375) / 0.95047
+            val y = (r * 0.2126729 + g * 0.7151522 + b * 0.0721750)
+            val z = (r * 0.0193339 + g * 0.1191920 + b * 0.9503041) / 1.08883
+            val fx = fLab(x)
+            val fy = fLab(y)
+            val fz = fLab(z)
+            outL[i] = 116f * fy - 16f
+            outA[i] = 500f * (fx - fy)
+            outB[i] = 200f * (fy - fz)
+        }
     }
 
     /**
@@ -1387,7 +1997,7 @@ object DocumentEdgeDetector {
             val mergePenalty = if (isMergedCloud) 0.06f else 0f
 
             // Line-Intersection Quadrilateral Reconstruction (handles rounded ID cards, skewed pages, and bent edges)
-            val lineCorners = reconstructQuadByLineIntersections(hull, cloud, edges, w, h)
+            val lineCorners = reconstructQuadByLineIntersections(hull, cloud, edges, w, h, isIdCardHint)
             if (lineCorners != null) {
                 val score = evaluateCandidateWorkQuad(lineCorners, edges, w, h, isIdCardHint) - mergePenalty
                 if (score > bestScore) {
@@ -1430,7 +2040,8 @@ object DocumentEdgeDetector {
         cloud: List<PxPt>,
         edges: BooleanArray,
         w: Int,
-        h: Int
+        h: Int,
+        isIdCardHint: Boolean = false
     ): List<FloatPt>? {
         if (hull.size < 4) return null
 
@@ -1445,6 +2056,7 @@ object DocumentEdgeDetector {
         var bestSupport = -1f
 
         val distTol = max(3.5f, min(w, h) * 0.015f)
+        val minSideLenPx = min(w, h) * if (isIdCardHint) 0.06f else 0.14f
 
         for (rad in seedRadians) {
             val cosA = cos(rad)
@@ -1484,7 +2096,7 @@ object DocumentEdgeDetector {
                 val a = seedCorners[side]
                 val b = seedCorners[(side + 1) % 4]
                 val segLen = hypot((b.x - a.x).toDouble(), (b.y - a.y).toDouble()).toFloat()
-                if (segLen < min(w, h) * 0.14f) {
+                if (segLen < minSideLenPx) {
                     validAllSides = false
                     break
                 }
@@ -1763,9 +2375,9 @@ object DocumentEdgeDetector {
         val norm = corners.map { FloatPt(it.x / wf, it.y / hf) }
 
         val areaFrac = polygonArea(norm)
-        val minArea = if (isIdCardHint) 0.025f else 0.09f
+        val minArea = if (isIdCardHint) 0.022f else 0.09f
         if (areaFrac < minArea || areaFrac > 0.96f) return -1f
-        if (!isConvexAndValidAnglesPx(norm)) return -1f
+        if (!isConvexAndValidAnglesPx(norm, isIdCardHint)) return -1f
         if (!hasValidAspectRatioPx(norm, isIdCardHint)) return -1f
 
         val edgeSupport = measureEdgeSupportPx(edges, w, h, corners)
@@ -1847,7 +2459,8 @@ object DocumentEdgeDetector {
         return abs(sum) * 0.5f
     }
 
-    private fun isConvexAndValidAnglesPx(pts: List<FloatPt>): Boolean {
+    private fun isConvexAndValidAnglesPx(pts: List<FloatPt>, isIdCardHint: Boolean = false): Boolean {
+        val minSide = if (isIdCardHint) 0.055f else 0.08f
         var sign = 0
         for (i in 0 until 4) {
             val a = pts[i]
@@ -1863,7 +2476,7 @@ object DocumentEdgeDetector {
 
             val len1 = hypot(v1x, v1y)
             val len2 = hypot(v2x, v2y)
-            if (len1 < 0.08f || len2 < 0.08f) return false
+            if (len1 < minSide || len2 < minSide) return false
 
             val dot = (-v1x * v2x) + (-v1y * v2y)
             val cosTheta = (dot / (len1 * len2)).coerceIn(-1f, 1f)

@@ -39,11 +39,17 @@ object DocumentImageProcessor {
     /**
      * Delegates real-time 100% offline 4-corner detection to [DocumentEdgeDetector].
      */
-    fun detectDocumentQuadFromImageProxy(imageProxy: ImageProxy): EdgeDetectionFrameResult =
-        DocumentEdgeDetector.detectFromImageProxy(imageProxy)
+    fun detectDocumentQuadFromImageProxy(
+        imageProxy: ImageProxy,
+        isIdCardHint: Boolean = false
+    ): EdgeDetectionFrameResult =
+        DocumentEdgeDetector.detectFromImageProxy(imageProxy, isIdCardHint)
 
     fun detectQuadFromBitmap(bitmap: Bitmap, isIdCardHint: Boolean = false): DocumentQuad =
         DocumentEdgeDetector.detectFromBitmap(bitmap, isIdCardHint)
+
+    fun detectIdCardQuad(bitmap: Bitmap, guideQuad: DocumentQuad? = null): DocumentQuad =
+        DocumentEdgeDetector.detectIdCardWithGuidance(bitmap, guideQuad)
 
     /**
      * Maps 4 corner [PointF] coordinates from [PreviewView] space (`previewWidth x previewHeight`)
@@ -139,7 +145,7 @@ object DocumentImageProcessor {
     /**
      * Returns true when [quad] is a real non-fallback convex document boundary.
      */
-    fun isValidDocumentQuad(quad: DocumentQuad): Boolean {
+    fun isValidDocumentQuad(quad: DocumentQuad, isIdCardHint: Boolean = false): Boolean {
         if (quad == DocumentQuad.SAFE_DEFAULT_MARGIN || quad == DocumentQuad.FULL_FRAME) {
             return false
         }
@@ -152,12 +158,15 @@ object DocumentImageProcessor {
             area2 += a.x * b.y - b.x * a.y
         }
         val area = abs(area2) * 0.5f
-        if (area < 0.075f || area > 0.97f) return false
+        val minArea = if (isIdCardHint) 0.020f else 0.075f
+        if (area < minArea || area > 0.97f) return false
         val topW = hypot((quad.topRight.x - quad.topLeft.x).toDouble(), (quad.topRight.y - quad.topLeft.y).toDouble())
         val botW = hypot((quad.bottomRight.x - quad.bottomLeft.x).toDouble(), (quad.bottomRight.y - quad.bottomLeft.y).toDouble())
         val leftH = hypot((quad.bottomLeft.x - quad.topLeft.x).toDouble(), (quad.bottomLeft.y - quad.topLeft.y).toDouble())
         val rightH = hypot((quad.bottomRight.x - quad.topRight.x).toDouble(), (quad.bottomRight.y - quad.topRight.y).toDouble())
-        return min(topW, botW) > 0.14 && min(leftH, rightH) > 0.14
+        val minW = if (isIdCardHint) 0.075 else 0.14
+        val minH = if (isIdCardHint) 0.055 else 0.14
+        return min(topW, botW) > minW && min(leftH, rightH) > minH
     }
 
     /**
@@ -929,8 +938,8 @@ object DocumentImageProcessor {
     }
 
     /**
-     * Merges Front & Back of an ID card / Passport onto a high-resolution 300-DPI A4 page (2480 x 3508)
-     * so Lanczos4 super-resolved ID card faces & MRZ lines stay razor sharp.
+     * Recto mode: Merges Front & Back of an ID card onto a single 300-DPI A4 page (21.0 cm x 29.7 cm -> 2480 x 3508 px)
+     * with exact physical dimensions of 8.5 cm width x 5.0 cm height for both faces.
      */
     fun mergeIdCardFrontAndBack(front: Bitmap, back: Bitmap): Bitmap {
         val a4Width = 2480
@@ -939,26 +948,59 @@ object DocumentImageProcessor {
         val canvas = Canvas(page)
         canvas.drawColor(Color.WHITE)
 
-        val cardW = a4Width * 0.72f
-        val cardH = cardW / 1.586f // Standard ISO/IEC 7810 ID-1 ratio
+        // Exact physical size on A4 (21.0 cm x 29.7 cm): 8.5 cm width x 5.0 cm height
+        val cardW = a4Width * (8.5f / 21.0f)
+        val cardH = a4Height * (5.0f / 29.7f)
         val left = (a4Width - cardW) / 2f
-        val topY1 = a4Height * 0.14f
-        val topY2 = a4Height * 0.53f
+        val topY1 = a4Height * (5.5f / 29.7f)
+        val topY2 = a4Height * (13.5f / 29.7f)
 
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG)
         val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
-            strokeWidth = 5f
+            strokeWidth = 4f
             color = Color.rgb(203, 213, 225)
         }
 
         val rect1 = RectF(left, topY1, left + cardW, topY1 + cardH)
         val rect2 = RectF(left, topY2, left + cardW, topY2 + cardH)
         canvas.drawBitmap(front, null, rect1, paint)
-        canvas.drawRoundRect(rect1, 32f, 32f, borderPaint)
+        canvas.drawRoundRect(rect1, 24f, 24f, borderPaint)
 
         canvas.drawBitmap(back, null, rect2, paint)
-        canvas.drawRoundRect(rect2, 32f, 32f, borderPaint)
+        canvas.drawRoundRect(rect2, 24f, 24f, borderPaint)
+        return page
+    }
+
+    /**
+     * Recto Verso mode: Places a single face (Front on page 1, Back on page 2) at exact
+     * 8.5 cm x 5.0 cm centered horizontally (`left == right margin == 6.25 cm`) and at
+     * identical vertical distance (`6.0 cm` from top) so duplex printing aligns Front & Back
+     * millimeter-for-millimeter behind each other.
+     */
+    fun createIdCardSingleFaceSheet(card: Bitmap): Bitmap {
+        val a4Width = 2480
+        val a4Height = 3508
+        val page = Bitmap.createBitmap(a4Width, a4Height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(page)
+        canvas.drawColor(Color.WHITE)
+
+        val cardW = a4Width * (8.5f / 21.0f)
+        val cardH = a4Height * (5.0f / 29.7f)
+        // Symmetrical horizontal centering guarantees exact alignment when flipped along the long A4 edge
+        val left = (a4Width - cardW) / 2f
+        val topY = a4Height * (6.0f / 29.7f)
+
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG)
+        val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 4f
+            color = Color.rgb(203, 213, 225)
+        }
+
+        val rect = RectF(left, topY, left + cardW, topY + cardH)
+        canvas.drawBitmap(card, null, rect, paint)
+        canvas.drawRoundRect(rect, 24f, 24f, borderPaint)
         return page
     }
 

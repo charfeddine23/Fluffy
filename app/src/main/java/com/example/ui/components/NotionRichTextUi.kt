@@ -1853,6 +1853,7 @@ fun RichContentView(
                                 style = TextStyle(
                                     fontSize = fontSizeSp.sp,
                                     fontStyle = FontStyle.Italic,
+                                    fontSynthesis = androidx.compose.ui.text.font.FontSynthesis.All,
                                     color = metaColor,
                                     lineHeight = (fontSizeSp * 1.46f).sp
                                 ),

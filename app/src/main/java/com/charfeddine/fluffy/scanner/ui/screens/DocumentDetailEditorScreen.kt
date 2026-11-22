@@ -188,7 +188,11 @@ fun DocumentDetailEditorScreen(
     onAddMorePages: () -> Unit,
     onBackToHub: () -> Unit
 ) {
-    BackHandler { onBackToHub() }
+    val handleBackExit: () -> Unit = {
+        scannerViewModel.autoSaveModifiedDocumentOnExit(documentId, isArabic)
+        onBackToHub()
+    }
+    BackHandler { handleBackExit() }
 
     val context = LocalContext.current
     val docState by scannerViewModel.observeDocument(documentId).collectAsState(initial = null)
@@ -549,7 +553,7 @@ fun DocumentDetailEditorScreen(
             ) {
                 // Back Orb
                 IconButton(
-                    onClick = onBackToHub,
+                    onClick = handleBackExit,
                     modifier = Modifier
                         .size(48.dp)
                         .shadow(14.dp, CircleShape, ambientColor = Color.Black, spotColor = Color.Black)

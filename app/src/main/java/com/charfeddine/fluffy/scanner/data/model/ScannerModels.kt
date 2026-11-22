@@ -297,6 +297,11 @@ enum class IdCardSide {
     BACK
 }
 
+enum class IdCardPrintMode(val id: String, val label: String) {
+    RECTO("recto", "Recto"),
+    RECTO_VERSO("recto_verso", "Recto Verso")
+}
+
 data class BatchCapturedFrame(
     val id: String = UUID.randomUUID().toString(),
     val rawImagePath: String,
@@ -309,7 +314,8 @@ data class BatchCapturedFrame(
     val rotationDeg: Int = 0,
     val ocrText: String = "",
     val idCardGroupId: String? = null,
-    val idCardSide: IdCardSide = IdCardSide.NONE
+    val idCardSide: IdCardSide = IdCardSide.NONE,
+    val idCardPrintMode: IdCardPrintMode = IdCardPrintMode.RECTO
 )
 
 @Entity(tableName = "scanner_folders")

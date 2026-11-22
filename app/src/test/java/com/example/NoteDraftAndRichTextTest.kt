@@ -337,4 +337,72 @@ class NoteDraftAndRichTextTest {
             prevT = t
         }
     }
+
+    @Test
+    fun `italic and bold italic emit FontSynthesis All and backspace leaves zero raw symbols`() {
+        val raw = "***عربي مائل وعريض*** و *مائل*"
+        val transformed = RichTextCodec.transformForEditor(
+            raw = raw,
+            accentColor = Color(0xFF8B5CF6),
+            metaColor = Color(0xFF94A3B8),
+            isDark = true
+        )
+        val rendered = transformed.text
+        assertFalse(rendered.text.contains("*"))
+        assertTrue(rendered.spanStyles.any {
+            it.item.fontStyle == androidx.compose.ui.text.font.FontStyle.Italic &&
+                (it.item.fontWeight == androidx.compose.ui.text.font.FontWeight.Bold ||
+                    it.item.fontWeight == androidx.compose.ui.text.font.FontWeight.ExtraBold) &&
+                it.item.fontSynthesis == androidx.compose.ui.text.font.FontSynthesis.All
+        })
+
+        // Simulate Backspace removing last character of <u>abc</u> -> <u>abc</u -> cleaned cleanly
+        val afterUnderlineBackspace = RichTextCodec.applyPendingStylesOnEdit(
+            prevText = "<u>abc</u>",
+            nextVal = TextFieldValue("<u>abc</u", TextRange(9)),
+            pendingStyles = emptySet()
+        )
+        assertFalse(afterUnderlineBackspace.fieldValue.text.contains("<u>"))
+        assertFalse(afterUnderlineBackspace.fieldValue.text.contains("</u>"))
+        assertFalse(afterUnderlineBackspace.fieldValue.text.contains("</u"))
+
+        // Simulate Backspace inside **bold** leaving dangling stars
+        val afterBoldBackspace = RichTextCodec.applyPendingStylesOnEdit(
+            prevText = "**abc**",
+            nextVal = TextFieldValue("**abc*", TextRange(6)),
+            pendingStyles = emptySet()
+        )
+        assertFalse(afterBoldBackspace.fieldValue.text.contains("*"))
+
+        // Simulate Backspace on damaged divider `--` -> removed cleanly
+        val afterDividerBackspace = RichTextCodec.applyPendingStylesOnEdit(
+            prevText = "نص\n---\nآخر",
+            nextVal = TextFieldValue("نص\n--\nآخر", TextRange(5)),
+            pendingStyles = emptySet()
+        )
+        assertFalse(afterDividerBackspace.fieldValue.text.contains("--"))
+
+        // Simulate selection deletion cutting across ~~strike~~ and ==highlight== -> zero stray ~ or =
+        val afterStrikeCut = RichTextCodec.applyPendingStylesOnEdit(
+            prevText = "قبل ~~شطب~~ بعد",
+            nextVal = TextFieldValue("قبل ~~شطب~ بعد", TextRange(10)),
+            pendingStyles = emptySet()
+        )
+        assertFalse(afterStrikeCut.fieldValue.text.contains("~"))
+
+        val afterHighlightCut = RichTextCodec.applyPendingStylesOnEdit(
+            prevText = "==مهم==",
+            nextVal = TextFieldValue("==مهم=", TextRange(6)),
+            pendingStyles = emptySet()
+        )
+        assertFalse(afterHighlightCut.fieldValue.text.contains("="))
+
+        // Simulate multi-line deletion clipping part of `- [ ] ` prefix -> zero stray ` ] `
+        val afterMultilinePrefixCut = RichTextCodec.applyPendingStylesOnEdit(
+            prevText = "أول\n- [ ] مهمة",
+            nextVal = TextFieldValue("أول ] مهمة", TextRange(3)),
+            pendingStyles = emptySet()
+        )
+        assertFalse(afterMultilinePrefixCut.fieldValue.text.contains("]"))
+    }
 }
