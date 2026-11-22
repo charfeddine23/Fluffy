@@ -405,4 +405,75 @@ class NoteDraftAndRichTextTest {
         )
         assertFalse(afterMultilinePrefixCut.fieldValue.text.contains("]"))
     }
+
+    @Test
+    fun `italic selection normalization arabic diacritics IME recovery and EditorFontFamily spans work cleanly`() {
+        // 1. Visual selection spanning past closing `*` into plain word (`hello* world` -> `*hello world*`)
+        val extendPlain = RichTextCodec.applyRichAction(
+            TextFieldValue("*hello* world", TextRange(1, 13)),
+            RichFormatAction.ITALIC
+        )
+        assertEquals("*hello world*", extendPlain.text)
+
+        // 2. All non-whitespace words already italic (`*hello* *world*`) -> unwraps cleanly
+        val unwrapMulti = RichTextCodec.applyRichAction(
+            TextFieldValue("*hello* *world*", TextRange(1, 15)),
+            RichFormatAction.ITALIC
+        )
+        assertEquals("hello world", unwrapMulti.text)
+
+        // 3. Collapsed cursor inside Arabic word containing Tashkeel toggles entire word without splitting
+        val arabicWord = "كِتَابٌ جديد"
+        val toggleArabicTashkeel = RichTextCodec.applyRichAction(
+            TextFieldValue(arabicWord, TextRange(3)),
+            RichFormatAction.ITALIC
+        )
+        assertEquals("*كِتَابٌ* جديد", toggleArabicTashkeel.text)
+
+        // 4. Android IME composing replacement dropping closing `*` recovers seamlessly while pending
+        val imePendingItalic = RichTextCodec.applyPendingStylesOnEdit(
+            prevText = "*ك*",
+            nextVal = TextFieldValue("*كتاب", TextRange(5)),
+            pendingStyles = setOf(RichFormatAction.ITALIC)
+        )
+        assertEquals("*كتاب*", imePendingItalic.fieldValue.text)
+
+        // 5. Android Gboard autocorrect replacing word + closing `*` without pending styles preserves italic
+        val imeAutocorrectPlain = RichTextCodec.applyPendingStylesOnEdit(
+            prevText = "*helo* ok",
+            nextVal = TextFieldValue("*hello ok", TextRange(6)),
+            pendingStyles = emptySet()
+        )
+        assertEquals("*hello* ok", imeAutocorrectPlain.fieldValue.text)
+
+        // 6. EditorFontFamily + FontStyle.Italic + FontSynthesis.All emitted for Latin and Arabic
+        val transformed = RichTextCodec.transformForEditor(
+            raw = "*italic* و *مائل*",
+            accentColor = Color(0xFF8B5CF6),
+            metaColor = Color(0xFF94A3B8),
+            isDark = true
+        )
+        assertEquals(2, transformed.text.spanStyles.count {
+            it.item.fontFamily == com.example.ui.theme.EditorFontFamily &&
+                it.item.fontStyle == androidx.compose.ui.text.font.FontStyle.Italic &&
+                it.item.fontSynthesis == androidx.compose.ui.text.font.FontSynthesis.All
+        })
+
+        // 7. Partial bold + text italic wrapping avoids `***` collision
+        val mixedBoldItalic = RichTextCodec.applyRichAction(
+            TextFieldValue("**bold** text", TextRange(0, 13)),
+            RichFormatAction.ITALIC
+        )
+        assertEquals("***bold*** *text*", mixedBoldItalic.text)
+
+        // 8. Replacing table preserves clean newline separation with adjacent text
+        val safeReplaced = RichTextCodec.replaceTableAtRange(
+            text = "top| A | B |\n| --- | --- |\n| 1 | 2 |bottom",
+            startOffset = 3,
+            endOffset = 36,
+            tableMarkdown = "| X | Y |\n| --- | --- |\n| 9 | 8 |"
+        )
+        assertTrue(safeReplaced.text.startsWith("top\n| X | Y |"))
+        assertTrue(safeReplaced.text.endsWith("| 9 | 8 |\nbottom"))
+    }
 }

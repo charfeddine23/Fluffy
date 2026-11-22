@@ -14,6 +14,7 @@ import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.sp
+import com.example.ui.theme.EditorFontFamily
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -393,26 +394,80 @@ object RichTextCodec {
             return EditorFormatOutcome(cleaned, emptySet())
         }
 
+        // Repair closing markers clipped by Android IME composing/autocorrect replacements
+        // (e.g. Gboard replacing raw `[innerStart..rawEnd]` `"ك*"` -> `"كتاب"` in `"*ك*"` -> `"*كتاب"`).
+        var workingText = nextText
+        var workingInsertEnd = insertEnd
+        var workingVal = nextVal
+        if (deletedLen > 0 && inserted.isNotEmpty()) {
+            val delEndPrev = prevText.length - suffix
+            val prevLineStart = lineOffsetOf(prevText, prefix)
+            val prevLineEnd = prevText.indexOf('\n', prefix).let { if (it < 0) prevText.length else it }
+            if (delEndPrev <= prevLineEnd) {
+                val prevLine = prevText.substring(prevLineStart, prevLineEnd)
+                val clippedSpans = parseInlineSpans(prevLine)
+                    .filter { span ->
+                        val absRawStart = prevLineStart + span.rawStart
+                        val absInnerStart = prevLineStart + span.innerStart
+                        val absInnerEnd = prevLineStart + span.innerEnd
+                        val absRawEnd = prevLineStart + span.rawEnd
+                        absRawStart < prefix &&
+                            absInnerStart <= prefix &&
+                            absInnerEnd < delEndPrev &&
+                            delEndPrev <= absRawEnd
+                    }
+                    .sortedByDescending { it.rawStart }
+
+                if (clippedSpans.isNotEmpty()) {
+                    var restoredClosing = ""
+                    val nextLineEnd = workingText.indexOf('\n', workingInsertEnd).let { if (it < 0) workingText.length else it }
+                    val tailAfterInsert = workingText.substring(workingInsertEnd, nextLineEnd)
+                    for (span in clippedSpans) {
+                        val expectedSoFar = restoredClosing
+                        if (!tailAfterInsert.startsWith(expectedSoFar + span.closeTag)) {
+                            restoredClosing += span.closeTag
+                        }
+                    }
+                    if (restoredClosing.isNotEmpty()) {
+                        workingText = workingText.substring(0, workingInsertEnd) +
+                            restoredClosing +
+                            workingText.substring(workingInsertEnd)
+                        val oldSelMax = nextVal.selection.max.coerceIn(0, nextText.length)
+                        val adjustedCursor = if (oldSelMax >= workingInsertEnd) {
+                            (oldSelMax + restoredClosing.length).coerceIn(0, workingText.length)
+                        } else {
+                            oldSelMax.coerceIn(0, workingText.length)
+                        }
+                        workingVal = TextFieldValue(
+                            text = workingText,
+                            selection = TextRange(adjustedCursor),
+                            composition = null
+                        )
+                    }
+                }
+            }
+        }
+
         if (pendingStyles.isEmpty()) {
-            val cleaned = if (deletedLen > 0) cleanupOrphanInlineMarkers(nextText, nextVal.selection.max) else nextVal
+            val cleaned = if (deletedLen > 0) cleanupOrphanInlineMarkers(workingText, workingVal.selection.max) else workingVal
             return EditorFormatOutcome(cleaned, emptySet())
         }
 
         // Pure whitespace stays plain until non-space text is typed
         if (inserted.isBlank()) {
-            return EditorFormatOutcome(nextVal, pendingStyles)
+            return EditorFormatOutcome(workingVal, pendingStyles)
         }
 
-        // Avoid re-wrapping with styles already wrapping the insertion point in prevText
-        val existingAtPoint = inspectActiveInlineActionsAtOffset(prevText, prefix)
+        // Check active inline styles around the insertion point (using repaired text if closing markers were restored)
+        val existingAtPoint = inspectActiveInlineActionsAtOffset(workingText, workingInsertEnd)
         val missingStyles = pendingStyles - existingAtPoint
         if (missingStyles.isEmpty()) {
-            return EditorFormatOutcome(nextVal, pendingStyles)
+            return EditorFormatOutcome(workingVal, pendingStyles)
         }
 
         val wrapped = wrapTextWithStyles(inserted, missingStyles)
-        val leftText = nextText.substring(0, prefix)
-        val rightText = nextText.substring(insertEnd)
+        val leftText = workingText.substring(0, prefix)
+        val rightText = workingText.substring(workingInsertEnd)
         val (mergedText, mergedCursor) = mergeSeamInlineMarkers(
             leftText = leftText,
             wrapped = wrapped,
@@ -819,7 +874,8 @@ object RichTextCodec {
         return spans.any { matchesInlineKind(it.kind, kind) && lineCursor in it.innerStart..it.innerEnd }
     }
 
-    private fun isWordChar(c: Char): Boolean = c.isLetterOrDigit() || c == '_'
+    private fun isWordChar(c: Char): Boolean =
+        c.isLetterOrDigit() || c == '_' || c.category == CharCategory.NON_SPACING_MARK
 
     private fun normalizeInlineSelectionRange(text: String, rawStart: Int, rawEnd: Int): Pair<Int, Int> {
         var start = rawStart
@@ -834,14 +890,42 @@ object RichTextCodec {
                 if (pEnd < end) start = pEnd
             }
         }
-        // Trim accidental trailing closing tag absorbed by VisualTransformation end-of-span selection
-        val closingTokens = listOf("</u>", "~~", "==", "`")
-        for (tok in closingTokens) {
-            val sel = text.substring(start, end)
-            if (sel.endsWith(tok)) {
-                val openTok = if (tok == "</u>") "<u>" else tok
-                if (!sel.contains(openTok) && text.substring(lineOffsetOf(text, start), start).contains(openTok)) {
-                    end -= tok.length
+
+        // Expand `start` to include opening markers when visual selection begins at `innerStart`
+        // and extends past the span's `rawEnd` (prevents splitting `*hello* world` into `hello* world`).
+        val startLineEnd = text.indexOf('\n', startLineStart).let { if (it < 0) text.length else it }
+        val startLineSpans = parseInlineSpans(text.substring(startLineStart, startLineEnd))
+        var expanded = true
+        while (expanded) {
+            expanded = false
+            for (span in startLineSpans) {
+                val absRawStart = startLineStart + span.rawStart
+                val absInnerStart = startLineStart + span.innerStart
+                val absRawEnd = startLineStart + span.rawEnd
+                if (absRawStart < start && start == absInnerStart && end > absRawEnd) {
+                    start = absRawStart
+                    expanded = true
+                    break
+                }
+            }
+        }
+
+        // Trim closing marker accidentally absorbed by VisualTransformation's OffsetMapping
+        // when selecting up to the visual end of any span (`*`, `**`, `***`, `<u>`, `~~`, `==`, `` ` ``).
+        val endLineStart = lineOffsetOf(text, end)
+        val endLineEnd = text.indexOf('\n', endLineStart).let { if (it < 0) text.length else it }
+        val endLineSpans = parseInlineSpans(text.substring(endLineStart, endLineEnd))
+        var trimmed = true
+        while (trimmed) {
+            trimmed = false
+            for (span in endLineSpans) {
+                val absRawStart = endLineStart + span.rawStart
+                val absInnerStart = endLineStart + span.innerStart
+                val absInnerEnd = endLineStart + span.innerEnd
+                val absRawEnd = endLineStart + span.rawEnd
+                if (absRawStart < start && absInnerStart <= start && end == absRawEnd && absInnerEnd < absRawEnd) {
+                    end = absInnerEnd
+                    trimmed = true
                     break
                 }
             }
@@ -996,7 +1080,8 @@ object RichTextCodec {
     }
 
     /**
-     * Separate italic handler so single-asterisk `*` never clashes with double-asterisk `**` bold.
+     * Separate italic handler so single-asterisk `*` never clashes with double-asterisk `**` bold,
+     * and handles multi-word / Arabic Tashkeel / mixed bold+italic selections cleanly.
      */
     private fun toggleItalicWrap(value: TextFieldValue): TextFieldValue {
         val text = value.text
@@ -1059,13 +1144,18 @@ object RichTextCodec {
             val updated = text.substring(0, normStart - 1) + selected + text.substring(normEnd + 1)
             return TextFieldValue(updated, TextRange(normStart - 1, normStart - 1 + selected.length))
         }
-        val innerMatch = selected.length >= 2 && selected.startsWith("*") && selected.endsWith("*") &&
-            !(selected.length >= 4 && selected.startsWith("**") && selected.endsWith("**") && !selected.startsWith("***"))
-        if (innerMatch) {
+
+        val selSpans = parseInlineSpans(selected)
+        val fullItalicSpan = selSpans.firstOrNull {
+            (it.kind == InlineKind.ITALIC || it.kind == InlineKind.BOLD_ITALIC) &&
+                it.rawStart == 0 && it.rawEnd == selected.length
+        }
+        if (fullItalicSpan != null) {
             val unwrapped = selected.substring(1, selected.length - 1)
             val updated = text.substring(0, normStart) + unwrapped + text.substring(normEnd)
             return TextFieldValue(updated, TextRange(normStart, normStart + unwrapped.length))
         }
+
         val enclosing = findEnclosingSingleAsteriskSpan(text, normStart)
         if (enclosing != null && enclosing.first <= normStart && normEnd <= enclosing.second) {
             val (s, e) = enclosing
@@ -1075,8 +1165,81 @@ object RichTextCodec {
             val newEnd = (normEnd - 1).coerceIn(newStart, updated.length)
             return TextFieldValue(updated, TextRange(newStart, newEnd))
         }
-        val updated = text.substring(0, normStart) + "*" + selected + "*" + text.substring(normEnd)
-        return TextFieldValue(updated, TextRange(normStart + 1, normEnd + 1))
+
+        // If selection contains inner italic spans (e.g. `*hello* world` or `*hello* *world*`),
+        // strip inner single italic markers cleanly without breaking `**bold**` or `` `code` ``.
+        val italicSpansInSel = selSpans.filter { it.kind == InlineKind.ITALIC || it.kind == InlineKind.BOLD_ITALIC }
+        var cleanSelected = selected
+        if (italicSpansInSel.isNotEmpty()) {
+            val covered = BooleanArray(selected.length)
+            for (sp in italicSpansInSel) {
+                for (k in sp.rawStart until sp.rawEnd.coerceAtMost(selected.length)) {
+                    covered[k] = true
+                }
+            }
+            val hasNonWs = selected.any { !it.isWhitespace() }
+            val allAlreadyItalic = hasNonWs && selected.indices.all { selected[it].isWhitespace() || covered[it] }
+
+            val starRemovals = italicSpansInSel
+                .flatMap { listOf(it.rawStart, it.innerEnd) }
+                .distinct()
+                .sortedDescending()
+            val sb = StringBuilder(selected)
+            for (idx in starRemovals) {
+                if (idx in 0 until sb.length && sb[idx] == '*') {
+                    sb.deleteCharAt(idx)
+                }
+            }
+            cleanSelected = sb.toString()
+
+            if (allAlreadyItalic) {
+                val updated = text.substring(0, normStart) + cleanSelected + text.substring(normEnd)
+                return TextFieldValue(updated, TextRange(normStart, normStart + cleanSelected.length))
+            }
+        }
+
+        // Wrap `cleanSelected` in italic while avoiding `***` ambiguity at partial bold boundaries
+        val cleanSpans = parseInlineSpans(cleanSelected)
+        val fullBold = cleanSpans.any { it.kind == InlineKind.BOLD && it.rawStart == 0 && it.rawEnd == cleanSelected.length }
+        val wrapped = if (!fullBold && (cleanSelected.startsWith("**") || cleanSelected.endsWith("**"))) {
+            wrapRunsSafelyWithItalic(cleanSelected)
+        } else {
+            "*$cleanSelected*"
+        }
+        val updated = text.substring(0, normStart) + wrapped + text.substring(normEnd)
+        val selStart = if (wrapped.startsWith("*") && !cleanSelected.startsWith("**")) normStart + 1 else normStart
+        val selEnd = if (wrapped.endsWith("*") && !cleanSelected.endsWith("**") && selStart > normStart) {
+            normStart + wrapped.length - 1
+        } else {
+            normStart + wrapped.length
+        }
+        return TextFieldValue(updated, TextRange(selStart, selEnd.coerceIn(selStart, updated.length)))
+    }
+
+    private fun wrapRunsSafelyWithItalic(segment: String): String {
+        val sb = StringBuilder(segment.length + 8)
+        var idx = 0
+        while (idx < segment.length) {
+            val sub = segment.substring(idx)
+            val m = firstInlineMatch(sub)
+            if (m != null && m.rawStart == 0 && m.kind == InlineKind.BOLD) {
+                sb.append("***").append(segment.substring(idx + 2, idx + m.innerEnd)).append("***")
+                idx += m.rawEnd
+            } else {
+                val nextBold = if (m != null && m.kind == InlineKind.BOLD) idx + m.rawStart else segment.length
+                val plain = segment.substring(idx, nextBold)
+                if (plain.isNotBlank()) {
+                    val leadWs = plain.takeWhile { it.isWhitespace() }
+                    val trailWs = plain.takeLastWhile { it.isWhitespace() }
+                    val core = plain.substring(leadWs.length, plain.length - trailWs.length)
+                    sb.append(leadWs).append('*').append(core).append('*').append(trailWs)
+                } else {
+                    sb.append(plain)
+                }
+                idx = nextBold
+            }
+        }
+        return sb.toString()
     }
 
     private fun findEnclosingTagSpan(
@@ -1518,8 +1681,11 @@ object RichTextCodec {
         if (startOffset !in 0..text.length || endOffset !in startOffset..text.length) {
             return insertTableAtSelection(text, TextRange(text.length), tableMarkdown)
         }
-        val updated = text.substring(0, startOffset) + tableMarkdown + text.substring(endOffset)
-        val nextCursor = (startOffset + tableMarkdown.length).coerceIn(0, updated.length)
+        val needLeadingNl = startOffset > 0 && text[startOffset - 1] != '\n'
+        val needTrailingNl = endOffset < text.length && text[endOffset] != '\n'
+        val replacement = (if (needLeadingNl) "\n" else "") + tableMarkdown + (if (needTrailingNl) "\n" else "")
+        val updated = text.substring(0, startOffset) + replacement + text.substring(endOffset)
+        val nextCursor = (startOffset + replacement.length).coerceIn(0, updated.length)
         return TextFieldValue(updated, TextRange(nextCursor))
     }
 
@@ -1697,23 +1863,36 @@ object RichTextCodec {
     ): SpanStyle {
         return when (kind) {
             InlineKind.BOLD_ITALIC -> SpanStyle(
-                fontWeight = FontWeight.ExtraBold,
+                fontFamily = EditorFontFamily,
+                fontWeight = FontWeight.Bold,
                 fontStyle = FontStyle.Italic,
                 fontSynthesis = FontSynthesis.All
             )
-            InlineKind.BOLD -> SpanStyle(fontWeight = FontWeight.ExtraBold)
+            InlineKind.BOLD -> SpanStyle(
+                fontFamily = EditorFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSynthesis = FontSynthesis.All
+            )
             InlineKind.ITALIC -> SpanStyle(
+                fontFamily = EditorFontFamily,
                 fontStyle = FontStyle.Italic,
                 fontSynthesis = FontSynthesis.All
             )
-            InlineKind.UNDERLINE -> SpanStyle(textDecoration = TextDecoration.Underline)
-            InlineKind.STRIKETHROUGH -> SpanStyle(textDecoration = TextDecoration.LineThrough)
+            InlineKind.UNDERLINE -> SpanStyle(
+                fontFamily = EditorFontFamily,
+                textDecoration = TextDecoration.Underline
+            )
+            InlineKind.STRIKETHROUGH -> SpanStyle(
+                fontFamily = EditorFontFamily,
+                textDecoration = TextDecoration.LineThrough
+            )
             InlineKind.CODE -> SpanStyle(
                 fontFamily = FontFamily.Monospace,
                 background = accentColor.copy(alpha = if (isDark) 0.24f else 0.14f),
                 color = accentColor
             )
             InlineKind.HIGHLIGHT -> SpanStyle(
+                fontFamily = EditorFontFamily,
                 background = Color(0xFFFBBF24).copy(alpha = if (isDark) 0.34f else 0.42f),
                 fontWeight = FontWeight.Medium
             )
@@ -1984,7 +2163,13 @@ object RichTextCodec {
                         emitInlineWithOffsets(
                             lineStart + 4,
                             lineEnd,
-                            SpanStyle(fontSize = 18.sp, fontWeight = FontWeight.Bold, color = accentColor)
+                            SpanStyle(
+                                fontFamily = EditorFontFamily,
+                                fontSynthesis = FontSynthesis.All,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = accentColor
+                            )
                         )
                     }
                     line.startsWith("## ") -> {
@@ -1992,7 +2177,12 @@ object RichTextCodec {
                         emitInlineWithOffsets(
                             lineStart + 3,
                             lineEnd,
-                            SpanStyle(fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+                            SpanStyle(
+                                fontFamily = EditorFontFamily,
+                                fontSynthesis = FontSynthesis.All,
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
                         )
                     }
                     line.startsWith("# ") -> {
@@ -2000,7 +2190,12 @@ object RichTextCodec {
                         emitInlineWithOffsets(
                             lineStart + 2,
                             lineEnd,
-                            SpanStyle(fontSize = 24.sp, fontWeight = FontWeight.Black)
+                            SpanStyle(
+                                fontFamily = EditorFontFamily,
+                                fontSynthesis = FontSynthesis.All,
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Black
+                            )
                         )
                     }
                     line.startsWith("- [x] ") || line.startsWith("- [X] ") -> {
@@ -2013,7 +2208,12 @@ object RichTextCodec {
                         emitInlineWithOffsets(
                             lineStart + 6,
                             lineEnd,
-                            SpanStyle(color = metaColor, textDecoration = TextDecoration.LineThrough)
+                            SpanStyle(
+                                fontFamily = EditorFontFamily,
+                                fontSynthesis = FontSynthesis.All,
+                                color = metaColor,
+                                textDecoration = TextDecoration.LineThrough
+                            )
                         )
                     }
                     line.startsWith("- [ ] ") -> {
@@ -2045,6 +2245,8 @@ object RichTextCodec {
                             lineStart + 5,
                             lineEnd,
                             SpanStyle(
+                                fontFamily = EditorFontFamily,
+                                fontSynthesis = FontSynthesis.All,
                                 fontWeight = FontWeight.Medium,
                                 background = accentColor.copy(alpha = if (isDark) 0.16f else 0.10f)
                             )
@@ -2061,6 +2263,7 @@ object RichTextCodec {
                             lineStart + 2,
                             lineEnd,
                             SpanStyle(
+                                fontFamily = EditorFontFamily,
                                 fontStyle = FontStyle.Italic,
                                 fontSynthesis = FontSynthesis.All,
                                 color = metaColor

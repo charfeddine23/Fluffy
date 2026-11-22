@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -8,15 +9,19 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -93,6 +98,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontSynthesis
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
@@ -112,6 +118,7 @@ import com.example.data.model.RichFormatAction
 import com.example.data.model.RichTextCodec
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.glass.liquidGlass
+import com.example.ui.theme.EditorFontFamily
 
 /**
  * Sleek Liquid Glass formatting bar for Writing Mode containing:
@@ -937,229 +944,267 @@ fun TableEditorDialog(
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
     ) {
-        LiquidGlassCard(
-            isDark = isDark,
-            tint = GlassTint.FROST,
-            shape = RoundedCornerShape(26.dp),
-            borderWidth = 1.4.dp,
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .widthIn(max = 520.dp)
-                .testTag("table_editor_dialog")
+                .imePadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            contentAlignment = Alignment.Center
         ) {
-            Column(
+            LiquidGlassCard(
+                isDark = isDark,
+                tint = GlassTint.FROST,
+                shape = RoundedCornerShape(26.dp),
+                borderWidth = 1.4.dp,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(18.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                    .widthIn(max = 520.dp)
+                    .testTag("table_editor_dialog")
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.TableChart,
-                            contentDescription = null,
-                            tint = accentColor,
-                            modifier = Modifier.size(20.dp)
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.TableChart,
+                                contentDescription = null,
+                                tint = accentColor,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = if (initialTable != null) {
+                                    if (isArabic) "تعديل الجدول ($rowCount × $colCount)" else "Edit Table ($rowCount × $colCount)"
+                                } else {
+                                    if (isArabic) "إنشاء جدول ($rowCount × $colCount)" else "Insert Table ($rowCount × $colCount)"
+                                },
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = textColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .clickable(onClick = onDismiss),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = if (isArabic) "إغلاق" else "Close",
+                                tint = metaColor,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
+                    // Quick Size Controls (+Row, -Row, +Col, -Col)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        DimensionStepperPill(
+                            label = if (isArabic) "الصفوف: $rowCount" else "Rows: $rowCount",
+                            onMinus = { resizeGrid(rowCount - 1, colCount) },
+                            onPlus = { resizeGrid(rowCount + 1, colCount) },
+                            canMinus = rowCount > 2,
+                            canPlus = rowCount < 12,
+                            accentColor = accentColor,
+                            textColor = textColor,
+                            isDark = isDark
                         )
-                        Text(
-                            text = if (initialTable != null) {
-                                if (isArabic) "تعديل الجدول ($rowCount × $colCount)" else "Edit Table ($rowCount × $colCount)"
-                            } else {
-                                if (isArabic) "إنشاء جدول ($rowCount × $colCount)" else "Insert Table ($rowCount × $colCount)"
-                            },
-                            fontSize = 16.5.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = textColor
+                        DimensionStepperPill(
+                            label = if (isArabic) "الأعمدة: $colCount" else "Cols: $colCount",
+                            onMinus = { resizeGrid(rowCount, colCount - 1) },
+                            onPlus = { resizeGrid(rowCount, colCount + 1) },
+                            canMinus = colCount > 1,
+                            canPlus = colCount < 7,
+                            accentColor = accentColor,
+                            textColor = textColor,
+                            isDark = isDark
                         )
                     }
+
+                    // Interactive Scrollable Grid Table — shrinks cleanly when IME opens so buttons never overlap
                     Box(
                         modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .clickable(onClick = onDismiss),
-                        contentAlignment = Alignment.Center
+                            .fillMaxWidth()
+                            .weight(1f, fill = false)
+                            .heightIn(min = 120.dp, max = 300.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .border(1.dp, metaColor.copy(alpha = 0.28f), RoundedCornerShape(16.dp))
+                            .verticalScroll(rememberScrollState())
+                            .horizontalScroll(rememberScrollState())
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = if (isArabic) "إغلاق" else "Close",
-                            tint = metaColor,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-
-                // Quick Size Controls (+Row, -Row, +Col, -Col)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    DimensionStepperPill(
-                        label = if (isArabic) "الصفوف: $rowCount" else "Rows: $rowCount",
-                        onMinus = { resizeGrid(rowCount - 1, colCount) },
-                        onPlus = { resizeGrid(rowCount + 1, colCount) },
-                        canMinus = rowCount > 2,
-                        canPlus = rowCount < 12,
-                        accentColor = accentColor,
-                        textColor = textColor,
-                        isDark = isDark
-                    )
-                    DimensionStepperPill(
-                        label = if (isArabic) "الأعمدة: $colCount" else "Cols: $colCount",
-                        onMinus = { resizeGrid(rowCount, colCount - 1) },
-                        onPlus = { resizeGrid(rowCount, colCount + 1) },
-                        canMinus = colCount > 1,
-                        canPlus = colCount < 7,
-                        accentColor = accentColor,
-                        textColor = textColor,
-                        isDark = isDark
-                    )
-                }
-
-                // Interactive Scrollable Grid Table
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 320.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .border(1.dp, metaColor.copy(alpha = 0.28f), RoundedCornerShape(16.dp))
-                        .verticalScroll(rememberScrollState())
-                        .horizontalScroll(rememberScrollState())
-                ) {
-                    Column {
-                        gridRows.forEachIndexed { rIdx, rowCells ->
-                            val isHeader = rIdx == 0
-                            Row(
-                                modifier = Modifier.background(
-                                    when {
-                                        isHeader -> accentColor.copy(alpha = if (isDark) 0.24f else 0.14f)
-                                        rIdx % 2 == 1 -> Color.Transparent
-                                        else -> if (isDark) Color.White.copy(alpha = 0.03f) else Color.Black.copy(alpha = 0.025f)
-                                    }
-                                )
-                            ) {
-                                rowCells.forEachIndexed { cIdx, cellValue ->
-                                    Box(
-                                        modifier = Modifier
-                                            .width(120.dp)
-                                            .defaultMinSize(minHeight = 44.dp)
-                                            .border(0.6.dp, metaColor.copy(alpha = 0.22f))
-                                            .padding(horizontal = 8.dp, vertical = 8.dp),
-                                        contentAlignment = Alignment.CenterStart
-                                    ) {
-                                        BasicTextField(
-                                            value = cellValue,
-                                            onValueChange = { updated ->
-                                                val updatedRow = gridRows[rIdx].toMutableList()
-                                                updatedRow[cIdx] = updated.replace('\n', ' ')
-                                                gridRows[rIdx] = updatedRow
-                                            },
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .testTag("table_cell_${rIdx}_$cIdx"),
-                                            textStyle = TextStyle(
-                                                fontSize = if (isHeader) 13.sp else 12.5.sp,
-                                                fontWeight = if (isHeader) FontWeight.Bold else FontWeight.Normal,
-                                                color = if (isHeader) accentColor else textColor
-                                            ),
-                                            cursorBrush = SolidColor(accentColor),
-                                            decorationBox = { inner ->
-                                                if (cellValue.isEmpty()) {
-                                                    Text(
-                                                        text = if (isHeader) {
-                                                            if (isArabic) "رأس ${cIdx + 1}" else "Header ${cIdx + 1}"
-                                                        } else {
-                                                            if (isArabic) "بيانات..." else "Value..."
-                                                        },
-                                                        fontSize = 12.sp,
-                                                        color = metaColor.copy(alpha = 0.45f)
-                                                    )
-                                                }
-                                                inner()
+                        Column {
+                            gridRows.forEachIndexed { rIdx, rowCells ->
+                                val isHeader = rIdx == 0
+                                Row(
+                                    modifier = Modifier
+                                        .height(IntrinsicSize.Max)
+                                        .background(
+                                            when {
+                                                isHeader -> accentColor.copy(alpha = if (isDark) 0.24f else 0.14f)
+                                                rIdx % 2 == 1 -> Color.Transparent
+                                                else -> if (isDark) Color.White.copy(alpha = 0.03f) else Color.Black.copy(alpha = 0.025f)
                                             }
                                         )
+                                ) {
+                                    rowCells.forEachIndexed { cIdx, cellValue ->
+                                        Box(
+                                            modifier = Modifier
+                                                .width(124.dp)
+                                                .fillMaxHeight()
+                                                .defaultMinSize(minHeight = 44.dp)
+                                                .border(0.6.dp, metaColor.copy(alpha = 0.22f))
+                                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                                            contentAlignment = Alignment.CenterStart
+                                        ) {
+                                            BasicTextField(
+                                                value = cellValue,
+                                                onValueChange = { updated ->
+                                                    val updatedRow = gridRows[rIdx].toMutableList()
+                                                    updatedRow[cIdx] = updated.replace('\n', ' ')
+                                                    gridRows[rIdx] = updatedRow
+                                                },
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .testTag("table_cell_${rIdx}_$cIdx"),
+                                                textStyle = TextStyle(
+                                                    fontFamily = EditorFontFamily,
+                                                    fontSynthesis = FontSynthesis.All,
+                                                    fontSize = if (isHeader) 13.sp else 12.5.sp,
+                                                    fontWeight = if (isHeader) FontWeight.Bold else FontWeight.Normal,
+                                                    color = if (isHeader) accentColor else textColor
+                                                ),
+                                                cursorBrush = SolidColor(accentColor),
+                                                decorationBox = { inner ->
+                                                    Box(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        contentAlignment = Alignment.CenterStart
+                                                    ) {
+                                                        if (cellValue.isEmpty()) {
+                                                            Text(
+                                                                text = if (isHeader) {
+                                                                    if (isArabic) "رأس ${cIdx + 1}" else "Header ${cIdx + 1}"
+                                                                } else {
+                                                                    if (isArabic) "بيانات..." else "Value..."
+                                                                },
+                                                                fontSize = 12.sp,
+                                                                color = metaColor.copy(alpha = 0.45f),
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                        }
+                                                        inner()
+                                                    }
+                                                }
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                }
 
-                // Bottom Action Buttons
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (initialTable != null && onDeleteTable != null) {
+                    // Bottom Action Buttons — compact padding & non-wrapping labels so 3 buttons never collide
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (initialTable != null && onDeleteTable != null) {
+                            OutlinedButton(
+                                onClick = onDeleteTable,
+                                shape = RoundedCornerShape(14.dp),
+                                border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.45f)),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                                modifier = Modifier.defaultMinSize(minHeight = 44.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.DeleteOutline,
+                                    contentDescription = if (isArabic) "حذف الجدول" else "Delete Table",
+                                    tint = Color(0xFFEF4444),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = if (isArabic) "حذف" else "Delete",
+                                    color = Color(0xFFEF4444),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.5.sp,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.weight(1f))
+
                         OutlinedButton(
-                            onClick = onDeleteTable,
+                            onClick = onDismiss,
                             shape = RoundedCornerShape(14.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                             modifier = Modifier.defaultMinSize(minHeight = 44.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.DeleteOutline,
-                                contentDescription = if (isArabic) "حذف الجدول" else "Delete Table",
-                                tint = Color(0xFFEF4444),
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = if (isArabic) "حذف" else "Delete",
-                                color = Color(0xFFEF4444),
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.5.sp
+                                text = if (isArabic) "إلغاء" else "Cancel",
+                                color = metaColor,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 12.5.sp,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
-                    }
 
-                    Spacer(modifier = Modifier.weight(1f))
-
-                    OutlinedButton(
-                        onClick = onDismiss,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.defaultMinSize(minHeight = 44.dp)
-                    ) {
-                        Text(
-                            text = if (isArabic) "إلغاء" else "Cancel",
-                            color = metaColor,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 13.sp
-                        )
-                    }
-
-                    Button(
-                        onClick = { onConfirmTable(gridRows.map { it.toList() }) },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = accentColor,
-                            contentColor = Color.White
-                        ),
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier
-                            .defaultMinSize(minHeight = 44.dp)
-                            .testTag("table_confirm_button")
-                    ) {
-                        Text(
-                            text = if (initialTable != null) {
-                                if (isArabic) "تحديث الجدول" else "Update Table"
-                            } else {
-                                if (isArabic) "إدراج الجدول" else "Insert Table"
-                            },
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp
-                        )
+                        Button(
+                            onClick = { onConfirmTable(gridRows.map { it.toList() }) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = accentColor,
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(14.dp),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                            modifier = Modifier
+                                .defaultMinSize(minHeight = 44.dp)
+                                .testTag("table_confirm_button")
+                        ) {
+                            Text(
+                                text = if (initialTable != null) {
+                                    if (isArabic) "تحديث الجدول" else "Update Table"
+                                } else {
+                                    if (isArabic) "إدراج الجدول" else "Insert Table"
+                                },
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.5.sp,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }
@@ -1442,6 +1487,8 @@ fun SegmentedRichPageEditor(
                             }
                             .testTag(if (segIdx == 0) fieldTestTag else "${fieldTestTag}_seg_$segIdx"),
                         textStyle = TextStyle(
+                            fontFamily = EditorFontFamily,
+                            fontSynthesis = FontSynthesis.All,
                             fontSize = fontSizeSp.sp,
                             color = bodyColor,
                             lineHeight = (fontSizeSp * 1.52f).sp
@@ -1453,6 +1500,8 @@ fun SegmentedRichPageEditor(
                                     Text(
                                         text = segPlaceholder,
                                         style = TextStyle(
+                                            fontFamily = EditorFontFamily,
+                                            fontSynthesis = FontSynthesis.All,
                                             fontSize = fontSizeSp.sp,
                                             color = metaColor.copy(alpha = 0.56f),
                                             lineHeight = (fontSizeSp * 1.52f).sp
@@ -1693,6 +1742,8 @@ fun RichContentView(
                     Text(
                         text = block.text,
                         style = TextStyle(
+                            fontFamily = EditorFontFamily,
+                            fontSynthesis = FontSynthesis.All,
                             fontSize = size.sp,
                             fontWeight = if (block.level == 1) FontWeight.Black else FontWeight.ExtraBold,
                             color = if (block.level == 3) accentColor else textColor,
@@ -1711,6 +1762,8 @@ fun RichContentView(
                         Text(
                             text = block.text,
                             style = TextStyle(
+                                fontFamily = EditorFontFamily,
+                                fontSynthesis = FontSynthesis.All,
                                 fontSize = fontSizeSp.sp,
                                 color = bodyColor,
                                 lineHeight = (fontSizeSp * 1.52f).sp
@@ -1737,6 +1790,8 @@ fun RichContentView(
                         Text(
                             text = block.text,
                             style = TextStyle(
+                                fontFamily = EditorFontFamily,
+                                fontSynthesis = FontSynthesis.All,
                                 fontSize = fontSizeSp.sp,
                                 color = bodyColor,
                                 lineHeight = (fontSizeSp * 1.48f).sp
@@ -1763,6 +1818,8 @@ fun RichContentView(
                         Text(
                             text = block.text,
                             style = TextStyle(
+                                fontFamily = EditorFontFamily,
+                                fontSynthesis = FontSynthesis.All,
                                 fontSize = fontSizeSp.sp,
                                 color = bodyColor,
                                 lineHeight = (fontSizeSp * 1.48f).sp
@@ -1795,6 +1852,8 @@ fun RichContentView(
                         Text(
                             text = block.text,
                             style = TextStyle(
+                                fontFamily = EditorFontFamily,
+                                fontSynthesis = FontSynthesis.All,
                                 fontSize = fontSizeSp.sp,
                                 color = if (block.checked) metaColor else bodyColor,
                                 textDecoration = if (block.checked) TextDecoration.LineThrough else TextDecoration.None,
@@ -1822,6 +1881,8 @@ fun RichContentView(
                             Text(
                                 text = block.text,
                                 style = TextStyle(
+                                    fontFamily = EditorFontFamily,
+                                    fontSynthesis = FontSynthesis.All,
                                     fontSize = fontSizeSp.sp,
                                     fontWeight = FontWeight.Medium,
                                     color = textColor,
@@ -1851,9 +1912,10 @@ fun RichContentView(
                             Text(
                                 text = block.text,
                                 style = TextStyle(
+                                    fontFamily = EditorFontFamily,
+                                    fontSynthesis = FontSynthesis.All,
                                     fontSize = fontSizeSp.sp,
                                     fontStyle = FontStyle.Italic,
-                                    fontSynthesis = androidx.compose.ui.text.font.FontSynthesis.All,
                                     color = metaColor,
                                     lineHeight = (fontSizeSp * 1.46f).sp
                                 ),
@@ -1943,6 +2005,13 @@ fun StyledMarkdownTable(
     metaColor: Color,
     modifier: Modifier = Modifier
 ) {
+    val colWidths = remember(table) {
+        val cols = table.colCount.coerceAtLeast(1)
+        List(cols) { cIdx ->
+            val maxChars = table.rows.maxOfOrNull { it.getOrElse(cIdx) { "" }.length } ?: 0
+            (96 + (maxChars - 6).coerceAtLeast(0) * 6).coerceIn(96, 200).dp
+        }
+    }
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -1954,18 +2023,22 @@ fun StyledMarkdownTable(
             table.rows.forEachIndexed { rIdx, row ->
                 val isHeader = rIdx == 0
                 Row(
-                    modifier = Modifier.background(
-                        when {
-                            isHeader -> accentColor.copy(alpha = if (isDark) 0.24f else 0.14f)
-                            rIdx % 2 == 1 -> Color.Transparent
-                            else -> if (isDark) Color.White.copy(alpha = 0.035f) else Color.Black.copy(alpha = 0.025f)
-                        }
-                    )
+                    modifier = Modifier
+                        .height(IntrinsicSize.Max)
+                        .background(
+                            when {
+                                isHeader -> accentColor.copy(alpha = if (isDark) 0.24f else 0.14f)
+                                rIdx % 2 == 1 -> Color.Transparent
+                                else -> if (isDark) Color.White.copy(alpha = 0.035f) else Color.Black.copy(alpha = 0.025f)
+                            }
+                        )
                 ) {
-                    row.forEach { cell ->
+                    row.forEachIndexed { cIdx, cell ->
+                        val colW = colWidths.getOrElse(cIdx) { 104.dp }
                         Box(
                             modifier = Modifier
-                                .widthIn(min = 88.dp, max = 210.dp)
+                                .width(colW)
+                                .fillMaxHeight()
                                 .border(0.6.dp, metaColor.copy(alpha = 0.20f))
                                 .padding(horizontal = 10.dp, vertical = 8.dp),
                             contentAlignment = Alignment.CenterStart
@@ -1976,9 +2049,13 @@ fun StyledMarkdownTable(
                                     accentColor = accentColor,
                                     isDark = isDark
                                 ),
-                                fontSize = if (isHeader) 12.5.sp else 12.5.sp,
-                                fontWeight = if (isHeader) FontWeight.Bold else FontWeight.Normal,
-                                color = if (isHeader) accentColor else textColor,
+                                style = TextStyle(
+                                    fontFamily = EditorFontFamily,
+                                    fontSynthesis = FontSynthesis.All,
+                                    fontSize = 12.5.sp,
+                                    fontWeight = if (isHeader) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isHeader) accentColor else textColor
+                                ),
                                 maxLines = 4,
                                 overflow = TextOverflow.Ellipsis
                             )
