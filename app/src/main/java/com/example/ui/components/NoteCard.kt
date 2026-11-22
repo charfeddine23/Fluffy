@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -30,6 +31,7 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Unarchive
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -48,6 +50,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.example.data.model.ChecklistItem
 import com.example.data.model.GlassTint
 import com.example.data.model.NoteBackgroundCanvas
@@ -384,30 +388,10 @@ fun NoteCard(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    // Pin Button
-                    Box(
-                        modifier = Modifier
-                            .size(26.dp)
-                            .clip(CircleShape)
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = ripple(bounded = true),
-                                onClick = onTogglePin
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PushPin,
-                            contentDescription = tr("تثبيت", "Épingler", "Toggle Pin", "Senteḍ"),
-                            tint = if (note.isPinned) Color(0xFFFBBF24) else metaColor.copy(alpha = 0.6f),
-                            modifier = Modifier.size(15.dp)
-                        )
-                    }
-
                     // Favorite Button
                     Box(
                         modifier = Modifier
-                            .size(26.dp)
+                            .size(28.dp)
                             .clip(CircleShape)
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
@@ -420,68 +404,7 @@ fun NoteCard(
                             imageVector = if (note.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                             contentDescription = tr("مفضلة", "Favori", "Toggle Favorite", "Anurif"),
                             tint = if (note.isFavorite) Color(0xFFF43F5E) else metaColor.copy(alpha = 0.6f),
-                            modifier = Modifier.size(15.dp)
-                        )
-                    }
-
-                    // Move to Vault Button
-                    Box(
-                        modifier = Modifier
-                            .size(26.dp)
-                            .testTag("note_move_to_vault_${note.id}")
-                            .clip(CircleShape)
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = ripple(bounded = true),
-                                onClick = onMoveToVault
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Shield,
-                            contentDescription = tr("نقل إلى الـ Vault", "Déplacer vers Vault", "Move to Vault", "Smutti ɣer Vault"),
-                            tint = Color(0xFFC084FC).copy(alpha = 0.85f),
-                            modifier = Modifier.size(15.dp)
-                        )
-                    }
-
-                    // Archive Button
-                    Box(
-                        modifier = Modifier
-                            .size(26.dp)
-                            .clip(CircleShape)
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = ripple(bounded = true),
-                                onClick = onArchive
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (note.isArchived) Icons.Default.Unarchive else Icons.Default.Archive,
-                            contentDescription = if (note.isArchived) "Unarchive" else "Archive",
-                            tint = if (note.isArchived) Color(0xFF38BDF8) else metaColor.copy(alpha = 0.6f),
-                            modifier = Modifier.size(15.dp)
-                        )
-                    }
-
-                    // Delete Button
-                    Box(
-                        modifier = Modifier
-                            .size(26.dp)
-                            .clip(CircleShape)
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = ripple(bounded = true),
-                                onClick = onDelete
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.DeleteOutline,
-                            contentDescription = tr("حذف", "Supprimer", "Delete", "Kkes"),
-                            tint = Color(0xFFEF4444).copy(alpha = 0.78f),
-                            modifier = Modifier.size(15.dp)
+                            modifier = Modifier.size(16.dp)
                         )
                     }
                 }
@@ -722,27 +645,9 @@ fun GalleryNoteCard(
                     Row(horizontalArrangement = Arrangement.spacedBy(1.dp)) {
                         CompactCardIcon(
                             icon = if (note.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                            contentDescription = "Favorite",
+                            contentDescription = tr("مفضلة", "Favori", "Favorite", "Anurif"),
                             tint = if (note.isFavorite) Color(0xFFF43F5E) else metaColor.copy(alpha = 0.72f),
                             onClick = onToggleFavorite
-                        )
-                        CompactCardIcon(
-                            icon = Icons.Default.Shield,
-                            contentDescription = tr("نقل إلى الـ Vault", "Déplacer vers Vault", "Move to Vault", "Smutti ɣer Vault"),
-                            tint = Color(0xFFC084FC).copy(alpha = 0.88f),
-                            onClick = onMoveToVault
-                        )
-                        CompactCardIcon(
-                            icon = if (note.isArchived) Icons.Default.Unarchive else Icons.Default.Archive,
-                            contentDescription = if (note.isArchived) "Unarchive" else "Archive",
-                            tint = if (note.isArchived) Color(0xFF38BDF8) else metaColor.copy(alpha = 0.72f),
-                            onClick = onArchive
-                        )
-                        CompactCardIcon(
-                            icon = Icons.Default.DeleteOutline,
-                            contentDescription = "Delete",
-                            tint = Color(0xFFEF4444).copy(alpha = 0.85f),
-                            onClick = onDelete
                         )
                     }
                 }
@@ -924,34 +829,10 @@ fun MagazineNoteCard(
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                             CompactCardIcon(
-                                icon = Icons.Default.PushPin,
-                                contentDescription = "Pin",
-                                tint = if (note.isPinned) Color(0xFFFBBF24) else metaColor.copy(alpha = 0.65f),
-                                onClick = onTogglePin
-                            )
-                            CompactCardIcon(
                                 icon = if (note.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                contentDescription = "Favorite",
+                                contentDescription = tr("مفضلة", "Favori", "Favorite", "Anurif"),
                                 tint = if (note.isFavorite) Color(0xFFF43F5E) else metaColor.copy(alpha = 0.65f),
                                 onClick = onToggleFavorite
-                            )
-                            CompactCardIcon(
-                                icon = Icons.Default.Shield,
-                                contentDescription = tr("نقل إلى الـ Vault", "Déplacer vers Vault", "Move to Vault", "Smutti ɣer Vault"),
-                                tint = Color(0xFFC084FC).copy(alpha = 0.88f),
-                                onClick = onMoveToVault
-                            )
-                            CompactCardIcon(
-                                icon = if (note.isArchived) Icons.Default.Unarchive else Icons.Default.Archive,
-                                contentDescription = if (note.isArchived) "Unarchive" else "Archive",
-                                tint = if (note.isArchived) Color(0xFF38BDF8) else metaColor.copy(alpha = 0.65f),
-                                onClick = onArchive
-                            )
-                            CompactCardIcon(
-                                icon = Icons.Default.DeleteOutline,
-                                contentDescription = "Delete",
-                                tint = Color(0xFFEF4444).copy(alpha = 0.82f),
-                                onClick = onDelete
                             )
                         }
                     }
@@ -1108,27 +989,9 @@ fun MagazineNoteCard(
                         Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                             CompactCardIcon(
                                 icon = if (note.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                contentDescription = "Favorite",
+                                contentDescription = tr("مفضلة", "Favori", "Favorite", "Anurif"),
                                 tint = if (note.isFavorite) Color(0xFFF43F5E) else metaColor.copy(alpha = 0.65f),
                                 onClick = onToggleFavorite
-                            )
-                            CompactCardIcon(
-                                icon = Icons.Default.Shield,
-                                contentDescription = tr("نقل إلى الـ Vault", "Déplacer vers Vault", "Move to Vault", "Smutti ɣer Vault"),
-                                tint = Color(0xFFC084FC).copy(alpha = 0.88f),
-                                onClick = onMoveToVault
-                            )
-                            CompactCardIcon(
-                                icon = if (note.isArchived) Icons.Default.Unarchive else Icons.Default.Archive,
-                                contentDescription = if (note.isArchived) "Unarchive" else "Archive",
-                                tint = if (note.isArchived) Color(0xFF38BDF8) else metaColor.copy(alpha = 0.65f),
-                                onClick = onArchive
-                            )
-                            CompactCardIcon(
-                                icon = Icons.Default.DeleteOutline,
-                                contentDescription = "Delete",
-                                tint = Color(0xFFEF4444).copy(alpha = 0.82f),
-                                onClick = onDelete
                             )
                         }
                     }
@@ -1189,4 +1052,249 @@ private fun formatDuration(sec: Int): String {
     val mins = sec / 60
     val remSec = sec % 60
     return String.format(Locale.US, "%d:%02d", mins, remSec)
+}
+
+@Composable
+fun NoteQuickActionsPopup(
+    note: NoteEntity,
+    isDark: Boolean,
+    isArabic: Boolean,
+    onDismiss: () -> Unit,
+    onTogglePin: () -> Unit,
+    onMoveToVault: () -> Unit,
+    onArchive: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val glassTint = GlassTint.fromId(note.colorPreset)
+    val surfaceColors = remember(isDark, glassTint, note.customColorArgb, note.backgroundId) {
+        NoteBackgroundCatalog.resolveSurfaceColors(
+            themeIsDark = isDark,
+            tint = glassTint,
+            customColorArgb = note.customColorArgb,
+            backgroundId = note.backgroundId
+        )
+    }
+    val cardAccent = surfaceColors.accentColor
+    val titleColor = if (isDark) Color.White else Color(0xFF0F172A)
+    val subColor = if (isDark) Color(0xFF94A3B8) else Color(0xFF475569)
+    val displayTitle = note.title.ifBlank {
+        NotePagesCodec.plainTextSnippet(note).lineSequence().firstOrNull().orEmpty()
+    }.ifBlank {
+        tr("مسودة بدون عنوان", "Note sans titre", "Untitled Draft", "Tira war azwel")
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = if (isDark) 0.56f else 0.34f))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            LiquidGlassCard(
+                isDark = isDark,
+                tint = glassTint,
+                shape = RoundedCornerShape(26.dp),
+                borderWidth = 1.6.dp,
+                testTag = "note_quick_actions_popup",
+                modifier = Modifier
+                    .widthIn(max = 340.dp)
+                    .fillMaxWidth(0.86f)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {}
+                    )
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Selected Draft Header
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(cardAccent.copy(alpha = if (isDark) 0.24f else 0.14f))
+                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = note.category,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = cardAccent
+                            )
+                        }
+                        Text(
+                            text = formatFriendlyDate(note.updatedAt, isArabic),
+                            fontSize = 11.sp,
+                            color = subColor
+                        )
+                    }
+
+                    Text(
+                        text = displayTitle,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = titleColor,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    HorizontalDivider(
+                        color = if (isDark) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.08f)
+                    )
+
+                    QuickActionPopupRow(
+                        icon = Icons.Default.PushPin,
+                        label = if (note.isPinned) {
+                            tr("إلغاء التثبيت في الأعلى", "Désépingler d'en haut", "Unpin from top", "Kkes asenteḍ s ufella")
+                        } else {
+                            tr("التثبيت في الأعلى", "Épingler en haut", "Pin to top", "Senteḍ s ufella")
+                        },
+                        tint = Color(0xFFFBBF24),
+                        titleColor = titleColor,
+                        isDark = isDark,
+                        testTag = "note_popup_pin",
+                        onClick = {
+                            onDismiss()
+                            onTogglePin()
+                        }
+                    )
+
+                    QuickActionPopupRow(
+                        icon = Icons.Default.Shield,
+                        label = tr(
+                            "نقل المسودة إلى الخزنة",
+                            "Déplacer vers le coffre",
+                            "Move Draft to Vault",
+                            "Smutti ɣer Vault"
+                        ),
+                        tint = Color(0xFFC084FC),
+                        titleColor = titleColor,
+                        isDark = isDark,
+                        testTag = "note_popup_vault",
+                        onClick = {
+                            onDismiss()
+                            onMoveToVault()
+                        }
+                    )
+
+                    QuickActionPopupRow(
+                        icon = if (note.isArchived) Icons.Default.Unarchive else Icons.Default.Archive,
+                        label = if (note.isArchived) {
+                            tr("إلغاء الأرشفة", "Désarchiver", "Unarchive", "Kkes seg uɣbar")
+                        } else {
+                            tr("أرشفة", "Archiver", "Archive", "Aɣbar")
+                        },
+                        tint = Color(0xFF38BDF8),
+                        titleColor = titleColor,
+                        isDark = isDark,
+                        testTag = "note_popup_archive",
+                        onClick = {
+                            onDismiss()
+                            onArchive()
+                        }
+                    )
+
+                    QuickActionPopupRow(
+                        icon = Icons.Default.DeleteOutline,
+                        label = tr("حذف", "Supprimer", "Delete", "Kkes"),
+                        tint = Color(0xFFEF4444),
+                        titleColor = Color(0xFFEF4444),
+                        isDark = isDark,
+                        isDestructive = true,
+                        testTag = "note_popup_delete",
+                        onClick = {
+                            onDismiss()
+                            onDelete()
+                        }
+                    )
+
+                    Text(
+                        text = tr(
+                            "تلميح: اسحب المسودة أثناء الضغط لتغيير مكانها",
+                            "Astuce : maintenez et glissez pour réorganiser",
+                            "Tip: press & drag to reorder this draft",
+                            "Tazmert: eǧǧ afus-ik tzuɣreḍ i umyizwer"
+                        ),
+                        fontSize = 11.sp,
+                        color = subColor,
+                        modifier = Modifier.padding(top = 4.dp, start = 4.dp, end = 4.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickActionPopupRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    tint: Color,
+    titleColor: Color,
+    isDark: Boolean,
+    isDestructive: Boolean = false,
+    testTag: String,
+    onClick: () -> Unit
+) {
+    val rowBg = when {
+        isDestructive -> Color(0xFFEF4444).copy(alpha = if (isDark) 0.14f else 0.08f)
+        isDark -> Color.White.copy(alpha = 0.06f)
+        else -> Color.Black.copy(alpha = 0.04f)
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 52.dp)
+            .testTag(testTag)
+            .clip(RoundedCornerShape(16.dp))
+            .background(rowBg)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = ripple(bounded = true),
+                onClick = onClick
+            )
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(RoundedCornerShape(11.dp))
+                .background(tint.copy(alpha = if (isDark) 0.22f else 0.14f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = tint,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        Text(
+            text = label,
+            fontSize = 14.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = titleColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+    }
 }

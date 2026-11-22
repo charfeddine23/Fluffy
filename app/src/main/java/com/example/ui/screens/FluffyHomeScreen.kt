@@ -72,6 +72,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.zIndex
 import com.example.data.model.GlassTint
+import com.example.data.model.NoteEntity
 import com.example.data.model.NotesViewMode
 import com.example.ui.components.CategoryChips
 import com.example.ui.components.FluffyBottomBar
@@ -79,6 +80,7 @@ import com.example.ui.components.FluffyTopBar
 import com.example.ui.components.GalleryNoteCard
 import com.example.ui.components.MagazineNoteCard
 import com.example.ui.components.NoteCard
+import com.example.ui.components.NoteQuickActionsPopup
 import com.example.ui.components.SettingsDrawer
 import com.example.ui.components.StatsBottomSheet
 import com.example.ui.components.VoiceRecorderDialog
@@ -139,6 +141,7 @@ fun FluffyHomeScreen(
 
     var displayedNotes by remember { mutableStateOf(notes) }
     var draggedNoteId by remember { mutableStateOf<Long?>(null) }
+    var popupNote by remember { mutableStateOf<NoteEntity?>(null) }
     var currentPointerPos by remember { mutableStateOf(Offset.Zero) }
     var grabOffsetInsideCard by remember { mutableStateOf(Offset.Zero) }
     var pendingCommitOrderIds by remember { mutableStateOf<List<Long>?>(null) }
@@ -482,12 +485,13 @@ fun FluffyHomeScreen(
                                     val firstDown = initialEvent.changes.firstOrNull { it.changedToDownIgnoreConsumed() }
                                         ?: return@awaitEachGesture
                                     if (initialEvent.changes.count { it.pressed } != 1) return@awaitEachGesture
+                                    if (popupNote != null) return@awaitEachGesture
 
                                     val pointerId = firstDown.id
                                     val downPos = firstDown.position
-                                    if (findHitNoteAndOrigin(downPos) == null) return@awaitEachGesture
+                                    val initialHit = findHitNoteAndOrigin(downPos) ?: return@awaitEachGesture
 
-                                    // Wait 500 ms (0.5 seconds) while stationary before activating drag
+                                    // Wait 500 ms (0.5 seconds) while stationary before triggering quick-actions or drag
                                     var latestPos = downPos
                                     var holdActivated = false
                                     val startTime = SystemClock.uptimeMillis()
@@ -517,22 +521,90 @@ fun FluffyHomeScreen(
                                     }
 
                                     if (!holdActivated) return@awaitEachGesture
-                                    val hit = findHitNoteAndOrigin(latestPos) ?: return@awaitEachGesture
+                                    val hit = findHitNoteAndOrigin(latestPos) ?: initialHit
                                     val (hitNoteId, cardOrigin) = hit
                                     val listSnapshot = currentDisplayedNotes
                                     val hitNote = listSnapshot.firstOrNull { it.id == hitNoteId } ?: return@awaitEachGesture
-                                    // Allow dragging only when there are other notes in the same (pinned/unpinned) group
-                                    if (listSnapshot.count { it.isPinned == hitNote.isPinned } <= 1) return@awaitEachGesture
+                                    val canReorderInGroup = listSnapshot.count { it.isPinned == hitNote.isPinned } > 1
+
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+
+                                    if (!canReorderInGroup) {
+                                        popupNote = hitNote
+                                        while (true) {
+                                            val ev = awaitPointerEvent(PointerEventPass.Initial)
+                                            ev.changes.forEach { it.consume() }
+                                            val ch = ev.changes.firstOrNull { it.id == pointerId }
+                                            if (ch == null || !ch.pressed || ev.changes.none { it.pressed }) break
+                                        }
+                                        return@awaitEachGesture
+                                    }
+
+                                    // 500ms reached: offer brief decision window (~220ms) between drag & popup:
+                                    // - Moving finger beyond dragStartSlop enters full Drag & Reorder
+                                    // - Releasing OR staying still opens the Quick Actions Popup
+                                    val dragStartSlop = maxOf(touchSlop * 1.35f, with(density) { 12.dp.toPx() })
+                                    val decisionStart = SystemClock.uptimeMillis()
+                                    var startedDragging = false
+                                    var shouldOpenPopup = false
+                                    var pointerStillDown = true
 
                                     draggedNoteId = hitNoteId
                                     currentPointerPos = latestPos
                                     grabOffsetInsideCard = latestPos - cardOrigin
                                     lastKnownTranslationXY[0] = 0f
                                     lastKnownTranslationXY[1] = 0f
+
+                                    while (true) {
+                                        val rem = 220L - (SystemClock.uptimeMillis() - decisionStart)
+                                        if (rem <= 0L) {
+                                            shouldOpenPopup = true
+                                            break
+                                        }
+                                        val ev = withTimeoutOrNull(rem) {
+                                            awaitPointerEvent(PointerEventPass.Initial)
+                                        }
+                                        if (ev == null) {
+                                            shouldOpenPopup = true
+                                            break
+                                        }
+                                        val ch = ev.changes.firstOrNull { it.id == pointerId }
+                                        if (ch == null || !ch.pressed) {
+                                            ev.changes.forEach { it.consume() }
+                                            pointerStillDown = false
+                                            shouldOpenPopup = true
+                                            break
+                                        }
+                                        ev.changes.forEach { it.consume() }
+                                        latestPos = ch.position
+                                        if ((latestPos - downPos).getDistance() > dragStartSlop) {
+                                            startedDragging = true
+                                            break
+                                        }
+                                    }
+
+                                    if (shouldOpenPopup && !startedDragging) {
+                                        draggedNoteId = null
+                                        lastKnownTranslationXY[0] = 0f
+                                        lastKnownTranslationXY[1] = 0f
+                                        popupNote = hitNote
+                                        if (pointerStillDown) {
+                                            while (true) {
+                                                val ev = awaitPointerEvent(PointerEventPass.Initial)
+                                                ev.changes.forEach { it.consume() }
+                                                val ch = ev.changes.firstOrNull { it.id == pointerId }
+                                                if (ch == null || !ch.pressed || ev.changes.none { it.pressed }) break
+                                            }
+                                        }
+                                        return@awaitEachGesture
+                                    }
+
+                                    // Active Drag & Reorder loop
+                                    currentPointerPos = latestPos
                                     lastSwappedKey = null
                                     lastSwapTimeMs = 0L
                                     lastSwapPointerPos = latestPos
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    trySwapDraggedNote(latestPos, hitNoteId, currentViewMode)
 
                                     while (true) {
                                         val dragEvent = awaitPointerEvent(PointerEventPass.Initial)
@@ -1058,6 +1130,19 @@ fun FluffyHomeScreen(
                         audioByteSize = byteSize
                     )
                 }
+            )
+        }
+        // Long-press (0.5s) Note Quick Actions Popup (Pin, Vault, Archive, Delete)
+        popupNote?.let { targetNote ->
+            NoteQuickActionsPopup(
+                note = targetNote,
+                isDark = isDark,
+                isArabic = isArabic,
+                onDismiss = { popupNote = null },
+                onTogglePin = { viewModel.togglePin(targetNote) },
+                onMoveToVault = { viewModel.moveNoteToVault(targetNote) },
+                onArchive = { viewModel.toggleArchive(targetNote) },
+                onDelete = { viewModel.deleteNoteDirectly(targetNote) }
             )
         }
     }
