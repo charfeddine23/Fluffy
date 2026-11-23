@@ -6,6 +6,9 @@
     <cache-path
         name="scanner_share"
         path="scanner_share/" />
+    <cache-path
+        name="note_exports"
+        path="note_exports/" />
     <files-path
         name="scanner_docs"
         path="scanner_docs/" />

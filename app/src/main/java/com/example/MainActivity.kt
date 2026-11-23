@@ -526,7 +526,7 @@ class MainActivity : FragmentActivity() {
                                                 onDelete = { viewModel.deleteCurrentNote() },
                                                 onToggleArchive = { viewModel.toggleArchive(screen.note) },
                                                 onMoveToVault = { updatedNote -> viewModel.moveNoteToVault(updatedNote) },
-                                                onAutoSave = { title, content, pagesJson, category, colorPreset, backgroundId, customColorArgb, isPinned, isFav, checklist, audioDuration, audioPath, audioSize ->
+                                                    onAutoSave = { title, content, pagesJson, category, colorPreset, backgroundId, customColorArgb, isPinned, isFav, checklist, audioDuration, audioPath, audioSize ->
                                                     viewModel.autoSaveNote(
                                                         title = title,
                                                         content = content,
@@ -542,6 +542,10 @@ class MainActivity : FragmentActivity() {
                                                         audioFilePath = audioPath,
                                                         audioByteSize = audioSize
                                                     )
+                                                },
+                                                onOpenScanner = {
+                                                    viewModel.closeEditor()
+                                                    viewModel.openScannerHub()
                                                 }
                                             )
                                         }

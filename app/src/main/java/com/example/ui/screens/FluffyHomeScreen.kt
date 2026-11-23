@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import android.os.SystemClock
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -80,7 +81,6 @@ import com.example.ui.components.FluffyTopBar
 import com.example.ui.components.GalleryNoteCard
 import com.example.ui.components.MagazineNoteCard
 import com.example.ui.components.NoteCard
-import com.example.ui.components.NoteQuickActionsPopup
 import com.example.ui.components.SettingsDrawer
 import com.example.ui.components.StatsBottomSheet
 import com.example.ui.components.VoiceRecorderDialog
@@ -141,7 +141,7 @@ fun FluffyHomeScreen(
 
     var displayedNotes by remember { mutableStateOf(notes) }
     var draggedNoteId by remember { mutableStateOf<Long?>(null) }
-    var popupNote by remember { mutableStateOf<NoteEntity?>(null) }
+    var selectedActionNote by remember { mutableStateOf<NoteEntity?>(null) }
     var currentPointerPos by remember { mutableStateOf(Offset.Zero) }
     var grabOffsetInsideCard by remember { mutableStateOf(Offset.Zero) }
     var pendingCommitOrderIds by remember { mutableStateOf<List<Long>?>(null) }
@@ -161,6 +161,10 @@ fun FluffyHomeScreen(
 
     val swapHysteresisPx = with(density) { 28.dp.toPx() }
 
+    BackHandler(enabled = selectedActionNote != null) {
+        selectedActionNote = null
+    }
+
     LaunchedEffect(notes, draggedNoteId, pendingCommitOrderIds) {
         if (draggedNoteId == null) {
             val pending = pendingCommitOrderIds
@@ -168,6 +172,10 @@ fun FluffyHomeScreen(
                 displayedNotes = notes
                 pendingCommitOrderIds = null
             }
+        }
+        selectedActionNote?.let { currentSel ->
+            val latest = notes.firstOrNull { it.id == currentSel.id }
+            selectedActionNote = latest
         }
     }
 
@@ -419,7 +427,25 @@ fun FluffyHomeScreen(
                     profileEmail = currentUser?.email,
                     isCloudSignedIn = currentUser != null,
                     isGuestMode = isGuestMode,
-                    onOpenCloudAuth = { viewModel.openAccountScreen() }
+                    onOpenCloudAuth = { viewModel.openAccountScreen() },
+                    selectedNote = selectedActionNote,
+                    onClearSelection = { selectedActionNote = null },
+                    onToggleSelectedPin = { target ->
+                        selectedActionNote = null
+                        viewModel.togglePin(target)
+                    },
+                    onMoveSelectedToVault = { target ->
+                        selectedActionNote = null
+                        viewModel.moveNoteToVault(target)
+                    },
+                    onArchiveSelected = { target ->
+                        selectedActionNote = null
+                        viewModel.toggleArchive(target)
+                    },
+                    onDeleteSelected = { target ->
+                        selectedActionNote = null
+                        viewModel.deleteNoteDirectly(target)
+                    }
                 )
 
                 // Category Chips
@@ -485,7 +511,6 @@ fun FluffyHomeScreen(
                                     val firstDown = initialEvent.changes.firstOrNull { it.changedToDownIgnoreConsumed() }
                                         ?: return@awaitEachGesture
                                     if (initialEvent.changes.count { it.pressed } != 1) return@awaitEachGesture
-                                    if (popupNote != null) return@awaitEachGesture
 
                                     val pointerId = firstDown.id
                                     val downPos = firstDown.position
@@ -530,7 +555,7 @@ fun FluffyHomeScreen(
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
 
                                     if (!canReorderInGroup) {
-                                        popupNote = hitNote
+                                        selectedActionNote = hitNote
                                         while (true) {
                                             val ev = awaitPointerEvent(PointerEventPass.Initial)
                                             ev.changes.forEach { it.consume() }
@@ -540,13 +565,13 @@ fun FluffyHomeScreen(
                                         return@awaitEachGesture
                                     }
 
-                                    // 500ms reached: offer brief decision window (~220ms) between drag & popup:
+                                    // 500ms reached: offer brief decision window (~220ms) between drag & contextual top bar:
                                     // - Moving finger beyond dragStartSlop enters full Drag & Reorder
-                                    // - Releasing OR staying still opens the Quick Actions Popup
+                                    // - Releasing OR staying still activates Contextual Top App Bar for the note
                                     val dragStartSlop = maxOf(touchSlop * 1.35f, with(density) { 12.dp.toPx() })
                                     val decisionStart = SystemClock.uptimeMillis()
                                     var startedDragging = false
-                                    var shouldOpenPopup = false
+                                    var shouldSelectForTopBar = false
                                     var pointerStillDown = true
 
                                     draggedNoteId = hitNoteId
@@ -558,21 +583,21 @@ fun FluffyHomeScreen(
                                     while (true) {
                                         val rem = 220L - (SystemClock.uptimeMillis() - decisionStart)
                                         if (rem <= 0L) {
-                                            shouldOpenPopup = true
+                                            shouldSelectForTopBar = true
                                             break
                                         }
                                         val ev = withTimeoutOrNull(rem) {
                                             awaitPointerEvent(PointerEventPass.Initial)
                                         }
                                         if (ev == null) {
-                                            shouldOpenPopup = true
+                                            shouldSelectForTopBar = true
                                             break
                                         }
                                         val ch = ev.changes.firstOrNull { it.id == pointerId }
                                         if (ch == null || !ch.pressed) {
                                             ev.changes.forEach { it.consume() }
                                             pointerStillDown = false
-                                            shouldOpenPopup = true
+                                            shouldSelectForTopBar = true
                                             break
                                         }
                                         ev.changes.forEach { it.consume() }
@@ -583,11 +608,11 @@ fun FluffyHomeScreen(
                                         }
                                     }
 
-                                    if (shouldOpenPopup && !startedDragging) {
+                                    if (shouldSelectForTopBar && !startedDragging) {
                                         draggedNoteId = null
                                         lastKnownTranslationXY[0] = 0f
                                         lastKnownTranslationXY[1] = 0f
-                                        popupNote = hitNote
+                                        selectedActionNote = hitNote
                                         if (pointerStillDown) {
                                             while (true) {
                                                 val ev = awaitPointerEvent(PointerEventPass.Initial)
@@ -600,6 +625,7 @@ fun FluffyHomeScreen(
                                     }
 
                                     // Active Drag & Reorder loop
+                                    selectedActionNote = null
                                     currentPointerPos = latestPos
                                     lastSwappedKey = null
                                     lastSwapTimeMs = 0L
@@ -702,12 +728,20 @@ fun FluffyHomeScreen(
                                     }
 
                                     Box(modifier = outerSlotModifier) {
+                                        val isNoteSelected = selectedActionNote?.id == note.id
                                         NoteCard(
                                             note = note,
                                             isDark = isDark,
                                             isArabic = isArabic,
                                             isDragging = isDragging,
-                                            onClick = { viewModel.openExistingNote(note) },
+                                            isSelected = isNoteSelected,
+                                            onClick = {
+                                                if (selectedActionNote != null) {
+                                                    selectedActionNote = if (isNoteSelected) null else note
+                                                } else {
+                                                    viewModel.openExistingNote(note)
+                                                }
+                                            },
                                             onTogglePin = { viewModel.togglePin(note) },
                                             onToggleFavorite = { viewModel.toggleFavorite(note) },
                                             onToggleChecklistItem = { idx ->
@@ -793,12 +827,20 @@ fun FluffyHomeScreen(
                                         }
 
                                         Box(modifier = outerSlotModifier) {
+                                            val isNoteSelected = selectedActionNote?.id == note.id
                                             NoteCard(
                                                 note = note,
                                                 isDark = isDark,
                                                 isArabic = isArabic,
                                                 isDragging = isDragging,
-                                                onClick = { viewModel.openExistingNote(note) },
+                                                isSelected = isNoteSelected,
+                                                onClick = {
+                                                    if (selectedActionNote != null) {
+                                                        selectedActionNote = if (isNoteSelected) null else note
+                                                    } else {
+                                                        viewModel.openExistingNote(note)
+                                                    }
+                                                },
                                                 onTogglePin = { viewModel.togglePin(note) },
                                                 onToggleFavorite = { viewModel.toggleFavorite(note) },
                                                 onToggleChecklistItem = { idx ->
@@ -887,12 +929,20 @@ fun FluffyHomeScreen(
                                         }
 
                                         Box(modifier = outerSlotModifier) {
+                                            val isNoteSelected = selectedActionNote?.id == note.id
                                             GalleryNoteCard(
                                                 note = note,
                                                 isDark = isDark,
                                                 isArabic = isArabic,
                                                 isDragging = isDragging,
-                                                onClick = { viewModel.openExistingNote(note) },
+                                                isSelected = isNoteSelected,
+                                                onClick = {
+                                                    if (selectedActionNote != null) {
+                                                        selectedActionNote = if (isNoteSelected) null else note
+                                                    } else {
+                                                        viewModel.openExistingNote(note)
+                                                    }
+                                                },
                                                 onTogglePin = { viewModel.togglePin(note) },
                                                 onToggleFavorite = { viewModel.toggleFavorite(note) },
                                                 onArchive = { viewModel.toggleArchive(note) },
@@ -976,6 +1026,7 @@ fun FluffyHomeScreen(
                                         }
 
                                         Box(modifier = outerSlotModifier) {
+                                            val isNoteSelected = selectedActionNote?.id == note.id
                                             MagazineNoteCard(
                                                 note = note,
                                                 issueIndex = index,
@@ -983,7 +1034,14 @@ fun FluffyHomeScreen(
                                                 isDark = isDark,
                                                 isArabic = isArabic,
                                                 isDragging = isDragging,
-                                                onClick = { viewModel.openExistingNote(note) },
+                                                isSelected = isNoteSelected,
+                                                onClick = {
+                                                    if (selectedActionNote != null) {
+                                                        selectedActionNote = if (isNoteSelected) null else note
+                                                    } else {
+                                                        viewModel.openExistingNote(note)
+                                                    }
+                                                },
                                                 onTogglePin = { viewModel.togglePin(note) },
                                                 onToggleFavorite = { viewModel.toggleFavorite(note) },
                                                 onArchive = { viewModel.toggleArchive(note) },
@@ -1130,19 +1188,6 @@ fun FluffyHomeScreen(
                         audioByteSize = byteSize
                     )
                 }
-            )
-        }
-        // Long-press (0.5s) Note Quick Actions Popup (Pin, Vault, Archive, Delete)
-        popupNote?.let { targetNote ->
-            NoteQuickActionsPopup(
-                note = targetNote,
-                isDark = isDark,
-                isArabic = isArabic,
-                onDismiss = { popupNote = null },
-                onTogglePin = { viewModel.togglePin(targetNote) },
-                onMoveToVault = { viewModel.moveNoteToVault(targetNote) },
-                onArchive = { viewModel.toggleArchive(targetNote) },
-                onDelete = { viewModel.deleteNoteDirectly(targetNote) }
             )
         }
     }

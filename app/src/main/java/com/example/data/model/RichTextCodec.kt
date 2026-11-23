@@ -75,6 +75,13 @@ data class MarkdownTableData(
 sealed interface EditorPageSegment {
     data class TextSegment(val startOffset: Int, val endOffset: Int, val text: String) : EditorPageSegment
     data class TableSegment(val index: Int, val table: MarkdownTableData) : EditorPageSegment
+    data class ImageSegment(
+        val index: Int,
+        val alt: String,
+        val path: String,
+        val startOffset: Int,
+        val endOffset: Int
+    ) : EditorPageSegment
 }
 
 data class EditorFormatOutcome(
@@ -114,6 +121,7 @@ sealed interface RichBlock {
     data class CodeBlock(val code: String) : RichBlock
     data object Divider : RichBlock
     data class Table(val data: MarkdownTableData) : RichBlock
+    data class Image(val alt: String, val path: String, val startOffset: Int) : RichBlock
 }
 
 /**
@@ -130,6 +138,7 @@ object RichTextCodec {
     )
     private val numberedPrefixRegex = Regex("""^(\d+)\. """)
     private val tableDividerRegex = Regex("""^\|?(\s*:?-{2,}:?\s*\|)+\s*:?-{2,}:?\s*\|?$""")
+    private val imageLineRegex = Regex("""^!\[([^\]]*)\]\(([^)]+)\)$""")
 
     fun applyRichAction(value: TextFieldValue, action: RichFormatAction): TextFieldValue {
         return when (action) {
@@ -237,23 +246,89 @@ object RichTextCodec {
         }
     }
 
+    private data class ImageLineMatch(
+        val alt: String,
+        val path: String,
+        val startOffset: Int,
+        val endOffset: Int
+    )
+
+    private fun parseAllImages(text: String, excludedTables: List<MarkdownTableData>): List<ImageLineMatch> {
+        if (text.isBlank()) return emptyList()
+        val lines = text.split('\n')
+        val out = mutableListOf<ImageLineMatch>()
+        var offsetAcc = 0
+        var inCodeFence = false
+        for (line in lines) {
+            val lineStart = offsetAcc
+            val lineEnd = (lineStart + line.length).coerceAtMost(text.length)
+            offsetAcc += line.length + 1
+            val trimmed = line.trim()
+            if (trimmed.startsWith("```")) {
+                inCodeFence = !inCodeFence
+                continue
+            }
+            if (inCodeFence) continue
+            val insideTable = excludedTables.any { lineStart >= it.startOffset && lineEnd <= it.endOffset }
+            if (insideTable) continue
+            val m = imageLineRegex.matchEntire(trimmed)
+            if (m != null) {
+                val alt = m.groupValues[1]
+                val path = m.groupValues[2].trim()
+                if (path.isNotEmpty()) {
+                    out.add(ImageLineMatch(alt = alt, path = path, startOffset = lineStart, endOffset = lineEnd))
+                }
+            }
+        }
+        return out
+    }
+
     fun splitPageIntoEditorSegments(rawText: String): List<EditorPageSegment> {
         val tables = parseAllTables(rawText)
-        if (tables.isEmpty()) {
+        val images = parseAllImages(rawText, tables)
+        if (tables.isEmpty() && images.isEmpty()) {
             return listOf(EditorPageSegment.TextSegment(0, rawText.length, rawText))
         }
+        data class BlockSpan(
+            val startOffset: Int,
+            val endOffset: Int,
+            val buildSegment: () -> EditorPageSegment
+        )
+        val orderedBlocks = mutableListOf<BlockSpan>()
+        tables.forEachIndexed { idx, table ->
+            orderedBlocks.add(
+                BlockSpan(table.startOffset, table.endOffset) {
+                    EditorPageSegment.TableSegment(idx, table)
+                }
+            )
+        }
+        images.forEachIndexed { idx, img ->
+            orderedBlocks.add(
+                BlockSpan(img.startOffset, img.endOffset) {
+                    EditorPageSegment.ImageSegment(
+                        index = idx,
+                        alt = img.alt,
+                        path = img.path,
+                        startOffset = img.startOffset,
+                        endOffset = img.endOffset
+                    )
+                }
+            )
+        }
+        orderedBlocks.sortBy { it.startOffset }
+
         val segments = mutableListOf<EditorPageSegment>()
         var cursor = 0
-        tables.forEachIndexed { idx, table ->
+        orderedBlocks.forEachIndexed { idx, block ->
             val segStart = cursor.coerceIn(0, rawText.length)
-            val segEnd = table.startOffset.coerceIn(segStart, rawText.length)
+            val segEnd = block.startOffset.coerceIn(segStart, rawText.length)
             val rawSlice = rawText.substring(segStart, segEnd)
             val trimmedDisplay = if (rawSlice.endsWith('\n')) rawSlice.dropLast(1) else rawSlice
             if (trimmedDisplay.isNotEmpty() || idx == 0) {
                 segments.add(EditorPageSegment.TextSegment(segStart, segEnd, trimmedDisplay))
             }
-            segments.add(EditorPageSegment.TableSegment(idx, table))
-            cursor = table.endOffset
+            segments.add(block.buildSegment())
+            cursor = block.endOffset
             if (cursor < rawText.length && rawText[cursor] == '\n') {
                 cursor++
             }
@@ -1476,6 +1551,13 @@ object RichTextCodec {
                 i = j
                 continue
             }
+            val imgMatch = imageLineRegex.matchEntire(trimmed)
+            if (imgMatch != null) {
+                val alt = imgMatch.groupValues[1].trim()
+                out.add(if (alt.isNotEmpty() && alt != "Image") "🖼️ $alt" else "🖼️ Image")
+                i++
+                continue
+            }
             val cleanedLine = when {
                 trimmed.startsWith("- [x] ", ignoreCase = true) -> "☑ " + stripInlineTokens(trimmed.drop(6))
                 trimmed.startsWith("- [ ] ") -> "☐ " + stripInlineTokens(trimmed.drop(6))
@@ -1698,6 +1780,20 @@ object RichTextCodec {
         }
         return text.removeRange(cutStart, cutEnd).trimEnd('\n')
     }
+
+    fun insertImageAtSelection(
+        text: String,
+        selection: TextRange,
+        imagePath: String,
+        alt: String = "Image"
+    ): TextFieldValue {
+        val cleanAlt = alt.replace("[", "").replace("]", "").replace("\n", " ").trim().ifEmpty { "Image" }
+        val markdown = "![$cleanAlt]($imagePath)"
+        return insertTableAtSelection(text, selection, markdown)
+    }
+
+    fun deleteImageAtRange(text: String, startOffset: Int, endOffset: Int): String =
+        deleteTableAtRange(text, startOffset, endOffset)
 
     fun toggleChecklistLineAtOffset(text: String, lineStartOffset: Int): String {
         if (lineStartOffset !in 0..text.length) return text
@@ -2180,7 +2276,7 @@ object RichTextCodec {
                             SpanStyle(
                                 fontFamily = EditorFontFamily,
                                 fontSynthesis = FontSynthesis.All,
-                                fontSize = 20.sp,
+                                fontSize = 20.5.sp,
                                 fontWeight = FontWeight.ExtraBold
                             )
                         )
@@ -2193,7 +2289,7 @@ object RichTextCodec {
                             SpanStyle(
                                 fontFamily = EditorFontFamily,
                                 fontSynthesis = FontSynthesis.All,
-                                fontSize = 24.sp,
+                                fontSize = 25.sp,
                                 fontWeight = FontWeight.Black
                             )
                         )
@@ -2377,6 +2473,17 @@ object RichTextCodec {
                 blocks.add(RichBlock.Table(MarkdownTableData(normalized, tableStart, tableEnd)))
                 i = j
                 continue
+            }
+
+            val imgMatch = imageLineRegex.matchEntire(trimmed)
+            if (imgMatch != null) {
+                val alt = imgMatch.groupValues[1]
+                val path = imgMatch.groupValues[2].trim()
+                if (path.isNotEmpty()) {
+                    blocks.add(RichBlock.Image(alt = alt, path = path, startOffset = lineStarts[i]))
+                    i++
+                    continue
+                }
             }
 
             when {

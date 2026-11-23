@@ -14,6 +14,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -25,6 +27,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -37,17 +40,22 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.AutoAwesomeMosaic
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudQueue
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.PersonOutline
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -84,6 +92,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.GlassTint
+import com.example.data.model.NoteEntity
+import com.example.data.model.NotePagesCodec
 import com.example.data.model.NotesViewMode
 import com.example.ui.glass.liquidGlass
 import com.example.ui.theme.LocalAppThemePreset
@@ -117,6 +127,12 @@ fun FluffyTopBar(
     isCloudSignedIn: Boolean = false,
     isGuestMode: Boolean = false,
     onOpenCloudAuth: () -> Unit = {},
+    selectedNote: NoteEntity? = null,
+    onClearSelection: () -> Unit = {},
+    onToggleSelectedPin: (NoteEntity) -> Unit = {},
+    onMoveSelectedToVault: (NoteEntity) -> Unit = {},
+    onArchiveSelected: (NoteEntity) -> Unit = {},
+    onDeleteSelected: (NoteEntity) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val focusManager = LocalFocusManager.current
@@ -125,17 +141,53 @@ fun FluffyTopBar(
     val hintColor = activePreset.onSurfaceVariant
     var showViewModeMenu by remember { mutableStateOf(false) }
 
-    Column(
+    AnimatedContent(
+        targetState = selectedNote,
+        transitionSpec = {
+            (fadeIn(tween(200)) + slideInVertically(tween(200)) { -it / 8 }) togetherWith
+                (fadeOut(tween(150)) + slideOutVertically(tween(150)) { -it / 8 })
+        },
+        contentKey = { it != null },
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
-    ) {
-        // App Header: Title with Chromatic glow & Action Pills
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        label = "fluffy_topbar_mode_swap"
+    ) { activeSelected ->
+        if (activeSelected != null) {
+            ContextualTopActionBar(
+                note = activeSelected,
+                isDark = isDark,
+                textColor = textColor,
+                hintColor = hintColor,
+                accentColor = activePreset.primary,
+                onDismiss = onClearSelection,
+                onTogglePin = {
+                    onClearSelection()
+                    onToggleSelectedPin(activeSelected)
+                },
+                onMoveToVault = {
+                    onClearSelection()
+                    onMoveSelectedToVault(activeSelected)
+                },
+                onArchive = {
+                    onClearSelection()
+                    onArchiveSelected(activeSelected)
+                },
+                onDelete = {
+                    onClearSelection()
+                    onDeleteSelected(activeSelected)
+                }
+            )
+        } else {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                // App Header: Title with Chromatic glow & Action Pills
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = 46.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
@@ -463,6 +515,247 @@ fun FluffyTopBar(
                 }
             }
         }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContextualTopActionBar(
+    note: NoteEntity,
+    isDark: Boolean,
+    textColor: Color,
+    hintColor: Color,
+    accentColor: Color,
+    onDismiss: () -> Unit,
+    onTogglePin: () -> Unit,
+    onMoveToVault: () -> Unit,
+    onArchive: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val displayTitle = remember(note.id, note.title, note.content, note.pagesJson) {
+        note.title.ifBlank {
+            NotePagesCodec.plainTextSnippet(note).lineSequence().firstOrNull().orEmpty()
+        }.ifBlank {
+            ""
+        }
+    }.ifBlank {
+        tr("مسودة بدون عنوان", "Note sans titre", "Untitled Draft", "Tira war azwel")
+    }
+    val deleteRed = Color(0xFFEF4444)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("contextual_top_app_bar")
+    ) {
+        // Top Header Row: exact same height (~46.dp) and spacing as default Fluffy header
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .defaultMinSize(minHeight = 46.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .testTag("note_contextual_close")
+                        .liquidGlass(
+                            isDark = isDark,
+                            tint = GlassTint.FROST,
+                            shape = RoundedCornerShape(13.dp),
+                            borderWidth = 1.2.dp
+                        )
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = ripple(bounded = true),
+                            onClick = onDismiss
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = tr("إلغاء التحديد", "Annuler", "Cancel selection", "Sefsex"),
+                        tint = textColor,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                Column(modifier = Modifier.weight(1f, fill = false)) {
+                    Text(
+                        text = displayTitle,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 17.sp,
+                            color = textColor
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = tr(
+                            "تم تحديد المسودة • ${note.category}",
+                            "Sélectionné • ${note.category}",
+                            "1 selected • ${note.category}",
+                            "1 yettwafren • ${note.category}"
+                        ),
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = accentColor,
+                            fontWeight = FontWeight.SemiBold
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            if (note.isPinned) {
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(Color(0xFFFBBF24).copy(alpha = if (isDark) 0.22f else 0.14f))
+                        .border(1.dp, Color(0xFFFBBF24).copy(alpha = 0.45f), CircleShape)
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        text = tr("مثبّت", "Épinglé", "Pinned", "Yenteḍ"),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFBBF24)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // Floating Carbon Blur Glass Contextual Action Strip (exact same 48.dp height as search bar)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .liquidGlass(
+                    isDark = isDark,
+                    tint = GlassTint.FROST,
+                    shape = RoundedCornerShape(24.dp),
+                    borderWidth = 1.2.dp
+                )
+                .padding(horizontal = 6.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            ContextualTopActionPill(
+                icon = Icons.Default.PushPin,
+                label = if (note.isPinned) {
+                    tr("إلغاء", "Retirer", "Unpin", "Kkes")
+                } else {
+                    tr("تثبيت", "Épingler", "Pin", "Senteḍ")
+                },
+                contentDescription = if (note.isPinned) "Unpin from top" else "Pin to top",
+                tint = Color(0xFFFBBF24),
+                labelColor = textColor,
+                fillColor = Color.Transparent,
+                testTag = "note_popup_pin",
+                onClick = onTogglePin,
+                modifier = Modifier.weight(1f)
+            )
+
+            ContextualTopActionPill(
+                icon = Icons.Default.Shield,
+                label = tr("الخزنة", "Coffre", "Vault", "Vault"),
+                contentDescription = "Move Draft to Vault",
+                tint = Color(0xFFC084FC),
+                labelColor = textColor,
+                fillColor = Color.Transparent,
+                testTag = "note_popup_vault",
+                onClick = onMoveToVault,
+                modifier = Modifier.weight(1f)
+            )
+
+            ContextualTopActionPill(
+                icon = if (note.isArchived) Icons.Default.Unarchive else Icons.Default.Archive,
+                label = if (note.isArchived) {
+                    tr("استعادة", "Restaurer", "Restore", "Rred")
+                } else {
+                    tr("أرشفة", "Archiver", "Archive", "Aɣbar")
+                },
+                contentDescription = if (note.isArchived) "Unarchive" else "Archive",
+                tint = accentColor,
+                labelColor = textColor,
+                fillColor = Color.Transparent,
+                testTag = "note_popup_archive",
+                onClick = onArchive,
+                modifier = Modifier.weight(1f)
+            )
+
+            ContextualTopActionPill(
+                icon = Icons.Default.DeleteOutline,
+                label = tr("حذف", "Suppr.", "Delete", "Kkes"),
+                contentDescription = "Delete",
+                tint = deleteRed,
+                labelColor = deleteRed,
+                fillColor = deleteRed.copy(alpha = if (isDark) 0.18f else 0.11f),
+                testTag = "note_popup_delete",
+                onClick = onDelete,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ContextualTopActionPill(
+    icon: ImageVector,
+    label: String,
+    contentDescription: String,
+    tint: Color,
+    labelColor: Color,
+    fillColor: Color,
+    testTag: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .height(40.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(fillColor)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = ripple(bounded = true, color = tint),
+                onClickLabel = contentDescription,
+                onClick = onClick
+            )
+            .padding(horizontal = 6.dp)
+            .testTag(testTag),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(
+            text = label,
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.Bold,
+            color = labelColor,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 

@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.DataObject
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.EventNote
 import androidx.compose.material.icons.filled.FormatBold
@@ -102,6 +103,7 @@ import androidx.compose.ui.text.font.FontSynthesis
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -633,7 +635,8 @@ fun InsertFeaturesBottomSheet(
     textColor: Color,
     metaColor: Color,
     onSelectFeature: (InsertFeatureType) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onQuickImageScan: (() -> Unit)? = null
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var searchQuery by remember { mutableStateOf("") }
@@ -766,11 +769,76 @@ fun InsertFeaturesBottomSheet(
                 modifier = Modifier.fillMaxWidth()
             )
 
+            // Featured Quick Insert Strip (Image/Scanner, Checklist, Voice Note, Divider)
+            if (searchQuery.isBlank()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (onQuickImageScan != null) {
+                        QuickInsertPillCard(
+                            label = if (isArabic) "صورة / مسح" else "Image / Scan",
+                            icon = Icons.Default.DocumentScanner,
+                            tint = Color(0xFF38BDF8),
+                            isDark = isDark,
+                            textColor = textColor,
+                            onClick = { onQuickImageScan() },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("quick_insert_image_scan")
+                        )
+                    } else {
+                        QuickInsertPillCard(
+                            label = if (isArabic) "جدول" else "Table",
+                            icon = Icons.Default.TableChart,
+                            tint = Color(0xFF38BDF8),
+                            isDark = isDark,
+                            textColor = textColor,
+                            onClick = { onSelectFeature(InsertFeatureType.TABLE) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    QuickInsertPillCard(
+                        label = if (isArabic) "مهام" else "Checklist",
+                        icon = Icons.Default.Checklist,
+                        tint = Color(0xFF10B981),
+                        isDark = isDark,
+                        textColor = textColor,
+                        onClick = { onSelectFeature(InsertFeatureType.CHECKLIST_CARD) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("quick_insert_checklist")
+                    )
+                    QuickInsertPillCard(
+                        label = if (isArabic) "صوتية" else "Voice",
+                        icon = Icons.Default.Mic,
+                        tint = Color(0xFFF43F5E),
+                        isDark = isDark,
+                        textColor = textColor,
+                        onClick = { onSelectFeature(InsertFeatureType.VOICE_MEMO) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("quick_insert_voice")
+                    )
+                    QuickInsertPillCard(
+                        label = if (isArabic) "فاصل" else "Divider",
+                        icon = Icons.Default.HorizontalRule,
+                        tint = Color(0xFF94A3B8),
+                        isDark = isDark,
+                        textColor = textColor,
+                        onClick = { onSelectFeature(InsertFeatureType.DIVIDER) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("quick_insert_divider")
+                    )
+                }
+            }
+
             // 20 Categorized Insert Tools in 2-Column Rows
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 460.dp),
+                    .heightIn(max = 440.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = PaddingValues(bottom = 12.dp)
             ) {
@@ -814,6 +882,51 @@ fun InsertFeaturesBottomSheet(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun QuickInsertPillCard(
+    label: String,
+    icon: ImageVector,
+    tint: Color,
+    isDark: Boolean,
+    textColor: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .defaultMinSize(minHeight = 68.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(tint.copy(alpha = if (isDark) 0.14f else 0.10f))
+            .border(
+                width = 1.dp,
+                color = tint.copy(alpha = if (isDark) 0.34f else 0.24f),
+                shape = RoundedCornerShape(16.dp)
+            )
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = ripple(bounded = true)
+            ) { onClick() }
+            .padding(horizontal = 6.dp, vertical = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = tint,
+            modifier = Modifier.size(21.dp)
+        )
+        Text(
+            text = label,
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.Bold,
+            color = textColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -1417,7 +1530,8 @@ fun SegmentedRichPageEditor(
     onSegmentFocused: (Int) -> Unit,
     onEditTable: (MarkdownTableData) -> Unit,
     onDeleteTable: (MarkdownTableData) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    textAlign: TextAlign = TextAlign.Start
 ) {
     val segments = remember(pageText) { RichTextCodec.splitPageIntoEditorSegments(pageText) }
     val hasTables = segments.any { it is EditorPageSegment.TableSegment }
@@ -1491,7 +1605,8 @@ fun SegmentedRichPageEditor(
                             fontSynthesis = FontSynthesis.All,
                             fontSize = fontSizeSp.sp,
                             color = bodyColor,
-                            lineHeight = (fontSizeSp * 1.52f).sp
+                            lineHeight = (fontSizeSp * 1.55f).sp,
+                            textAlign = textAlign
                         ),
                         cursorBrush = SolidColor(accentColor),
                         decorationBox = { innerTextField ->
@@ -1499,12 +1614,14 @@ fun SegmentedRichPageEditor(
                                 if (seg.text.isEmpty() && (!hasTables || segIdx == segments.lastIndex || segIdx == 0)) {
                                     Text(
                                         text = segPlaceholder,
+                                        modifier = Modifier.fillMaxWidth(),
                                         style = TextStyle(
                                             fontFamily = EditorFontFamily,
                                             fontSynthesis = FontSynthesis.All,
                                             fontSize = fontSizeSp.sp,
                                             color = metaColor.copy(alpha = 0.56f),
-                                            lineHeight = (fontSizeSp * 1.52f).sp
+                                            lineHeight = (fontSizeSp * 1.55f).sp,
+                                            textAlign = textAlign
                                         )
                                     )
                                 }
@@ -1721,7 +1838,8 @@ fun RichContentView(
     metaColor: Color,
     onToggleChecklistLine: ((Int) -> Unit)? = null,
     onEditTable: ((MarkdownTableData) -> Unit)? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    textAlign: TextAlign = TextAlign.Start
 ) {
     val blocks = remember(rawText, accentColor, isDark) {
         RichTextCodec.parseRichBlocks(rawText, accentColor, isDark)
@@ -1747,7 +1865,8 @@ fun RichContentView(
                             fontSize = size.sp,
                             fontWeight = if (block.level == 1) FontWeight.Black else FontWeight.ExtraBold,
                             color = if (block.level == 3) accentColor else textColor,
-                            lineHeight = (size * 1.32f).sp
+                            lineHeight = (size * 1.32f).sp,
+                            textAlign = textAlign
                         ),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1766,7 +1885,8 @@ fun RichContentView(
                                 fontSynthesis = FontSynthesis.All,
                                 fontSize = fontSizeSp.sp,
                                 color = bodyColor,
-                                lineHeight = (fontSizeSp * 1.52f).sp
+                                lineHeight = (fontSizeSp * 1.55f).sp,
+                                textAlign = textAlign
                             ),
                             modifier = Modifier.fillMaxWidth()
                         )

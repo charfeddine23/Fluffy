@@ -78,6 +78,7 @@ fun NoteCard(
     onMoveToVault: () -> Unit = {},
     onDelete: () -> Unit,
     isDragging: Boolean = false,
+    isSelected: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val glassTint = GlassTint.fromId(note.colorPreset)
@@ -113,6 +114,7 @@ fun NoteCard(
         shape = RoundedCornerShape(22.dp),
         borderWidth = when {
             isDragging -> 2.8.dp
+            isSelected -> 2.6.dp
             note.isPinned -> 2.2.dp
             else -> 1.4.dp
         },
@@ -429,6 +431,7 @@ fun GalleryNoteCard(
     onMoveToVault: () -> Unit = {},
     onDelete: () -> Unit,
     isDragging: Boolean = false,
+    isSelected: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val glassTint = GlassTint.fromId(note.colorPreset)
@@ -459,6 +462,7 @@ fun GalleryNoteCard(
         shape = RoundedCornerShape(24.dp),
         borderWidth = when {
             isDragging -> 2.8.dp
+            isSelected -> 2.6.dp
             note.isPinned -> 2.2.dp
             else -> 1.4.dp
         },
@@ -674,6 +678,7 @@ fun MagazineNoteCard(
     onMoveToVault: () -> Unit = {},
     onDelete: () -> Unit,
     isDragging: Boolean = false,
+    isSelected: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val glassTint = GlassTint.fromId(note.colorPreset)
@@ -708,6 +713,7 @@ fun MagazineNoteCard(
         shape = RoundedCornerShape(24.dp),
         borderWidth = when {
             isDragging -> 2.8.dp
+            isSelected -> 2.6.dp
             note.isPinned -> 2.2.dp
             else -> 1.4.dp
         },
