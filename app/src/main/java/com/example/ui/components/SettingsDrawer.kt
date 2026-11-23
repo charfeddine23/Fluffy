@@ -159,6 +159,7 @@ private enum class SettingsPage {
     ROOT,
     ACCOUNT_CLOUD,
     APPEARANCE,
+    FAB_MENU_DESIGN,
     SECURITY
 }
 
@@ -180,7 +181,7 @@ fun SettingsDrawer(
     selectedThemeId: String = "ayu_dark",
     isColoredBordersEnabled: Boolean = true,
     onToggleColoredBorders: (Boolean) -> Unit = {},
-    fabMenuStyle: FabMenuStyle = FabMenuStyle.CONSTELLATION,
+    fabMenuStyle: FabMenuStyle = FabMenuStyle.VERTICAL_STACK,
     onSelectFabMenuStyle: (FabMenuStyle) -> Unit = {},
     onToggleCustomFabMenu: (Boolean) -> Unit = {},
     onOpenThemes: () -> Unit = {},
@@ -229,6 +230,7 @@ fun SettingsDrawer(
         mutableStateOf(
             when (initialSubPage) {
                 "APPEARANCE" -> SettingsPage.APPEARANCE
+                "FAB_MENU_DESIGN" -> SettingsPage.FAB_MENU_DESIGN
                 "SECURITY" -> SettingsPage.SECURITY
                 "ACCOUNT_CLOUD" -> SettingsPage.ACCOUNT_CLOUD
                 else -> SettingsPage.ROOT
@@ -244,6 +246,7 @@ fun SettingsDrawer(
         if (isOpen && initialSubPage != null) {
             currentPage = when (initialSubPage) {
                 "APPEARANCE" -> SettingsPage.APPEARANCE
+                "FAB_MENU_DESIGN" -> SettingsPage.FAB_MENU_DESIGN
                 "SECURITY" -> SettingsPage.SECURITY
                 "ACCOUNT_CLOUD" -> SettingsPage.ACCOUNT_CLOUD
                 else -> SettingsPage.ROOT
@@ -259,10 +262,10 @@ fun SettingsDrawer(
 
     if (isOpen) {
         BackHandler {
-            if (currentPage != SettingsPage.ROOT) {
-                currentPage = SettingsPage.ROOT
-            } else {
-                onClose()
+            when (currentPage) {
+                SettingsPage.FAB_MENU_DESIGN -> currentPage = SettingsPage.APPEARANCE
+                SettingsPage.ROOT -> onClose()
+                else -> currentPage = SettingsPage.ROOT
             }
         }
     }
@@ -517,7 +520,11 @@ fun SettingsDrawer(
                                             interactionSource = remember { MutableInteractionSource() },
                                             indication = ripple(bounded = true)
                                         ) {
-                                            currentPage = SettingsPage.ROOT
+                                            currentPage = if (currentPage == SettingsPage.FAB_MENU_DESIGN) {
+                                                SettingsPage.APPEARANCE
+                                            } else {
+                                                SettingsPage.ROOT
+                                            }
                                         },
                                     contentAlignment = Alignment.Center
                                 ) {
@@ -536,7 +543,13 @@ fun SettingsDrawer(
                                     text = when (currentPage) {
                                         SettingsPage.ROOT -> tr("الإعدادات", "Paramètres", "Settings", "Iɣewwaṛen")
                                         SettingsPage.ACCOUNT_CLOUD -> "Account & Cloud"
-                                        SettingsPage.APPEARANCE -> "Appearance"
+                                        SettingsPage.APPEARANCE -> tr("المظهر", "Apparence", "Appearance", "Timeẓri")
+                                        SettingsPage.FAB_MENU_DESIGN -> tr(
+                                            "تصميم قائمة زر (+)",
+                                            "Menu du bouton (+)",
+                                            "Add (+) Menu Design",
+                                            "Aɣanib n tqeffalt (+)"
+                                        )
                                         SettingsPage.SECURITY -> "Security"
                                     },
                                     style = MaterialTheme.typography.titleLarge.copy(
@@ -549,7 +562,11 @@ fun SettingsDrawer(
                                 )
                                 if (currentPage != SettingsPage.ROOT) {
                                     Text(
-                                        text = tr("الإعدادات", "Paramètres", "Settings", "Iɣewwaṛen"),
+                                        text = if (currentPage == SettingsPage.FAB_MENU_DESIGN) {
+                                            tr("المظهر", "Apparence", "Appearance", "Timeẓri")
+                                        } else {
+                                            tr("الإعدادات", "Paramètres", "Settings", "Iɣewwaṛen")
+                                        },
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Medium,
                                         color = subTextColor
@@ -587,7 +604,8 @@ fun SettingsDrawer(
                     AnimatedContent(
                         targetState = currentPage,
                         transitionSpec = {
-                            val forward = targetState != SettingsPage.ROOT
+                            val forward = targetState == SettingsPage.FAB_MENU_DESIGN ||
+                                (initialState == SettingsPage.ROOT && targetState != SettingsPage.ROOT)
                             val dir = if (forward) 1 else -1
                             (slideInHorizontally(tween(240, easing = SmoothEaseOut)) { it * dir / 3 } +
                                 fadeIn(tween(220))) togetherWith
@@ -1982,7 +2000,140 @@ fun SettingsDrawer(
 
                                     Spacer(modifier = Modifier.height(12.dp))
 
-                                    // 5. Add (+) Button Design Switch & 5-Style Selector
+                                    // 5. Navigation Entry to Add (+) Menu Design Settings Page
+                                    val activeFabStyleLabel = when (fabMenuStyle) {
+                                        FabMenuStyle.ORIGINAL -> tr("الأصلي (معطّل)", "Original (Désactivé)", "Original (Disabled)", "Aneṣli (Yensa)")
+                                        FabMenuStyle.VERTICAL_STACK -> tr("العمود العائم (افتراضي)", "Pile flottante (Défaut)", "Floating Stack (Default)", "Tigejdit (Amezwar)")
+                                        FabMenuStyle.CONSTELLATION -> tr("الكوكبة المضيئة", "Constellation", "Constellation", "Itriyen")
+                                        FabMenuStyle.ORBITAL_ARC -> tr("القرص الحلقي", "Cadran orbital", "Orbital Dial", "Adebzi")
+                                        FabMenuStyle.DIAMOND_MOSAIC -> tr("فسيفساء الكريستال", "Mosaïque Bento", "Crystal Bento", "Takristalt")
+                                    }
+
+                                    LiquidGlassCard(
+                                        isDark = effectiveDark,
+                                        tint = GlassTint.FROST,
+                                        shape = RoundedCornerShape(20.dp),
+                                        borderWidth = 1.dp,
+                                        customFill = cardTileColor,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        CalmNavigationRow(
+                                            icon = Icons.Rounded.AddCircleOutline,
+                                            iconTint = primaryAccent,
+                                            title = tr(
+                                                "تصميم قائمة زر الإضافة (+)",
+                                                "Design du menu d'ajout (+)",
+                                                "Add (+) Menu Design",
+                                                "Aɣanib n umuɣ n tmerniwt (+)"
+                                            ),
+                                            subtitle = activeFabStyleLabel,
+                                            badgeCount = 0,
+                                            textColor = textColor,
+                                            subTextColor = subTextColor,
+                                            testTag = "settings_fab_menu_design_button",
+                                            onClick = {
+                                                currentPage = SettingsPage.FAB_MENU_DESIGN
+                                            }
+                                        )
+                                    }
+                                }
+
+                                SettingsPage.FAB_MENU_DESIGN -> {
+                                    // 1. Master Enable/Disable Switch (Disable reverts to Original)
+                                    LiquidGlassCard(
+                                        isDark = effectiveDark,
+                                        tint = GlassTint.FROST,
+                                        shape = RoundedCornerShape(20.dp),
+                                        borderWidth = 1.dp,
+                                        customFill = cardTileColor,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .defaultMinSize(minHeight = 60.dp)
+                                                .clickable(
+                                                    interactionSource = remember { MutableInteractionSource() },
+                                                    indication = ripple(bounded = true)
+                                                ) {
+                                                    onToggleCustomFabMenu(!fabMenuStyle.isCustomEnabled)
+                                                }
+                                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .padding(end = 10.dp)
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(38.dp)
+                                                        .clip(CircleShape)
+                                                        .background(primaryAccent.copy(alpha = 0.14f)),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Rounded.AddCircleOutline,
+                                                        contentDescription = null,
+                                                        tint = primaryAccent,
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.width(12.dp))
+                                                Column {
+                                                    Text(
+                                                        text = tr(
+                                                            "تفعيل التصاميم المخصصة",
+                                                            "Activer les styles personnalisés",
+                                                            "Enable Custom Designs",
+                                                            "Rmed iɣaniben udmawanen"
+                                                        ),
+                                                        fontSize = 14.sp,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = textColor
+                                                    )
+                                                    Text(
+                                                        text = if (fabMenuStyle.isCustomEnabled) {
+                                                            tr(
+                                                                "أوقف التفعيل للعودة إلى التصميم الأصلي",
+                                                                "Désactivez pour revenir au style original",
+                                                                "Turn off to revert to Original dock",
+                                                                "Sens akken ad tuɣaleḍ ɣer uneṣli"
+                                                            )
+                                                        } else {
+                                                            tr(
+                                                                "معطّل حالياً — التصميم الأصلي نشط",
+                                                                "Désactivé — design original actif",
+                                                                "Disabled — Original capsule active",
+                                                                "Yensa — aɣanib aneṣli yermed"
+                                                            )
+                                                        },
+                                                        fontSize = 11.5.sp,
+                                                        color = subTextColor
+                                                    )
+                                                }
+                                            }
+
+                                            Switch(
+                                                checked = fabMenuStyle.isCustomEnabled,
+                                                onCheckedChange = onToggleCustomFabMenu,
+                                                modifier = Modifier.testTag("custom_fab_design_switch"),
+                                                colors = SwitchDefaults.colors(
+                                                    checkedThumbColor = if (effectiveDark) activePreset.background else Color.White,
+                                                    checkedTrackColor = primaryAccent,
+                                                    uncheckedThumbColor = subTextColor,
+                                                    uncheckedTrackColor = activePreset.surfaceVariant
+                                                )
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(12.dp))
+
+                                    // 2. Full Menu List of All 5 Styles
                                     LiquidGlassCard(
                                         isDark = effectiveDark,
                                         tint = GlassTint.FROST,
@@ -1992,179 +2143,182 @@ fun SettingsDrawer(
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
                                         Column(modifier = Modifier.fillMaxWidth()) {
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .defaultMinSize(minHeight = 56.dp)
-                                                    .clickable(
-                                                        interactionSource = remember { MutableInteractionSource() },
-                                                        indication = ripple(bounded = true)
-                                                    ) {
-                                                        onToggleCustomFabMenu(!fabMenuStyle.isCustomEnabled)
-                                                    }
-                                                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
+                                            val orderedStyles = listOf(
+                                                FabMenuStyle.VERTICAL_STACK,
+                                                FabMenuStyle.CONSTELLATION,
+                                                FabMenuStyle.ORBITAL_ARC,
+                                                FabMenuStyle.DIAMOND_MOSAIC,
+                                                FabMenuStyle.ORIGINAL
+                                            )
+                                            orderedStyles.forEachIndexed { idx, style ->
+                                                val isSelected = fabMenuStyle == style
+                                                val styleIcon = when (style) {
+                                                    FabMenuStyle.VERTICAL_STACK -> Icons.Rounded.ViewStream
+                                                    FabMenuStyle.CONSTELLATION -> Icons.Rounded.AutoAwesome
+                                                    FabMenuStyle.ORBITAL_ARC -> Icons.Rounded.DonutLarge
+                                                    FabMenuStyle.DIAMOND_MOSAIC -> Icons.Rounded.Widgets
+                                                    FabMenuStyle.ORIGINAL -> Icons.Rounded.Tune
+                                                }
+                                                val styleAccent = when (style) {
+                                                    FabMenuStyle.VERTICAL_STACK -> primaryAccent
+                                                    FabMenuStyle.CONSTELLATION -> secondaryAccent
+                                                    FabMenuStyle.ORBITAL_ARC -> tertiaryAccent
+                                                    FabMenuStyle.DIAMOND_MOSAIC -> Color(0xFF10B981)
+                                                    FabMenuStyle.ORIGINAL -> subTextColor
+                                                }
+                                                val styleTitle = when (style) {
+                                                    FabMenuStyle.VERTICAL_STACK -> tr(
+                                                        "العمود العائم (افتراضي)",
+                                                        "Pile flottante (Défaut)",
+                                                        "Floating Stack (Default)",
+                                                        "Tigejdit (Amezwar)"
+                                                    )
+                                                    FabMenuStyle.CONSTELLATION -> tr(
+                                                        "الكوكبة المضيئة",
+                                                        "Constellation lumineuse",
+                                                        "Crystal Constellation",
+                                                        "Itriyen imerɣanen"
+                                                    )
+                                                    FabMenuStyle.ORBITAL_ARC -> tr(
+                                                        "القرص الحلقي",
+                                                        "Cadran orbital",
+                                                        "Orbital Radial Dial",
+                                                        "Adebzi amesɣan"
+                                                    )
+                                                    FabMenuStyle.DIAMOND_MOSAIC -> tr(
+                                                        "فسيفساء الكريستال",
+                                                        "Mosaïque Bento",
+                                                        "Crystal Bento Grid",
+                                                        "Takristalt 2×2"
+                                                    )
+                                                    FabMenuStyle.ORIGINAL -> tr(
+                                                        "التصميم الأصلي (تعطيل المخصص)",
+                                                        "Design original (Désactiver)",
+                                                        "Original Capsule (Disable Custom)",
+                                                        "Aneṣli (Sens udmawan)"
+                                                    )
+                                                }
+                                                val styleSubtitle = when (style) {
+                                                    FabMenuStyle.VERTICAL_STACK -> tr(
+                                                        "بطاقات زجاجية عائمة مرتفعة عمودياً بعناوين واضحة",
+                                                        "Piles de cartes en verre au-dessus du bouton",
+                                                        "Vertical rising glass pill cards with crisp labels",
+                                                        "Tikarḍiwin n zzaj s tefses s ufella n tqeffalt"
+                                                    )
+                                                    FabMenuStyle.CONSTELLATION -> tr(
+                                                        "كوكبة ربع دائرية شفافة وخيوط ضوئية منحنية",
+                                                        "Constellation transparente à filaments courbés",
+                                                        "Frameless quarter-circle with curved light filaments",
+                                                        "Tamnaḍt tafrawant s yizirigen n tafat"
+                                                    )
+                                                    FabMenuStyle.ORBITAL_ARC -> tr(
+                                                        "قرص زاوية زجاجي مقسم شعاعياً بحلقة دوّارة",
+                                                        "Cadran d'angle givré avec anneau rotatif",
+                                                        "Frosted corner dial with radial sectors & glow ring",
+                                                        "Adebzi n teɣmert s temlellayt yettazzalen"
+                                                    )
+                                                    FabMenuStyle.DIAMOND_MOSAIC -> tr(
+                                                        "شبكة كريستال 2×2 عائمة بإضاءة حواف متدرجة",
+                                                        "Grille Bento 2×2 translucide flottante",
+                                                        "Floating 2×2 translucent prism bento tiles",
+                                                        "Taferkit 2×2 n tkristalin yettwaɛlaqen"
+                                                    )
+                                                    FabMenuStyle.ORIGINAL -> tr(
+                                                        "الشريط الكبسولي المركزي الكلاسيكي في الأسفل",
+                                                        "Barre capsule centrée classique en bas",
+                                                        "Classic centered horizontal glass capsule dock",
+                                                        "Afeggag aneṣli deg tlemmast n wadda"
+                                                    )
+                                                }
+
                                                 Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
                                                     modifier = Modifier
-                                                        .weight(1f)
-                                                        .padding(end = 10.dp)
+                                                        .fillMaxWidth()
+                                                        .defaultMinSize(minHeight = 64.dp)
+                                                        .background(
+                                                            if (isSelected) primaryAccent.copy(alpha = if (effectiveDark) 0.14f else 0.08f)
+                                                            else Color.Transparent
+                                                        )
+                                                        .testTag("fab_style_${style.id}")
+                                                        .clickable(
+                                                            interactionSource = remember { MutableInteractionSource() },
+                                                            indication = ripple(bounded = true)
+                                                        ) { onSelectFabMenuStyle(style) }
+                                                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.SpaceBetween
                                                 ) {
-                                                    Box(
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
                                                         modifier = Modifier
-                                                            .size(36.dp)
-                                                            .clip(CircleShape)
-                                                            .background(primaryAccent.copy(alpha = 0.14f)),
-                                                        contentAlignment = Alignment.Center
+                                                            .weight(1f)
+                                                            .padding(end = 10.dp)
                                                     ) {
-                                                        Icon(
-                                                            imageVector = Icons.Rounded.AddCircleOutline,
-                                                            contentDescription = null,
-                                                            tint = primaryAccent,
-                                                            modifier = Modifier.size(19.dp)
-                                                        )
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .size(40.dp)
+                                                                .clip(CircleShape)
+                                                                .background(
+                                                                    styleAccent.copy(alpha = if (isSelected) 0.22f else 0.12f)
+                                                                )
+                                                                .border(
+                                                                    width = if (isSelected) 1.3.dp else 0.dp,
+                                                                    color = if (isSelected) styleAccent.copy(alpha = 0.7f) else Color.Transparent,
+                                                                    shape = CircleShape
+                                                                ),
+                                                            contentAlignment = Alignment.Center
+                                                        ) {
+                                                            Icon(
+                                                                imageVector = styleIcon,
+                                                                contentDescription = styleTitle,
+                                                                tint = styleAccent,
+                                                                modifier = Modifier.size(20.dp)
+                                                            )
+                                                        }
+                                                        Spacer(modifier = Modifier.width(12.dp))
+                                                        Column {
+                                                            Text(
+                                                                text = styleTitle,
+                                                                fontSize = 13.5.sp,
+                                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                                                color = textColor,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                            Spacer(modifier = Modifier.height(2.dp))
+                                                            Text(
+                                                                text = styleSubtitle,
+                                                                fontSize = 11.5.sp,
+                                                                color = subTextColor,
+                                                                maxLines = 2,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                        }
                                                     }
-                                                    Spacer(modifier = Modifier.width(12.dp))
-                                                    Column {
-                                                        Text(
-                                                            text = tr(
-                                                                "تصميم قائمة زر الإضافة (+)",
-                                                                "Design du menu d'ajout (+)",
-                                                                "Add (+) Menu Design",
-                                                                "Aɣanib n umuɣ n tmerniwt (+)"
-                                                            ),
-                                                            fontSize = 14.sp,
-                                                            fontWeight = FontWeight.SemiBold,
-                                                            color = textColor
-                                                        )
-                                                        Text(
-                                                            text = if (fabMenuStyle.isCustomEnabled) {
-                                                                tr(
-                                                                    "مفعّل — اختر من بين 4 تصاميم مخصصة",
-                                                                    "Activé — choisissez parmi 4 styles",
-                                                                    "Custom enabled — choose 1 of 4 styles",
-                                                                    "Irmed — fren seg 4 n yiɣaniben"
-                                                                )
-                                                            } else {
-                                                                tr(
-                                                                    "معطّل — تم الرجوع إلى التصميم الأصلي",
-                                                                    "Désactivé — design original actif",
-                                                                    "Disabled — using original capsule dock",
-                                                                    "Yensa — aɣanib aneṣli yermed"
-                                                                )
-                                                            },
-                                                            fontSize = 11.5.sp,
-                                                            color = subTextColor
-                                                        )
+
+                                                    if (isSelected) {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .size(26.dp)
+                                                                .clip(CircleShape)
+                                                                .background(primaryAccent),
+                                                            contentAlignment = Alignment.Center
+                                                        ) {
+                                                            Icon(
+                                                                imageVector = Icons.Rounded.Check,
+                                                                contentDescription = null,
+                                                                tint = if (effectiveDark) activePreset.background else Color.White,
+                                                                modifier = Modifier.size(16.dp)
+                                                            )
+                                                        }
                                                     }
                                                 }
 
-                                                Switch(
-                                                    checked = fabMenuStyle.isCustomEnabled,
-                                                    onCheckedChange = onToggleCustomFabMenu,
-                                                    modifier = Modifier.testTag("custom_fab_design_switch"),
-                                                    colors = SwitchDefaults.colors(
-                                                        checkedThumbColor = if (effectiveDark) activePreset.background else Color.White,
-                                                        checkedTrackColor = primaryAccent,
-                                                        uncheckedThumbColor = subTextColor,
-                                                        uncheckedTrackColor = activePreset.surfaceVariant
+                                                if (idx < orderedStyles.lastIndex) {
+                                                    HorizontalDivider(
+                                                        color = dividerColor,
+                                                        modifier = Modifier.padding(horizontal = 16.dp)
                                                     )
-                                                )
-                                            }
-
-                                            HorizontalDivider(
-                                                color = dividerColor,
-                                                modifier = Modifier.padding(horizontal = 16.dp)
-                                            )
-
-                                            Column(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                                            ) {
-                                                Text(
-                                                    text = tr(
-                                                        "اختر شكل فتح زر (+)",
-                                                        "Style d'ouverture du bouton (+)",
-                                                        "Select (+) Expansion Style",
-                                                        "Fren talɣa n tqeffalt (+)"
-                                                    ),
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    color = subTextColor,
-                                                    modifier = Modifier.padding(horizontal = 2.dp)
-                                                )
-
-                                                val styleRows = FabMenuStyle.entries.chunked(2)
-                                                styleRows.forEach { rowStyles ->
-                                                    Row(
-                                                        modifier = Modifier.fillMaxWidth(),
-                                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                                    ) {
-                                                        rowStyles.forEach { style ->
-                                                            val isSelected = fabMenuStyle == style
-                                                            val styleIcon = when (style) {
-                                                                FabMenuStyle.ORIGINAL -> Icons.Rounded.Tune
-                                                                FabMenuStyle.CONSTELLATION -> Icons.Rounded.AutoAwesome
-                                                                FabMenuStyle.VERTICAL_STACK -> Icons.Rounded.ViewStream
-                                                                FabMenuStyle.ORBITAL_ARC -> Icons.Rounded.DonutLarge
-                                                                FabMenuStyle.DIAMOND_MOSAIC -> Icons.Rounded.Widgets
-                                                            }
-                                                            val styleLabel = when (style) {
-                                                                FabMenuStyle.ORIGINAL -> tr("الأصلي (معطّل)", "Original", "Original", "Aneṣli")
-                                                                FabMenuStyle.CONSTELLATION -> tr("الكوكبة المضيئة", "Constellation", "Constellation", "Itriyen")
-                                                                FabMenuStyle.VERTICAL_STACK -> tr("العمود العائم", "Pile flottante", "Floating Stack", "Tigejdit")
-                                                                FabMenuStyle.ORBITAL_ARC -> tr("القرص الحلقي", "Cadran orbital", "Orbital Dial", "Adebzi")
-                                                                FabMenuStyle.DIAMOND_MOSAIC -> tr("فسيفساء الكريستال", "Mosaïque Bento", "Crystal Bento", "Takristalt")
-                                                            }
-                                                            Row(
-                                                                modifier = Modifier
-                                                                    .weight(1f)
-                                                                    .defaultMinSize(minHeight = 48.dp)
-                                                                    .clip(RoundedCornerShape(14.dp))
-                                                                    .background(
-                                                                        if (isSelected) primaryAccent.copy(alpha = if (effectiveDark) 0.24f else 0.14f)
-                                                                        else currentPreset.surfaceVariant.copy(alpha = 0.55f)
-                                                                    )
-                                                                    .border(
-                                                                        width = if (isSelected) 1.3.dp else 0.8.dp,
-                                                                        color = if (isSelected) primaryAccent.copy(alpha = 0.78f)
-                                                                        else dividerColor,
-                                                                        shape = RoundedCornerShape(14.dp)
-                                                                    )
-                                                                    .testTag("fab_style_${style.id}")
-                                                                    .clickable(
-                                                                        interactionSource = remember { MutableInteractionSource() },
-                                                                        indication = ripple(bounded = true)
-                                                                    ) { onSelectFabMenuStyle(style) }
-                                                                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                                                                verticalAlignment = Alignment.CenterVertically,
-                                                                horizontalArrangement = Arrangement.Center
-                                                            ) {
-                                                                Icon(
-                                                                    imageVector = styleIcon,
-                                                                    contentDescription = styleLabel,
-                                                                    tint = if (isSelected) primaryAccent else subTextColor,
-                                                                    modifier = Modifier.size(16.dp)
-                                                                )
-                                                                Spacer(modifier = Modifier.width(6.dp))
-                                                                Text(
-                                                                    text = styleLabel,
-                                                                    fontSize = 11.5.sp,
-                                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                                                    color = if (isSelected) textColor else subTextColor,
-                                                                    maxLines = 1,
-                                                                    overflow = TextOverflow.Ellipsis
-                                                                )
-                                                            }
-                                                        }
-                                                        if (rowStyles.size == 1) {
-                                                            Spacer(modifier = Modifier.weight(1f))
-                                                        }
-                                                    }
                                                 }
                                             }
                                         }

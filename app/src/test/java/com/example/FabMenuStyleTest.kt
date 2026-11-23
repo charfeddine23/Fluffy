@@ -23,7 +23,7 @@ class FabMenuStyleTest {
         assertEquals(FabMenuStyle.VERTICAL_STACK, FabMenuStyle.fromId("vertical_stack"))
         assertEquals(FabMenuStyle.ORBITAL_ARC, FabMenuStyle.fromId("orbital_arc"))
         assertEquals(FabMenuStyle.DIAMOND_MOSAIC, FabMenuStyle.fromId("diamond_mosaic"))
-        assertEquals(FabMenuStyle.CONSTELLATION, FabMenuStyle.fromId(null))
-        assertEquals(FabMenuStyle.CONSTELLATION, FabMenuStyle.fromId("unknown_style"))
+        assertEquals(FabMenuStyle.VERTICAL_STACK, FabMenuStyle.fromId(null))
+        assertEquals(FabMenuStyle.VERTICAL_STACK, FabMenuStyle.fromId("unknown_style"))
     }
 }

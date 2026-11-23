@@ -635,7 +635,7 @@ object FirebaseSyncRepository {
             coloredContainerBorders = getBoolean("coloredContainerBorders") ?: true,
             notesViewMode = getString("notesViewMode") ?: if (isGrid) "grid" else "list",
             isPremium = getBoolean("isPremium") ?: false,
-            fabMenuStyle = getString("fabMenuStyle") ?: "constellation"
+            fabMenuStyle = getString("fabMenuStyle") ?: "vertical_stack"
         )
         return RemoteSettingsPayload(
             snapshot = snapshot,

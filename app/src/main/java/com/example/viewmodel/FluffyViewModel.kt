@@ -78,13 +78,13 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     )
     val isColoredBordersEnabled = MutableStateFlow(prefs.getBoolean("colored_container_borders", true))
     val fabMenuStyle = MutableStateFlow(
-        FabMenuStyle.fromId(prefs.getString("fab_menu_style", FabMenuStyle.CONSTELLATION.id))
+        FabMenuStyle.fromId(prefs.getString("fab_menu_style", FabMenuStyle.VERTICAL_STACK.id))
     )
     private var lastCustomFabMenuStyle: FabMenuStyle = run {
         val stored = FabMenuStyle.fromId(
-            prefs.getString("last_custom_fab_menu_style", FabMenuStyle.CONSTELLATION.id)
+            prefs.getString("last_custom_fab_menu_style", FabMenuStyle.VERTICAL_STACK.id)
         )
-        if (stored.isCustomEnabled) stored else FabMenuStyle.CONSTELLATION
+        if (stored.isCustomEnabled) stored else FabMenuStyle.VERTICAL_STACK
     }
 
     // Biometric Authentication, App Lock, Non-Screenshot & Vault Lock (Biometric + Passkey)
@@ -569,7 +569,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             val target = if (lastCustomFabMenuStyle.isCustomEnabled) {
                 lastCustomFabMenuStyle
             } else {
-                FabMenuStyle.CONSTELLATION
+                FabMenuStyle.VERTICAL_STACK
             }
             setFabMenuStyle(target)
         } else {

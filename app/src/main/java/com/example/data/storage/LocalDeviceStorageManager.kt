@@ -34,7 +34,7 @@ data class FluffySettingsSnapshot(
     val coloredContainerBorders: Boolean = true,
     val notesViewMode: String = if (isGridView) "grid" else "list",
     val isPremium: Boolean = false,
-    val fabMenuStyle: String = "constellation"
+    val fabMenuStyle: String = "vertical_stack"
 )
 
 data class FluffyBackupBundle(
@@ -1104,7 +1104,7 @@ object LocalDeviceStorageManager {
                 if (gridFlag) "grid" else "list"
             ),
             isPremium = obj.optBoolean("isPremium", false),
-            fabMenuStyle = obj.optString("fabMenuStyle", "constellation")
+            fabMenuStyle = obj.optString("fabMenuStyle", "vertical_stack")
         )
     }
 

@@ -15,7 +15,7 @@ enum class FabMenuStyle(val id: String) {
             get() = listOf(CONSTELLATION, VERTICAL_STACK, ORBITAL_ARC, DIAMOND_MOSAIC)
 
         fun fromId(id: String?): FabMenuStyle {
-            return entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: CONSTELLATION
+            return entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: VERTICAL_STACK
         }
     }
 }

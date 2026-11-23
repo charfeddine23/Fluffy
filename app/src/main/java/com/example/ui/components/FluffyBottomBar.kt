@@ -84,7 +84,7 @@ fun FluffyBottomBar(
     onNewChecklist: () -> Unit,
     onNewVoiceNote: () -> Unit,
     onOpenScanner: () -> Unit = {},
-    fabMenuStyle: FabMenuStyle = FabMenuStyle.CONSTELLATION,
+    fabMenuStyle: FabMenuStyle = FabMenuStyle.VERTICAL_STACK,
     modifier: Modifier = Modifier
 ) {
     val activePreset = LocalAppThemePreset.current
