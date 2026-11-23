@@ -108,6 +108,7 @@ fun FluffyHomeScreen(
     val isGridView by viewModel.isGridView.collectAsState()
     val selectedThemeId by viewModel.selectedThemeId.collectAsState()
     val isColoredBordersEnabled by viewModel.isColoredBordersEnabled.collectAsState()
+    val fabMenuStyle by viewModel.fabMenuStyle.collectAsState()
     val isBiometricEnabled by viewModel.isBiometricEnabled.collectAsState()
     val isScreenshotProtectionEnabled by viewModel.isScreenshotProtectionEnabled.collectAsState()
     val isVaultLockEnabled by viewModel.isVaultLockEnabled.collectAsState()
@@ -1066,6 +1067,7 @@ fun FluffyHomeScreen(
                 onNewChecklist = { viewModel.openNewNote(startWithChecklist = true) },
                 onNewVoiceNote = { viewModel.showVoiceRecorder.value = true },
                 onOpenScanner = { viewModel.openScannerHub() },
+                fabMenuStyle = fabMenuStyle,
                 modifier = Modifier.fillMaxSize()
             )
 
@@ -1118,6 +1120,9 @@ fun FluffyHomeScreen(
                 selectedThemeId = selectedThemeId,
                 isColoredBordersEnabled = isColoredBordersEnabled,
                 onToggleColoredBorders = { viewModel.setColoredBordersEnabled(it) },
+                fabMenuStyle = fabMenuStyle,
+                onSelectFabMenuStyle = { viewModel.setFabMenuStyle(it) },
+                onToggleCustomFabMenu = { viewModel.setCustomFabMenuEnabled(it) },
                 onOpenThemes = { viewModel.openThemesScreen(fromSettings = true) },
                 trashedCount = trashedNotes.size,
                 archivedCount = archivedNotes.size,

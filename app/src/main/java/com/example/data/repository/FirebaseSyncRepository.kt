@@ -381,6 +381,7 @@ object FirebaseSyncRepository {
             "nonScreenshotEnabled" to settings.nonScreenshotEnabled,
             "coloredContainerBorders" to settings.coloredContainerBorders,
             "isPremium" to settings.isPremium,
+            "fabMenuStyle" to settings.fabMenuStyle,
             "updatedAt" to updatedAt,
             "serverUpdatedAt" to FieldValue.serverTimestamp()
         )
@@ -633,7 +634,8 @@ object FirebaseSyncRepository {
             nonScreenshotEnabled = getBoolean("nonScreenshotEnabled") ?: false,
             coloredContainerBorders = getBoolean("coloredContainerBorders") ?: true,
             notesViewMode = getString("notesViewMode") ?: if (isGrid) "grid" else "list",
-            isPremium = getBoolean("isPremium") ?: false
+            isPremium = getBoolean("isPremium") ?: false,
+            fabMenuStyle = getString("fabMenuStyle") ?: "constellation"
         )
         return RemoteSettingsPayload(
             snapshot = snapshot,

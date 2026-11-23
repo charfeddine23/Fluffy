@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.FluffyDatabase
 import com.example.data.model.ChecklistItem
+import com.example.data.model.FabMenuStyle
 import com.example.data.model.GlassTint
 import com.example.data.model.NoteEntity
 import com.example.data.model.NotePagesCodec
@@ -76,6 +77,15 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         ) ?: AppThemePreset.DEFAULT_DARK_ID
     )
     val isColoredBordersEnabled = MutableStateFlow(prefs.getBoolean("colored_container_borders", true))
+    val fabMenuStyle = MutableStateFlow(
+        FabMenuStyle.fromId(prefs.getString("fab_menu_style", FabMenuStyle.CONSTELLATION.id))
+    )
+    private var lastCustomFabMenuStyle: FabMenuStyle = run {
+        val stored = FabMenuStyle.fromId(
+            prefs.getString("last_custom_fab_menu_style", FabMenuStyle.CONSTELLATION.id)
+        )
+        if (stored.isCustomEnabled) stored else FabMenuStyle.CONSTELLATION
+    }
 
     // Biometric Authentication, App Lock, Non-Screenshot & Vault Lock (Biometric + Passkey)
     val isBiometricEnabled = MutableStateFlow(prefs.getBoolean("biometric_enabled", false))
@@ -543,6 +553,30 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         persistSettingsSnapshot(syncToCloud = true)
     }
 
+    fun setFabMenuStyle(style: FabMenuStyle) {
+        fabMenuStyle.value = style
+        val editor = prefs.edit().putString("fab_menu_style", style.id)
+        if (style.isCustomEnabled) {
+            lastCustomFabMenuStyle = style
+            editor.putString("last_custom_fab_menu_style", style.id)
+        }
+        editor.apply()
+        persistSettingsSnapshot(syncToCloud = true)
+    }
+
+    fun setCustomFabMenuEnabled(enabled: Boolean) {
+        if (enabled) {
+            val target = if (lastCustomFabMenuStyle.isCustomEnabled) {
+                lastCustomFabMenuStyle
+            } else {
+                FabMenuStyle.CONSTELLATION
+            }
+            setFabMenuStyle(target)
+        } else {
+            setFabMenuStyle(FabMenuStyle.ORIGINAL)
+        }
+    }
+
     fun openThemesScreen(fromSettings: Boolean = false) {
         openedThemesFromSettings = fromSettings || isSettingsDrawerOpen.value
         isSettingsDrawerOpen.value = false
@@ -861,7 +895,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         nonScreenshotEnabled = isScreenshotProtectionEnabled.value,
         coloredContainerBorders = isColoredBordersEnabled.value,
         notesViewMode = viewMode.value.id,
-        isPremium = isPremium.value
+        isPremium = isPremium.value,
+        fabMenuStyle = fabMenuStyle.value.id
     )
 
     private fun persistSettingsSnapshot(syncToCloud: Boolean = true) {
@@ -885,6 +920,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         val resolvedTheme = AppThemeRegistry.resolve(s.selectedThemeId, s.isDarkMode)
         val resolvedLanguage = AppLanguage.fromCode(s.appLanguageCode, fallbackArabic = s.isArabic)
         val resolvedViewMode = NotesViewMode.fromId(s.notesViewMode, fallbackGrid = s.isGridView)
+        val resolvedFabStyle = FabMenuStyle.fromId(s.fabMenuStyle)
         val arabicFlag = resolvedLanguage == AppLanguage.ARABIC
         val resolvedPremium = isPremium.value || s.isPremium
 
@@ -899,6 +935,10 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         selectedCategory.value = s.selectedCategory
         selectedThemeId.value = resolvedTheme.id
         isPremium.value = resolvedPremium
+        fabMenuStyle.value = resolvedFabStyle
+        if (resolvedFabStyle.isCustomEnabled) {
+            lastCustomFabMenuStyle = resolvedFabStyle
+        }
 
         prefs.edit()
             .putBoolean("is_dark_mode", s.isDarkMode)
@@ -912,6 +952,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             .putString("selected_category", s.selectedCategory)
             .putString("selected_theme_id", resolvedTheme.id)
             .putBoolean("is_premium", resolvedPremium)
+            .putString("fab_menu_style", resolvedFabStyle.id)
             .apply()
 
         persistSettingsSnapshot(syncToCloud = !fromRemote)

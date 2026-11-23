@@ -33,7 +33,8 @@ data class FluffySettingsSnapshot(
     val nonScreenshotEnabled: Boolean = false,
     val coloredContainerBorders: Boolean = true,
     val notesViewMode: String = if (isGridView) "grid" else "list",
-    val isPremium: Boolean = false
+    val isPremium: Boolean = false,
+    val fabMenuStyle: String = "constellation"
 )
 
 data class FluffyBackupBundle(
@@ -1074,6 +1075,7 @@ object LocalDeviceStorageManager {
         put("coloredContainerBorders", s.coloredContainerBorders)
         put("notesViewMode", s.notesViewMode)
         put("isPremium", s.isPremium)
+        put("fabMenuStyle", s.fabMenuStyle)
     }
 
     private fun jsonToSettings(obj: JSONObject): FluffySettingsSnapshot {
@@ -1101,7 +1103,8 @@ object LocalDeviceStorageManager {
                 "notesViewMode",
                 if (gridFlag) "grid" else "list"
             ),
-            isPremium = obj.optBoolean("isPremium", false)
+            isPremium = obj.optBoolean("isPremium", false),
+            fabMenuStyle = obj.optString("fabMenuStyle", "constellation")
         )
     }
 

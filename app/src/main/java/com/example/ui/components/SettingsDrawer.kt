@@ -58,6 +58,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.AddCircleOutline
 import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.AutoAwesomeMosaic
@@ -67,6 +68,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudDone
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.DonutLarge
 import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.GppBad
@@ -87,8 +89,11 @@ import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.SystemUpdate
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.ViewAgenda
+import androidx.compose.material.icons.rounded.ViewStream
 import androidx.compose.material.icons.rounded.VisibilityOff
+import androidx.compose.material.icons.rounded.Widgets
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -132,6 +137,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.BuildConfig
+import com.example.data.model.FabMenuStyle
 import com.example.data.model.GlassTint
 import com.example.data.model.NotesViewMode
 import com.example.data.repository.CloudSyncStatus
@@ -174,6 +180,9 @@ fun SettingsDrawer(
     selectedThemeId: String = "ayu_dark",
     isColoredBordersEnabled: Boolean = true,
     onToggleColoredBorders: (Boolean) -> Unit = {},
+    fabMenuStyle: FabMenuStyle = FabMenuStyle.CONSTELLATION,
+    onSelectFabMenuStyle: (FabMenuStyle) -> Unit = {},
+    onToggleCustomFabMenu: (Boolean) -> Unit = {},
     onOpenThemes: () -> Unit = {},
     trashedCount: Int = 0,
     archivedCount: Int = 0,
@@ -1967,6 +1976,196 @@ fun SettingsDrawer(
                                                         uncheckedTrackColor = activePreset.surfaceVariant
                                                     )
                                                 )
+                                            }
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(12.dp))
+
+                                    // 5. Add (+) Button Design Switch & 5-Style Selector
+                                    LiquidGlassCard(
+                                        isDark = effectiveDark,
+                                        tint = GlassTint.FROST,
+                                        shape = RoundedCornerShape(20.dp),
+                                        borderWidth = 1.dp,
+                                        customFill = cardTileColor,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(modifier = Modifier.fillMaxWidth()) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .defaultMinSize(minHeight = 56.dp)
+                                                    .clickable(
+                                                        interactionSource = remember { MutableInteractionSource() },
+                                                        indication = ripple(bounded = true)
+                                                    ) {
+                                                        onToggleCustomFabMenu(!fabMenuStyle.isCustomEnabled)
+                                                    }
+                                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .padding(end = 10.dp)
+                                                ) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(36.dp)
+                                                            .clip(CircleShape)
+                                                            .background(primaryAccent.copy(alpha = 0.14f)),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Rounded.AddCircleOutline,
+                                                            contentDescription = null,
+                                                            tint = primaryAccent,
+                                                            modifier = Modifier.size(19.dp)
+                                                        )
+                                                    }
+                                                    Spacer(modifier = Modifier.width(12.dp))
+                                                    Column {
+                                                        Text(
+                                                            text = tr(
+                                                                "تصميم قائمة زر الإضافة (+)",
+                                                                "Design du menu d'ajout (+)",
+                                                                "Add (+) Menu Design",
+                                                                "Aɣanib n umuɣ n tmerniwt (+)"
+                                                            ),
+                                                            fontSize = 14.sp,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            color = textColor
+                                                        )
+                                                        Text(
+                                                            text = if (fabMenuStyle.isCustomEnabled) {
+                                                                tr(
+                                                                    "مفعّل — اختر من بين 4 تصاميم مخصصة",
+                                                                    "Activé — choisissez parmi 4 styles",
+                                                                    "Custom enabled — choose 1 of 4 styles",
+                                                                    "Irmed — fren seg 4 n yiɣaniben"
+                                                                )
+                                                            } else {
+                                                                tr(
+                                                                    "معطّل — تم الرجوع إلى التصميم الأصلي",
+                                                                    "Désactivé — design original actif",
+                                                                    "Disabled — using original capsule dock",
+                                                                    "Yensa — aɣanib aneṣli yermed"
+                                                                )
+                                                            },
+                                                            fontSize = 11.5.sp,
+                                                            color = subTextColor
+                                                        )
+                                                    }
+                                                }
+
+                                                Switch(
+                                                    checked = fabMenuStyle.isCustomEnabled,
+                                                    onCheckedChange = onToggleCustomFabMenu,
+                                                    modifier = Modifier.testTag("custom_fab_design_switch"),
+                                                    colors = SwitchDefaults.colors(
+                                                        checkedThumbColor = if (effectiveDark) activePreset.background else Color.White,
+                                                        checkedTrackColor = primaryAccent,
+                                                        uncheckedThumbColor = subTextColor,
+                                                        uncheckedTrackColor = activePreset.surfaceVariant
+                                                    )
+                                                )
+                                            }
+
+                                            HorizontalDivider(
+                                                color = dividerColor,
+                                                modifier = Modifier.padding(horizontal = 16.dp)
+                                            )
+
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                Text(
+                                                    text = tr(
+                                                        "اختر شكل فتح زر (+)",
+                                                        "Style d'ouverture du bouton (+)",
+                                                        "Select (+) Expansion Style",
+                                                        "Fren talɣa n tqeffalt (+)"
+                                                    ),
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = subTextColor,
+                                                    modifier = Modifier.padding(horizontal = 2.dp)
+                                                )
+
+                                                val styleRows = FabMenuStyle.entries.chunked(2)
+                                                styleRows.forEach { rowStyles ->
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                    ) {
+                                                        rowStyles.forEach { style ->
+                                                            val isSelected = fabMenuStyle == style
+                                                            val styleIcon = when (style) {
+                                                                FabMenuStyle.ORIGINAL -> Icons.Rounded.Tune
+                                                                FabMenuStyle.CONSTELLATION -> Icons.Rounded.AutoAwesome
+                                                                FabMenuStyle.VERTICAL_STACK -> Icons.Rounded.ViewStream
+                                                                FabMenuStyle.ORBITAL_ARC -> Icons.Rounded.DonutLarge
+                                                                FabMenuStyle.DIAMOND_MOSAIC -> Icons.Rounded.Widgets
+                                                            }
+                                                            val styleLabel = when (style) {
+                                                                FabMenuStyle.ORIGINAL -> tr("الأصلي (معطّل)", "Original", "Original", "Aneṣli")
+                                                                FabMenuStyle.CONSTELLATION -> tr("الكوكبة المضيئة", "Constellation", "Constellation", "Itriyen")
+                                                                FabMenuStyle.VERTICAL_STACK -> tr("العمود العائم", "Pile flottante", "Floating Stack", "Tigejdit")
+                                                                FabMenuStyle.ORBITAL_ARC -> tr("القرص الحلقي", "Cadran orbital", "Orbital Dial", "Adebzi")
+                                                                FabMenuStyle.DIAMOND_MOSAIC -> tr("فسيفساء الكريستال", "Mosaïque Bento", "Crystal Bento", "Takristalt")
+                                                            }
+                                                            Row(
+                                                                modifier = Modifier
+                                                                    .weight(1f)
+                                                                    .defaultMinSize(minHeight = 48.dp)
+                                                                    .clip(RoundedCornerShape(14.dp))
+                                                                    .background(
+                                                                        if (isSelected) primaryAccent.copy(alpha = if (effectiveDark) 0.24f else 0.14f)
+                                                                        else currentPreset.surfaceVariant.copy(alpha = 0.55f)
+                                                                    )
+                                                                    .border(
+                                                                        width = if (isSelected) 1.3.dp else 0.8.dp,
+                                                                        color = if (isSelected) primaryAccent.copy(alpha = 0.78f)
+                                                                        else dividerColor,
+                                                                        shape = RoundedCornerShape(14.dp)
+                                                                    )
+                                                                    .testTag("fab_style_${style.id}")
+                                                                    .clickable(
+                                                                        interactionSource = remember { MutableInteractionSource() },
+                                                                        indication = ripple(bounded = true)
+                                                                    ) { onSelectFabMenuStyle(style) }
+                                                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                horizontalArrangement = Arrangement.Center
+                                                            ) {
+                                                                Icon(
+                                                                    imageVector = styleIcon,
+                                                                    contentDescription = styleLabel,
+                                                                    tint = if (isSelected) primaryAccent else subTextColor,
+                                                                    modifier = Modifier.size(16.dp)
+                                                                )
+                                                                Spacer(modifier = Modifier.width(6.dp))
+                                                                Text(
+                                                                    text = styleLabel,
+                                                                    fontSize = 11.5.sp,
+                                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                                    color = if (isSelected) textColor else subTextColor,
+                                                                    maxLines = 1,
+                                                                    overflow = TextOverflow.Ellipsis
+                                                                )
+                                                            }
+                                                        }
+                                                        if (rowStyles.size == 1) {
+                                                            Spacer(modifier = Modifier.weight(1f))
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
