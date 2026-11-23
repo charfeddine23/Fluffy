@@ -2,15 +2,19 @@ package com.example.ui.components
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -56,7 +60,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
@@ -77,24 +80,23 @@ import com.example.data.model.GlassTint
 import com.example.ui.glass.liquidGlass
 import com.example.ui.theme.LocalAppThemePreset
 import com.example.ui.theme.tr
-import kotlin.math.PI
-import kotlin.math.cos
 import kotlin.math.roundToInt
-import kotlin.math.sin
 
-private data class RadialQuickAction(
+private data class ConstellationAction(
     val icon: ImageVector,
     val label: String,
     val contentDescription: String,
     val tintColor: Color,
-    val angleDeg: Float,
+    val fromSideDp: Float,
+    val aboveNavDp: Float,
+    val curveLift: Float,
     val testTag: String,
     val onClick: () -> Unit
 )
 
 /**
- * Edge-flush Quarter-Circle Shape anchored strictly to the physical bottom-right (LTR)
- * or bottom-left (Arabic/RTL) screen corner.
+ * Edge-flush Quarter-Circle Sector anchored strictly to the bottom-right (LTR)
+ * or bottom-left (Arabic/RTL) corner with no outer border stroke.
  */
 private fun quarterCircleCornerShape(isLeftCorner: Boolean): Shape = GenericShape { size, _ ->
     val w = size.width
@@ -146,10 +148,10 @@ fun FluffyBottomBar(
     val expandProgress by animateFloatAsState(
         targetValue = if (isExpanded) 1f else 0f,
         animationSpec = spring(
-            dampingRatio = 0.78f,
+            dampingRatio = 0.76f,
             stiffness = 340f
         ),
-        label = "quarter_circle_expand_progress"
+        label = "quarter_constellation_expand"
     )
 
     val plusInteractionSource = remember { MutableInteractionSource() }
@@ -166,7 +168,7 @@ fun FluffyBottomBar(
     val closeInteraction = remember { MutableInteractionSource() }
     val isClosePressed by closeInteraction.collectIsPressedAsState()
     val closeScale by animateFloatAsState(
-        targetValue = if (isClosePressed) 0.90f else 1f,
+        targetValue = if (isClosePressed) 0.88f else 1f,
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
         label = "quarter_close_scale"
     )
@@ -184,7 +186,8 @@ fun FluffyBottomBar(
     val checklistDesc = tr("قائمة مهام", "Liste", "New Checklist", "Tabdart n tmahalin")
     val scanDesc = tr("ماسح المستندات", "Scanner", "Doc Scanner", "Amsken n yifuyla")
 
-    val radialActions = remember(
+    // Voice & Doc Scanner sit close around the central X hub; Note & Checklist crown the outer arc
+    val constellationActions = remember(
         isArabic,
         accentColor,
         voiceLabel,
@@ -197,48 +200,56 @@ fun FluffyBottomBar(
         scanDesc
     ) {
         listOf(
-            RadialQuickAction(
+            ConstellationAction(
                 icon = Icons.Default.Mic,
                 label = voiceLabel,
                 contentDescription = voiceDesc,
                 tintColor = Color(0xFFF43F5E),
-                angleDeg = 76f,
+                fromSideDp = 46f,
+                aboveNavDp = 138f,
+                curveLift = -14f,
                 testTag = "action_voice_note_btn",
                 onClick = {
                     isExpanded = false
                     onNewVoiceNote()
                 }
             ),
-            RadialQuickAction(
+            ConstellationAction(
                 icon = Icons.Default.EditNote,
                 label = noteLabel,
                 contentDescription = noteDesc,
                 tintColor = accentColor,
-                angleDeg = 56.5f,
+                fromSideDp = 104f,
+                aboveNavDp = 154f,
+                curveLift = -18f,
                 testTag = "action_new_note_btn",
                 onClick = {
                     isExpanded = false
                     onNewNote()
                 }
             ),
-            RadialQuickAction(
+            ConstellationAction(
                 icon = Icons.Default.Checklist,
                 label = checklistLabel,
                 contentDescription = checklistDesc,
                 tintColor = Color(0xFF10B981),
-                angleDeg = 37f,
+                fromSideDp = 154f,
+                aboveNavDp = 104f,
+                curveLift = 18f,
                 testTag = "action_checklist_btn",
                 onClick = {
                     isExpanded = false
                     onNewChecklist()
                 }
             ),
-            RadialQuickAction(
+            ConstellationAction(
                 icon = Icons.Default.DocumentScanner,
                 label = scanLabel,
                 contentDescription = scanDesc,
                 tintColor = Color(0xFF38BDF8),
-                angleDeg = 17.5f,
+                fromSideDp = 138f,
+                aboveNavDp = 46f,
+                curveLift = 14f,
                 testTag = "action_doc_scanner_btn",
                 onClick = {
                     isExpanded = false
@@ -251,18 +262,19 @@ fun FluffyBottomBar(
     BoxWithConstraints(
         modifier = modifier.fillMaxSize()
     ) {
-        // Compute responsive quarter-circle radius flush with the screen edges
-        val baseMaxRadius = minOf(maxWidth * 0.72f, maxHeight * 0.56f, 246.dp)
-        val totalSectorSize = (baseMaxRadius + navBarBottomDp * 0.65f).coerceAtLeast(210.dp)
-        val orbitRadius = (baseMaxRadius * 0.74f).coerceIn(144.dp, 182.dp)
-        val hubInsetFromSide = 50.dp
-        val hubInsetAboveNav = 50.dp
+        val baseMaxRadius = minOf(maxWidth * 0.68f, maxHeight * 0.52f, 224.dp)
+        val layoutScale = (baseMaxRadius.value / 224f).coerceIn(0.82f, 1.08f)
+        val totalSectorSize = (baseMaxRadius + navBarBottomDp * 0.72f).coerceAtLeast(204.dp)
 
-        // Ultra-clear transparent outside dismiss layer so background remains 100% unobstructed
+        // Central X hub positioned cleanly in the visual heart of the quarter-circle
+        val hubFromSideDp = 70f * layoutScale
+        val hubAboveNavDp = 70f * layoutScale
+
+        // Transparent full-screen outside tap listener -> zero background dimming
         AnimatedVisibility(
             visible = isExpanded,
-            enter = fadeIn(tween(150)),
-            exit = fadeOut(tween(140))
+            enter = fadeIn(tween(140)),
+            exit = fadeOut(tween(130))
         ) {
             Box(
                 modifier = Modifier
@@ -276,243 +288,240 @@ fun FluffyBottomBar(
             )
         }
 
-        // LTR layout ensures left/right physical corners match Arabic (left) vs English/French (right)
+        // LTR guarantees physical bottom-left (Arabic) vs bottom-right (English/French) corner attachment
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
             Box(modifier = Modifier.fillMaxSize()) {
-                // Expanded Edge-Flush 5% Translucent Quarter-Circle Menu
                 if (expandProgress > 0.01f) {
+                    val infiniteTransition = rememberInfiniteTransition(label = "prism_constellation_anim")
+                    val orbitSpinDeg by infiniteTransition.animateFloat(
+                        initialValue = 0f,
+                        targetValue = 360f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(durationMillis = 12000, easing = LinearEasing),
+                            repeatMode = RepeatMode.Restart
+                        ),
+                        label = "orbit_spin"
+                    )
+                    val pulseBreath by infiniteTransition.animateFloat(
+                        initialValue = 0.85f,
+                        targetValue = 1.15f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(durationMillis = 2400),
+                            repeatMode = RepeatMode.Reverse
+                        ),
+                        label = "constellation_breath"
+                    )
+
                     val sectorShape = remember(isArabic) { quarterCircleCornerShape(isLeftCorner = isArabic) }
-                    val animatedRadiusDp = totalSectorSize * expandProgress.coerceIn(0.05f, 1.04f)
                     val cornerAlignment = if (isArabic) Alignment.BottomStart else Alignment.BottomEnd
 
                     Box(
                         modifier = Modifier
                             .align(cornerAlignment)
-                            .size(animatedRadiusDp)
+                            .size(totalSectorSize)
                             .clip(sectorShape)
                             .testTag("morphing_action_dock")
                     ) {
                         val navBottomPx = with(density) { navBarBottomDp.toPx() }
-                        val orbitRadiusPx = with(density) { orbitRadius.toPx() }
-                        val hubSizeDp: Dp = 54.dp
+                        val hubSizeDp: Dp = 52.dp
                         val orbSizeDp: Dp = 46.dp
-                        val hubCenterXFromEdgePx = with(density) { hubInsetFromSide.toPx() }
-                        val hubCenterYFromBottomPx = with(density) { hubInsetAboveNav.toPx() } + navBottomPx
+                        val hubCenterSidePx = with(density) { hubFromSideDp.dp.toPx() }
+                        val hubCenterBottomPx = with(density) { hubAboveNavDp.dp.toPx() } + navBottomPx
 
-                        // 5% Transparency Optical Glass Canvas Artwork + Concentric Guides
+                        // Frameless 5% Translucent Crystal Sector + Curved Luminous Energy Filaments (NO Outer Rim)
                         Canvas(modifier = Modifier.fillMaxSize()) {
                             val w = size.width
                             val h = size.height
-                            val radius = minOf(w, h)
+                            val maxRadius = minOf(w, h)
+                            val radius = (maxRadius * expandProgress).coerceAtLeast(1f)
                             val cornerX = if (isArabic) 0f else w
                             val cornerY = h
 
-                            val startAngle = if (isArabic) 270f else 180f
-                            val arcTopLeft = if (isArabic) {
-                                Offset(-radius, h - radius)
-                            } else {
-                                Offset(w - radius, h - radius)
-                            }
-                            val arcSize = Size(radius * 2f, radius * 2f)
-
-                            // Strictly 5% translucent crystal fill so underlying content remains crystal clear
-                            val glassFillColor = if (isDark) {
-                                Color.White.copy(alpha = 0.05f * expandProgress)
-                            } else {
-                                accentColor.copy(alpha = 0.05f * expandProgress)
-                            }
-                            drawArc(
-                                color = glassFillColor,
-                                startAngle = startAngle,
-                                sweepAngle = 90f,
-                                useCenter = true,
-                                topLeft = arcTopLeft,
-                                size = arcSize
+                            // Borderless 5% feathered radial quarter-circle tint (NO outer stroke/border)
+                            val baseCrystal = if (isDark) Color.White else accentColor
+                            drawCircle(
+                                brush = Brush.radialGradient(
+                                    0.0f to baseCrystal.copy(alpha = 0.05f * expandProgress),
+                                    0.72f to baseCrystal.copy(alpha = 0.05f * expandProgress),
+                                    0.96f to baseCrystal.copy(alpha = 0.025f * expandProgress),
+                                    1.0f to Color.Transparent,
+                                    center = Offset(cornerX, cornerY),
+                                    radius = radius
+                                ),
+                                radius = radius,
+                                center = Offset(cornerX, cornerY)
                             )
 
-                            // Ultra-subtle 5% prismatic rim bloom on outer arc
+                            val hubCenter = Offset(
+                                x = if (isArabic) hubCenterSidePx else w - hubCenterSidePx,
+                                y = h - hubCenterBottomPx
+                            )
+
+                            // Curved Bezier light-filaments & constellation nodes radiating from the middle X core
+                            constellationActions.forEach { action ->
+                                val targetX = if (isArabic) {
+                                    with(density) { (action.fromSideDp * layoutScale).dp.toPx() }
+                                } else {
+                                    w - with(density) { (action.fromSideDp * layoutScale).dp.toPx() }
+                                }
+                                val targetY = h - (navBottomPx + with(density) { (action.aboveNavDp * layoutScale).dp.toPx() })
+
+                                val endPoint = Offset(
+                                    x = hubCenter.x + (targetX - hubCenter.x) * expandProgress,
+                                    y = hubCenter.y + (targetY - hubCenter.y) * expandProgress
+                                )
+
+                                val dx = endPoint.x - hubCenter.x
+                                val dy = endPoint.y - hubCenter.y
+                                val len = kotlin.math.hypot(dx.toDouble(), dy.toDouble()).toFloat().coerceAtLeast(1f)
+                                val nx = -dy / len
+                                val ny = dx / len
+                                val liftPx = with(density) { action.curveLift.dp.toPx() } * (if (isArabic) -1f else 1f) * expandProgress
+                                val controlPt = Offset(
+                                    x = (hubCenter.x + endPoint.x) * 0.5f + nx * liftPx,
+                                    y = (hubCenter.y + endPoint.y) * 0.5f + ny * liftPx
+                                )
+
+                                val filamentPath = Path().apply {
+                                    moveTo(hubCenter.x, hubCenter.y)
+                                    quadraticTo(controlPt.x, controlPt.y, endPoint.x, endPoint.y)
+                                }
+
+                                // Soft translucent colored energy filament connecting X core -> tool droplet
+                                drawPath(
+                                    path = filamentPath,
+                                    brush = Brush.linearGradient(
+                                        colors = listOf(
+                                            Color.White.copy(alpha = 0.05f * expandProgress),
+                                            action.tintColor.copy(alpha = 0.34f * expandProgress),
+                                            action.tintColor.copy(alpha = 0.14f * expandProgress)
+                                        ),
+                                        start = hubCenter,
+                                        end = endPoint
+                                    ),
+                                    style = Stroke(width = 1.4.dp.toPx(), cap = StrokeCap.Round)
+                                )
+
+                                // Tiny glowing orbital starlight dot halfway along the curved filament
+                                val midX = 0.25f * hubCenter.x + 0.5f * controlPt.x + 0.25f * endPoint.x
+                                val midY = 0.25f * hubCenter.y + 0.5f * controlPt.y + 0.25f * endPoint.y
+                                drawCircle(
+                                    color = action.tintColor.copy(alpha = 0.65f * expandProgress),
+                                    radius = (2.1.dp.toPx() * pulseBreath),
+                                    center = Offset(midX, midY)
+                                )
+
+                                // Subtle 5% aura glow behind each orb
+                                drawCircle(
+                                    brush = Brush.radialGradient(
+                                        colors = listOf(
+                                            action.tintColor.copy(alpha = 0.05f * expandProgress),
+                                            Color.Transparent
+                                        ),
+                                        center = endPoint,
+                                        radius = 30.dp.toPx()
+                                    ),
+                                    radius = 30.dp.toPx(),
+                                    center = endPoint
+                                )
+                            }
+
+                            // Slowly rotating twin holographic arcs orbiting the central Cancel (X) core
+                            val coreRingRadius = 31.dp.toPx() * expandProgress
+                            val coreRectTopLeft = Offset(
+                                hubCenter.x - coreRingRadius,
+                                hubCenter.y - coreRingRadius
+                            )
+                            val coreRectSize = Size(coreRingRadius * 2f, coreRingRadius * 2f)
                             drawArc(
                                 brush = Brush.sweepGradient(
                                     colors = listOf(
-                                        accentColor.copy(alpha = 0.05f * expandProgress),
-                                        secondaryColor.copy(alpha = 0.05f * expandProgress),
-                                        tertiaryColor.copy(alpha = 0.05f * expandProgress),
-                                        accentColor.copy(alpha = 0.05f * expandProgress)
+                                        accentColor.copy(alpha = 0.72f * expandProgress),
+                                        secondaryColor.copy(alpha = 0.25f * expandProgress),
+                                        Color.Transparent
                                     ),
-                                    center = Offset(cornerX, cornerY)
+                                    center = hubCenter
                                 ),
-                                startAngle = startAngle,
-                                sweepAngle = 90f,
+                                startAngle = orbitSpinDeg,
+                                sweepAngle = 115f,
                                 useCenter = false,
-                                topLeft = arcTopLeft,
-                                size = arcSize,
-                                style = Stroke(width = 8.dp.toPx(), cap = StrokeCap.Round)
+                                topLeft = coreRectTopLeft,
+                                size = coreRectSize,
+                                style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round)
                             )
-
-                            // Sharp refractive outer quarter-circle rim
                             drawArc(
-                                brush = Brush.linearGradient(
+                                brush = Brush.sweepGradient(
                                     colors = listOf(
-                                        accentColor.copy(alpha = 0.78f * expandProgress),
-                                        Color.White.copy(alpha = (if (isDark) 0.55f else 0.72f) * expandProgress),
-                                        secondaryColor.copy(alpha = 0.74f * expandProgress),
-                                        tertiaryColor.copy(alpha = 0.68f * expandProgress)
+                                        tertiaryColor.copy(alpha = 0.65f * expandProgress),
+                                        Color.White.copy(alpha = 0.30f * expandProgress),
+                                        Color.Transparent
                                     ),
-                                    start = Offset(if (isArabic) 0f else w - radius, h - radius),
-                                    end = Offset(if (isArabic) radius else w, h)
+                                    center = hubCenter
                                 ),
-                                startAngle = startAngle,
-                                sweepAngle = 90f,
+                                startAngle = orbitSpinDeg + 180f,
+                                sweepAngle = 115f,
                                 useCenter = false,
-                                topLeft = Offset(arcTopLeft.x + 1.dp.toPx(), arcTopLeft.y + 1.dp.toPx()),
-                                size = Size(arcSize.width - 2.dp.toPx(), arcSize.height - 2.dp.toPx()),
-                                style = Stroke(width = 1.6.dp.toPx(), cap = StrokeCap.Round)
-                            )
-
-                            // Delicate inner dashed orbit track running cleanly along the 4 radial action orbs
-                            val visualCenterY = h - navBottomPx
-                            val visualOrbitR = orbitRadiusPx * expandProgress
-                            val orbitRectTopLeft = Offset(
-                                cornerX - visualOrbitR,
-                                visualCenterY - visualOrbitR
-                            )
-                            val orbitRectSize = Size(visualOrbitR * 2f, visualOrbitR * 2f)
-                            drawArc(
-                                color = (if (isDark) Color.White else accentColor).copy(alpha = 0.22f * expandProgress),
-                                startAngle = startAngle,
-                                sweepAngle = 90f,
-                                useCenter = false,
-                                topLeft = orbitRectTopLeft,
-                                size = orbitRectSize,
-                                style = Stroke(
-                                    width = 1.dp.toPx(),
-                                    pathEffect = PathEffect.dashPathEffect(
-                                        intervals = floatArrayOf(5.dp.toPx(), 6.dp.toPx()),
-                                        phase = 0f
-                                    )
-                                )
-                            )
-
-                            // Subtle radial spoke guides connecting the Cancel orb hub to each action orb
-                            val hubCenter = Offset(
-                                x = if (isArabic) hubCenterXFromEdgePx else w - hubCenterXFromEdgePx,
-                                y = h - hubCenterYFromBottomPx
-                            )
-                            radialActions.forEach { action ->
-                                val rad = action.angleDeg * (PI / 180.0)
-                                val targetX = if (isArabic) {
-                                    (visualOrbitR * cos(rad)).toFloat()
-                                } else {
-                                    w - (visualOrbitR * cos(rad)).toFloat()
-                                }
-                                val targetY = visualCenterY - (visualOrbitR * sin(rad)).toFloat()
-                                val dir = Offset(targetX - hubCenter.x, targetY - hubCenter.y)
-                                val dist = dir.getDistance().coerceAtLeast(1f)
-                                val ux = dir.x / dist
-                                val uy = dir.y / dist
-                                val startSpoke = Offset(
-                                    hubCenter.x + ux * 30.dp.toPx(),
-                                    hubCenter.y + uy * 30.dp.toPx()
-                                )
-                                val endSpoke = Offset(
-                                    targetX - ux * 26.dp.toPx(),
-                                    targetY - uy * 26.dp.toPx()
-                                )
-                                if ((endSpoke - startSpoke).getDistance() > 8f) {
-                                    drawLine(
-                                        brush = Brush.linearGradient(
-                                            colors = listOf(
-                                                Color.White.copy(alpha = 0.08f * expandProgress),
-                                                action.tintColor.copy(alpha = 0.34f * expandProgress)
-                                            ),
-                                            start = startSpoke,
-                                            end = endSpoke
-                                        ),
-                                        start = startSpoke,
-                                        end = endSpoke,
-                                        strokeWidth = 1.dp.toPx(),
-                                        cap = StrokeCap.Round
-                                    )
-                                }
-                            }
-
-                            // Crisp edge hairlines showing flush attachment to bottom & side screen borders
-                            val edgeLineColor = (if (isDark) Color.White else accentColor).copy(alpha = 0.16f * expandProgress)
-                            drawPath(
-                                path = Path().apply {
-                                    if (isArabic) {
-                                        moveTo(1.dp.toPx(), h - radius)
-                                        lineTo(1.dp.toPx(), h - 1.dp.toPx())
-                                        lineTo(radius, h - 1.dp.toPx())
-                                    } else {
-                                        moveTo(w - radius, h - 1.dp.toPx())
-                                        lineTo(w - 1.dp.toPx(), h - 1.dp.toPx())
-                                        lineTo(w - 1.dp.toPx(), h - radius)
-                                    }
-                                },
-                                color = edgeLineColor,
-                                style = Stroke(width = 0.9.dp.toPx(), cap = StrokeCap.Round)
+                                topLeft = coreRectTopLeft,
+                                size = coreRectSize,
+                                style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round)
                             )
                         }
 
-                        // Positioned Radial Action Orbs + Cancel Orb inside the Quarter-Circle
+                        // Interactive Jewel Droplets & Middle Cancel Core
                         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                             val boxWpx = with(density) { maxWidth.toPx() }
                             val boxHpx = with(density) { maxHeight.toPx() }
                             val orbSizePx = with(density) { orbSizeDp.toPx() }
-                            val orbSlotWidthDp = 68.dp
-                            val orbSlotHalfWpx = with(density) { (orbSlotWidthDp / 2f).toPx() }
+                            val slotWidthDp = 64.dp
+                            val slotHalfWpx = with(density) { (slotWidthDp / 2f).toPx() }
                             val hubSizePx = with(density) { hubSizeDp.toPx() }
                             val navPx = with(density) { navBarBottomDp.toPx() }
 
-                            // 4 Radial Action Buttons spaced cleanly along the 90-degree crystal arc
-                            radialActions.forEachIndexed { idx, action ->
-                                val stagger = ((expandProgress - idx * 0.06f) / (1f - idx * 0.06f)).coerceIn(0f, 1f)
-                                val rad = action.angleDeg * (PI / 180.0)
-                                val curR = orbitRadiusPx * expandProgress * (0.45f + 0.55f * stagger)
-                                val centerX = if (isArabic) {
-                                    (curR * cos(rad)).toFloat()
-                                } else {
-                                    boxWpx - (curR * cos(rad)).toFloat()
-                                }
-                                val centerY = (boxHpx - navPx) - (curR * sin(rad)).toFloat()
+                            val hubPxX = if (isArabic) hubCenterSidePx else boxWpx - hubCenterSidePx
+                            val hubPxY = boxHpx - hubCenterBottomPx
 
-                                QuarterRadialOrb(
+                            // 4 Constellation Action Orbs blooming radially out from the middle X hub
+                            constellationActions.forEachIndexed { idx, action ->
+                                val stagger = ((expandProgress - idx * 0.055f) / (1f - idx * 0.055f)).coerceIn(0f, 1f)
+                                val targetCenterX = if (isArabic) {
+                                    with(density) { (action.fromSideDp * layoutScale).dp.toPx() }
+                                } else {
+                                    boxWpx - with(density) { (action.fromSideDp * layoutScale).dp.toPx() }
+                                }
+                                val targetCenterY = boxHpx - (navPx + with(density) { (action.aboveNavDp * layoutScale).dp.toPx() })
+
+                                val curX = hubPxX + (targetCenterX - hubPxX) * stagger
+                                val curY = hubPxY + (targetCenterY - hubPxY) * stagger
+
+                                ConstellationDropletOrb(
                                     action = action,
                                     isDark = isDark,
                                     orbSize = orbSizeDp,
-                                    slotWidth = orbSlotWidthDp,
+                                    slotWidth = slotWidthDp,
                                     progress = stagger,
                                     modifier = Modifier.offset {
                                         IntOffset(
-                                            x = (centerX - orbSlotHalfWpx).roundToInt(),
-                                            y = (centerY - orbSizePx / 2f).roundToInt()
+                                            x = (curX - slotHalfWpx).roundToInt(),
+                                            y = (curY - orbSizePx / 2f).roundToInt()
                                         )
                                     }
                                 )
                             }
 
-                            // Cancel (X) Button nestled inside the inner corner of the quarter-circle
-                            val closeCenterX = if (isArabic) {
-                                hubCenterXFromEdgePx
-                            } else {
-                                boxWpx - hubCenterXFromEdgePx
-                            }
-                            val closeCenterY = boxHpx - hubCenterYFromBottomPx
-
+                            // Central Cancel (X) Orb nestled in the middle of the quarter-circle
                             Box(
                                 modifier = Modifier
                                     .offset {
                                         IntOffset(
-                                            x = (closeCenterX - hubSizePx / 2f).roundToInt(),
-                                            y = (closeCenterY - hubSizePx / 2f).roundToInt()
+                                            x = (hubPxX - hubSizePx / 2f).roundToInt(),
+                                            y = (hubPxY - hubSizePx / 2f).roundToInt()
                                         )
                                     }
                                     .size(hubSizeDp)
                                     .minimumInteractiveComponentSize()
                                     .graphicsLayer {
-                                        scaleX = closeScale * (0.72f + 0.28f * expandProgress)
-                                        scaleY = closeScale * (0.72f + 0.28f * expandProgress)
+                                        scaleX = closeScale * (0.70f + 0.30f * expandProgress)
+                                        scaleY = closeScale * (0.70f + 0.30f * expandProgress)
                                         rotationZ = (1f - expandProgress) * -45f
                                         alpha = expandProgress
                                     }
@@ -521,16 +530,6 @@ fun FluffyBottomBar(
                                     .background(
                                         if (isDark) Color.White.copy(alpha = 0.05f)
                                         else Color(0xFF0F172A).copy(alpha = 0.05f)
-                                    )
-                                    .border(
-                                        width = 1.4.dp,
-                                        brush = Brush.linearGradient(
-                                            listOf(
-                                                Color.White.copy(alpha = if (isDark) 0.55f else 0.72f),
-                                                accentColor.copy(alpha = 0.75f)
-                                            )
-                                        ),
-                                        shape = CircleShape
                                     )
                                     .clickable(
                                         interactionSource = closeInteraction,
@@ -543,14 +542,14 @@ fun FluffyBottomBar(
                                     imageVector = Icons.Default.Close,
                                     contentDescription = tr("إلغاء", "Annuler", "Cancel", "Sefsex"),
                                     tint = if (isDark) Color.White else Color(0xFF0F172A),
-                                    modifier = Modifier.size(22.dp)
+                                    modifier = Modifier.size(23.dp)
                                 )
                             }
                         }
                     }
                 }
 
-                // Collapsed Floating Plus Orb (smoothly shrinks/rotates out as quarter-circle opens)
+                // Collapsed Floating Plus Orb
                 if (!isExpanded || expandProgress < 0.35f) {
                     val collapsedAlpha = (1f - expandProgress * 2.8f).coerceIn(0f, 1f)
                     val cornerAlign = if (isArabic) Alignment.BottomStart else Alignment.BottomEnd
@@ -602,8 +601,8 @@ fun FluffyBottomBar(
 }
 
 @Composable
-private fun QuarterRadialOrb(
-    action: RadialQuickAction,
+private fun ConstellationDropletOrb(
+    action: ConstellationAction,
     isDark: Boolean,
     orbSize: Dp,
     slotWidth: Dp,
@@ -615,10 +614,10 @@ private fun QuarterRadialOrb(
     val pressScale by animateFloatAsState(
         targetValue = if (isPressed) 0.88f else 1f,
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
-        label = "quarter_orb_press"
+        label = "constellation_orb_press"
     )
     val labelColor = if (isDark) Color.White else Color(0xFF0F172A)
-    val labelShadowColor = if (isDark) Color.Black.copy(alpha = 0.72f) else Color.White.copy(alpha = 0.85f)
+    val labelShadowColor = if (isDark) Color.Black.copy(alpha = 0.78f) else Color.White.copy(alpha = 0.90f)
 
     Column(
         modifier = modifier
@@ -631,7 +630,7 @@ private fun QuarterRadialOrb(
             },
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // 5% translucent crystal orb with vivid prismatic rim
+        // Floating 5% translucent crystal droplet with partial specular crescent highlight (no full heavy border)
         Box(
             modifier = Modifier
                 .size(orbSize)
@@ -639,17 +638,6 @@ private fun QuarterRadialOrb(
                 .testTag(action.testTag)
                 .clip(CircleShape)
                 .background(action.tintColor.copy(alpha = 0.05f))
-                .border(
-                    width = 1.5.dp,
-                    brush = Brush.linearGradient(
-                        listOf(
-                            action.tintColor.copy(alpha = 0.90f),
-                            Color.White.copy(alpha = if (isDark) 0.50f else 0.75f),
-                            action.tintColor.copy(alpha = 0.68f)
-                        )
-                    ),
-                    shape = CircleShape
-                )
                 .clickable(
                     interactionSource = interactionSource,
                     indication = ripple(bounded = true, color = action.tintColor),
@@ -657,6 +645,37 @@ private fun QuarterRadialOrb(
                 ),
             contentAlignment = Alignment.Center
         ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val strokeW = 1.5.dp.toPx()
+                val inset = strokeW / 2f
+                val arcSize = Size(size.width - strokeW, size.height - strokeW)
+                // Upper-left luminous specular crescent
+                drawArc(
+                    brush = Brush.sweepGradient(
+                        listOf(
+                            Color.White.copy(alpha = if (isDark) 0.58f else 0.82f),
+                            action.tintColor.copy(alpha = 0.92f),
+                            action.tintColor.copy(alpha = 0.15f)
+                        )
+                    ),
+                    startAngle = 200f,
+                    sweepAngle = 155f,
+                    useCenter = false,
+                    topLeft = Offset(inset, inset),
+                    size = arcSize,
+                    style = Stroke(width = strokeW, cap = StrokeCap.Round)
+                )
+                // Delicate lower complementary accent arc
+                drawArc(
+                    color = action.tintColor.copy(alpha = 0.45f),
+                    startAngle = 35f,
+                    sweepAngle = 110f,
+                    useCenter = false,
+                    topLeft = Offset(inset, inset),
+                    size = arcSize,
+                    style = Stroke(width = 1.dp.toPx(), cap = StrokeCap.Round)
+                )
+            }
             Icon(
                 imageVector = action.icon,
                 contentDescription = action.contentDescription,
