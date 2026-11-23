@@ -194,7 +194,8 @@ fun NoteEditorScreen(
         audioDurationSec: Int,
         audioFilePath: String,
         audioByteSize: Long
-    ) -> Unit)? = null
+    ) -> Unit)? = null,
+    onOpenScanner: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val playbackController = rememberAudioPlaybackController()
@@ -1772,6 +1773,42 @@ fun NoteEditorScreen(
                                 )
                                 Text(
                                     text = if (isArabic) "قراءة النصوص العربية والإنجليزية" else "Extract Arabic & Latin text offline",
+                                    fontSize = 11.5.sp,
+                                    color = metaColor
+                                )
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(pillFill.copy(alpha = 0.72f))
+                                .border(0.9.dp, metaColor.copy(alpha = 0.25f), RoundedCornerShape(16.dp))
+                                .clickable {
+                                    showImageScanDialog = false
+                                    onOpenScanner()
+                                }
+                                .padding(horizontal = 14.dp, vertical = 14.dp)
+                                .testTag("open_scanner_hub_option"),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DocumentScanner,
+                                contentDescription = null,
+                                tint = accentColor,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = if (isArabic) "فتح الماسح الضوئي الكامل" else "Open Document Scanner Hub",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = textColor
+                                )
+                                Text(
+                                    text = if (isArabic) "مسح متعدد الصفحات، PDF وبطاقات الهوية" else "Multi-page PDF & ID card scanner",
                                     fontSize = 11.5.sp,
                                     color = metaColor
                                 )

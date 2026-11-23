@@ -58,6 +58,7 @@ import androidx.compose.material.icons.filled.FormatStrikethrough
 import androidx.compose.material.icons.filled.FormatUnderlined
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.HorizontalRule
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Label
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Mic
@@ -69,6 +70,7 @@ import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -94,6 +96,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
@@ -111,6 +114,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import coil.compose.SubcomposeAsyncImage
 import com.example.data.model.EditorPageSegment
 import com.example.data.model.GlassTint
 import com.example.data.model.InsertFeatureType
@@ -118,6 +122,7 @@ import com.example.data.model.MarkdownTableData
 import com.example.data.model.RichBlock
 import com.example.data.model.RichFormatAction
 import com.example.data.model.RichTextCodec
+import java.io.File
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.glass.liquidGlass
 import com.example.ui.theme.EditorFontFamily
@@ -1421,8 +1426,8 @@ fun applyActionToSegmentedPage(
     }
     val curVal = TextFieldValue(seg.text, localSel, localComp)
     val outcome = RichTextCodec.toggleFormatForEditor(curVal, action, pendingStyles)
-    val hasTableBefore = segIdx > 0 && segments.getOrNull(segIdx - 1) is EditorPageSegment.TableSegment
-    val hasTableAfter = segIdx < segments.lastIndex && segments.getOrNull(segIdx + 1) is EditorPageSegment.TableSegment
+    val hasTableBefore = segIdx > 0 && segments.getOrNull(segIdx - 1) !is EditorPageSegment.TextSegment
+    val hasTableAfter = segIdx < segments.lastIndex && segments.getOrNull(segIdx + 1) !is EditorPageSegment.TextSegment
     val updatedPageText = RichTextCodec.replaceSegmentInPage(
         rawText = pageText,
         segStart = seg.startOffset,
@@ -1456,8 +1461,8 @@ fun insertSnippetInSegmentedPage(
         snippet = snippet,
         ensureNewLinePrefix = ensureNewLinePrefix
     )
-    val hasTableBefore = segIdx > 0 && segments.getOrNull(segIdx - 1) is EditorPageSegment.TableSegment
-    val hasTableAfter = segIdx < segments.lastIndex && segments.getOrNull(segIdx + 1) is EditorPageSegment.TableSegment
+    val hasTableBefore = segIdx > 0 && segments.getOrNull(segIdx - 1) !is EditorPageSegment.TextSegment
+    val hasTableAfter = segIdx < segments.lastIndex && segments.getOrNull(segIdx + 1) !is EditorPageSegment.TextSegment
     val updatedPageText = RichTextCodec.replaceSegmentInPage(
         rawText = pageText,
         segStart = seg.startOffset,
@@ -1486,8 +1491,8 @@ fun insertTableInSegmentedPage(
         TextRange(it.start.coerceIn(0, seg.text.length), it.end.coerceIn(0, seg.text.length))
     }
     val nextSegVal = RichTextCodec.insertTableAtSelection(seg.text, localSel, tableMarkdown)
-    val hasTableBefore = segIdx > 0 && segments.getOrNull(segIdx - 1) is EditorPageSegment.TableSegment
-    val hasTableAfter = segIdx < segments.lastIndex && segments.getOrNull(segIdx + 1) is EditorPageSegment.TableSegment
+    val hasTableBefore = segIdx > 0 && segments.getOrNull(segIdx - 1) !is EditorPageSegment.TextSegment
+    val hasTableAfter = segIdx < segments.lastIndex && segments.getOrNull(segIdx + 1) !is EditorPageSegment.TextSegment
     return RichTextCodec.replaceSegmentInPage(
         rawText = pageText,
         segStart = seg.startOffset,
@@ -1531,10 +1536,11 @@ fun SegmentedRichPageEditor(
     onEditTable: (MarkdownTableData) -> Unit,
     onDeleteTable: (MarkdownTableData) -> Unit,
     modifier: Modifier = Modifier,
-    textAlign: TextAlign = TextAlign.Start
+    textAlign: TextAlign = TextAlign.Start,
+    onDeleteImage: ((EditorPageSegment.ImageSegment) -> Unit)? = null
 ) {
     val segments = remember(pageText) { RichTextCodec.splitPageIntoEditorSegments(pageText) }
-    val hasTables = segments.any { it is EditorPageSegment.TableSegment }
+    val hasTables = segments.any { it !is EditorPageSegment.TextSegment }
 
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -1543,8 +1549,8 @@ fun SegmentedRichPageEditor(
         segments.forEachIndexed { segIdx, seg ->
             when (seg) {
                 is EditorPageSegment.TextSegment -> {
-                    val hasTableBefore = segIdx > 0 && segments[segIdx - 1] is EditorPageSegment.TableSegment
-                    val hasTableAfter = segIdx < segments.lastIndex && segments[segIdx + 1] is EditorPageSegment.TableSegment
+                    val hasTableBefore = segIdx > 0 && segments[segIdx - 1] !is EditorPageSegment.TextSegment
+                    val hasTableAfter = segIdx < segments.lastIndex && segments[segIdx + 1] !is EditorPageSegment.TextSegment
                     val localSel = (segmentSelections[segIdx] ?: TextRange(seg.text.length)).let {
                         TextRange(it.start.coerceIn(0, seg.text.length), it.end.coerceIn(0, seg.text.length))
                     }
@@ -1720,6 +1726,29 @@ fun SegmentedRichPageEditor(
                             metaColor = metaColor
                         )
                     }
+                }
+
+                is EditorPageSegment.ImageSegment -> {
+                    InlineMarkdownImageCard(
+                        alt = seg.alt,
+                        path = seg.path,
+                        isDark = isDark,
+                        isArabic = isArabic,
+                        accentColor = accentColor,
+                        metaColor = metaColor,
+                        onDelete = {
+                            if (onDeleteImage != null) {
+                                onDeleteImage(seg)
+                            } else {
+                                val updated = RichTextCodec.deleteImageAtRange(
+                                    pageText,
+                                    seg.startOffset,
+                                    seg.endOffset
+                                )
+                                onSegmentTextChanged(updated, 0, TextRange.Zero, null, emptySet())
+                            }
+                        }
+                    )
                 }
             }
         }
@@ -2111,7 +2140,137 @@ fun RichContentView(
                         )
                     }
                 }
+
+                is RichBlock.Image -> {
+                    InlineMarkdownImageCard(
+                        alt = block.alt,
+                        path = block.path,
+                        isDark = isDark,
+                        isArabic = isArabic,
+                        accentColor = accentColor,
+                        metaColor = metaColor,
+                        onDelete = null
+                    )
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun InlineMarkdownImageCard(
+    alt: String,
+    path: String,
+    isDark: Boolean,
+    isArabic: Boolean,
+    accentColor: Color,
+    metaColor: Color,
+    onDelete: (() -> Unit)? = null
+) {
+    val modelData = remember(path) {
+        val trimmed = path.trim()
+        if (trimmed.startsWith("/") || trimmed.startsWith("file:")) {
+            val filePath = trimmed.removePrefix("file://").removePrefix("file:")
+            File(filePath)
+        } else {
+            trimmed
+        }
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (isDark) Color.White.copy(alpha = 0.04f) else Color.Black.copy(alpha = 0.03f))
+            .border(1.dp, accentColor.copy(alpha = 0.30f), RoundedCornerShape(16.dp))
+            .padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+        ) {
+            SubcomposeAsyncImage(
+                model = modelData,
+                contentDescription = alt.ifBlank { if (isArabic) "صورة" else "Image" },
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 120.dp, max = 320.dp)
+                    .clip(RoundedCornerShape(12.dp)),
+                loading = {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(140.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 2.2.dp,
+                            color = accentColor
+                        )
+                    }
+                },
+                error = {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 18.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Image,
+                            contentDescription = null,
+                            tint = metaColor,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Text(
+                            text = if (isArabic) "تعذر تحميل الصورة" else "Image unavailable",
+                            fontSize = 12.5.sp,
+                            color = metaColor,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            )
+
+            if (onDelete != null) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF0F172A).copy(alpha = 0.78f))
+                        .border(0.8.dp, Color(0xFFEF4444).copy(alpha = 0.65f), CircleShape)
+                        .clickable { onDelete() }
+                        .testTag("editor_delete_image_button"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.DeleteOutline,
+                        contentDescription = if (isArabic) "حذف الصورة" else "Delete Image",
+                        tint = Color(0xFFEF4444),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+
+        val cleanAlt = alt.trim()
+        if (cleanAlt.isNotEmpty() && cleanAlt != "Image") {
+            Text(
+                text = cleanAlt,
+                fontSize = 11.5.sp,
+                color = metaColor,
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
