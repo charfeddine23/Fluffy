@@ -87,7 +87,7 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
     val hasPinConfigured = MutableStateFlow(CryptoVaultHelper.hasPinConfigured(application))
 
     // Active Capture / Batch / Crop Pipeline State
-    val activeScanMode = MutableStateFlow(ScanMode.DOCUMENT)
+    val activeScanMode = MutableStateFlow(ScanMode.ID_CARD)
     val idCardPrintMode = MutableStateFlow(IdCardPrintMode.RECTO)
     val batchFrames = MutableStateFlow<List<BatchCapturedFrame>>(emptyList())
     val idCardFrontRawPath = MutableStateFlow<String?>(null)
@@ -465,46 +465,6 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                     }
 
                     when (mode) {
-                        ScanMode.DOCUMENT -> {
-                            val docQuad = when {
-                                mappedLiveQuad != null && DocumentImageProcessor.isValidDocumentQuad(mappedLiveQuad) ->
-                                    mappedLiveQuad
-                                else -> {
-                                    val detected = DocumentImageProcessor.detectQuadFromBitmap(
-                                        bitmap = rawBmp,
-                                        isIdCardHint = false
-                                    )
-                                    if (DocumentImageProcessor.isValidDocumentQuad(detected)) detected
-                                    else DocumentQuad.SAFE_DEFAULT_MARGIN
-                                }
-                            }
-                            val thumbWarped = DocumentImageProcessor.warpPerspective(rawBmp, docQuad, 900)
-                            val thumbEnhanced = DocumentImageProcessor.applyEnhancements(
-                                source = thumbWarped,
-                                filter = ScannerFilterType.MAGIC_COLOR,
-                                brightness = 0f,
-                                contrast = 1.05f,
-                                sharpness = 0.2f,
-                                rotationDeg = 0,
-                                enableSuperRes = false
-                            )
-                            if (thumbWarped !== thumbEnhanced && !thumbWarped.isRecycled) thumbWarped.recycle()
-                            val thumbFile = File(repository.docsRootDir, "thumb_doc_${UUID.randomUUID()}.jpg")
-                            withContext(Dispatchers.IO) {
-                                DocumentImageProcessor.saveBitmapAsJpeg(thumbEnhanced, thumbFile, 88)
-                            }
-                            if (!thumbEnhanced.isRecycled) thumbEnhanced.recycle()
-                            if (!rawBmp.isRecycled) rawBmp.recycle()
-                            listOf(
-                                BatchCapturedFrame(
-                                    rawImagePath = file.absolutePath,
-                                    processedImagePath = thumbFile.absolutePath,
-                                    detectedQuad = docQuad,
-                                    filter = ScannerFilterType.MAGIC_COLOR
-                                )
-                            )
-                        }
-
                         ScanMode.ID_CARD -> {
                             val printMode = idCardPrintMode.value
                             val firstPath = idCardFrontRawPath.value

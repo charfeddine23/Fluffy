@@ -7,13 +7,12 @@ import org.json.JSONObject
 import java.util.UUID
 
 enum class ScanMode(val id: String, val labelEn: String, val labelAr: String) {
-    DOCUMENT("document", "Document", "مستند"),
     ID_CARD("id_card", "ID", "بطاقة ID"),
     BOOK("book", "Book Split", "صفحتا كتاب"),
     QR_BARCODE("qr_barcode", "QR / Barcode", "QR وباركود");
 
     companion object {
-        fun fromId(id: String): ScanMode = entries.firstOrNull { it.id == id } ?: DOCUMENT
+        fun fromId(id: String): ScanMode = entries.firstOrNull { it.id == id } ?: ID_CARD
     }
 }
 

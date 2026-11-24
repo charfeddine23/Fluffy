@@ -852,11 +852,10 @@ fun CameraScannerScreen(
                         style = Stroke(width = 2.5.dp.toPx())
                     )
                 }
-                ScanMode.DOCUMENT -> Unit
             }
 
             // Live detected document / ID card 4-corner polygon overlay
-            if ((activeMode == ScanMode.DOCUMENT || activeMode == ScanMode.BOOK || activeMode == ScanMode.ID_CARD) && edgeState.isLocked) {
+            if ((activeMode == ScanMode.BOOK || activeMode == ScanMode.ID_CARD) && edgeState.isLocked) {
                 val camAspect = edgeState.frameAspectRatio.coerceIn(0.4f, 2.5f)
                 val fillScale = max(w / camAspect, h)
                 val renderedW = camAspect * fillScale
@@ -1095,7 +1094,7 @@ fun CameraScannerScreen(
 
                 // Centered Sleek Real-Time Status Guidance Pill
                 val isHoldingSteady = edgeState.isLocked && !showCapturedBanner &&
-                    (activeMode == ScanMode.DOCUMENT || activeMode == ScanMode.BOOK)
+                    activeMode == ScanMode.BOOK
                 Row(
                     modifier = Modifier
                         .shadow(10.dp, CircleShape)
@@ -1362,7 +1361,7 @@ fun CameraScannerScreen(
                     )
                     val isDocumentActive = activeMode != ScanMode.QR_BARCODE
                     val showSteadyRing = edgeState.isLocked && autoCaptureEnabled &&
-                        (activeMode == ScanMode.DOCUMENT || activeMode == ScanMode.BOOK)
+                        activeMode == ScanMode.BOOK
 
                     Box(
                         modifier = Modifier
