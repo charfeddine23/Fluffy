@@ -34,7 +34,8 @@ data class FluffySettingsSnapshot(
     val coloredContainerBorders: Boolean = true,
     val notesViewMode: String = if (isGridView) "grid" else "list",
     val isPremium: Boolean = false,
-    val fabMenuStyle: String = "vertical_stack"
+    val fabMenuStyle: String = "vertical_stack",
+    val selectedFontId: String = "sans_serif"
 )
 
 data class FluffyBackupBundle(
@@ -1076,6 +1077,7 @@ object LocalDeviceStorageManager {
         put("notesViewMode", s.notesViewMode)
         put("isPremium", s.isPremium)
         put("fabMenuStyle", s.fabMenuStyle)
+        put("selectedFontId", s.selectedFontId)
     }
 
     private fun jsonToSettings(obj: JSONObject): FluffySettingsSnapshot {
@@ -1104,7 +1106,8 @@ object LocalDeviceStorageManager {
                 if (gridFlag) "grid" else "list"
             ),
             isPremium = obj.optBoolean("isPremium", false),
-            fabMenuStyle = obj.optString("fabMenuStyle", "vertical_stack")
+            fabMenuStyle = obj.optString("fabMenuStyle", "vertical_stack"),
+            selectedFontId = obj.optString("selectedFontId", "sans_serif")
         )
     }
 

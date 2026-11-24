@@ -86,6 +86,11 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         )
         if (stored.isCustomEnabled) stored else FabMenuStyle.VERTICAL_STACK
     }
+    val selectedFontId = MutableStateFlow(
+        com.example.ui.theme.AppFontCatalog.resolve(
+            prefs.getString("selected_font_id", com.example.ui.theme.AppFontCatalog.DEFAULT_FONT_ID)
+        ).id
+    )
 
     // Biometric Authentication, App Lock, Non-Screenshot & Vault Lock (Biometric + Passkey)
     val isBiometricEnabled = MutableStateFlow(prefs.getBoolean("biometric_enabled", false))
@@ -577,6 +582,12 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun selectFont(font: com.example.ui.theme.AppFontOption) {
+        selectedFontId.value = font.id
+        prefs.edit().putString("selected_font_id", font.id).apply()
+        persistSettingsSnapshot(syncToCloud = true)
+    }
+
     fun openThemesScreen(fromSettings: Boolean = false) {
         openedThemesFromSettings = fromSettings || isSettingsDrawerOpen.value
         isSettingsDrawerOpen.value = false
@@ -896,7 +907,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         coloredContainerBorders = isColoredBordersEnabled.value,
         notesViewMode = viewMode.value.id,
         isPremium = isPremium.value,
-        fabMenuStyle = fabMenuStyle.value.id
+        fabMenuStyle = fabMenuStyle.value.id,
+        selectedFontId = selectedFontId.value
     )
 
     private fun persistSettingsSnapshot(syncToCloud: Boolean = true) {
@@ -921,6 +933,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         val resolvedLanguage = AppLanguage.fromCode(s.appLanguageCode, fallbackArabic = s.isArabic)
         val resolvedViewMode = NotesViewMode.fromId(s.notesViewMode, fallbackGrid = s.isGridView)
         val resolvedFabStyle = FabMenuStyle.fromId(s.fabMenuStyle)
+        val resolvedFont = com.example.ui.theme.AppFontCatalog.resolve(s.selectedFontId)
         val arabicFlag = resolvedLanguage == AppLanguage.ARABIC
         val resolvedPremium = isPremium.value || s.isPremium
 
@@ -936,6 +949,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         selectedThemeId.value = resolvedTheme.id
         isPremium.value = resolvedPremium
         fabMenuStyle.value = resolvedFabStyle
+        selectedFontId.value = resolvedFont.id
         if (resolvedFabStyle.isCustomEnabled) {
             lastCustomFabMenuStyle = resolvedFabStyle
         }
@@ -953,6 +967,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             .putString("selected_theme_id", resolvedTheme.id)
             .putBoolean("is_premium", resolvedPremium)
             .putString("fab_menu_style", resolvedFabStyle.id)
+            .putString("selected_font_id", resolvedFont.id)
             .apply()
 
         persistSettingsSnapshot(syncToCloud = !fromRemote)

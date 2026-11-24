@@ -89,6 +89,7 @@ import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.SystemUpdate
+import androidx.compose.material.icons.rounded.TextFields
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.ViewAgenda
 import androidx.compose.material.icons.rounded.ViewStream
@@ -143,8 +144,11 @@ import com.example.data.model.NotesViewMode
 import com.example.data.repository.CloudSyncStatus
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.glass.liquidGlass
+import com.example.ui.theme.AppFontCatalog
+import com.example.ui.theme.AppFontOption
 import com.example.ui.theme.AppLanguage
 import com.example.ui.theme.AppThemeRegistry
+import com.example.ui.theme.FontCategory
 import com.example.ui.theme.LocalAppLanguage
 import com.example.ui.theme.LocalAppThemePreset
 import com.example.ui.theme.tr
@@ -160,6 +164,7 @@ private enum class SettingsPage {
     ACCOUNT_CLOUD,
     APPEARANCE,
     FAB_MENU_DESIGN,
+    FONT_SELECTION,
     SECURITY
 }
 
@@ -184,6 +189,8 @@ fun SettingsDrawer(
     fabMenuStyle: FabMenuStyle = FabMenuStyle.VERTICAL_STACK,
     onSelectFabMenuStyle: (FabMenuStyle) -> Unit = {},
     onToggleCustomFabMenu: (Boolean) -> Unit = {},
+    selectedFontId: String = AppFontCatalog.DEFAULT_FONT_ID,
+    onSelectFont: (AppFontOption) -> Unit = {},
     onOpenThemes: () -> Unit = {},
     trashedCount: Int = 0,
     archivedCount: Int = 0,
@@ -231,6 +238,7 @@ fun SettingsDrawer(
             when (initialSubPage) {
                 "APPEARANCE" -> SettingsPage.APPEARANCE
                 "FAB_MENU_DESIGN" -> SettingsPage.FAB_MENU_DESIGN
+                "FONT_SELECTION" -> SettingsPage.FONT_SELECTION
                 "SECURITY" -> SettingsPage.SECURITY
                 "ACCOUNT_CLOUD" -> SettingsPage.ACCOUNT_CLOUD
                 else -> SettingsPage.ROOT
@@ -247,6 +255,7 @@ fun SettingsDrawer(
             currentPage = when (initialSubPage) {
                 "APPEARANCE" -> SettingsPage.APPEARANCE
                 "FAB_MENU_DESIGN" -> SettingsPage.FAB_MENU_DESIGN
+                "FONT_SELECTION" -> SettingsPage.FONT_SELECTION
                 "SECURITY" -> SettingsPage.SECURITY
                 "ACCOUNT_CLOUD" -> SettingsPage.ACCOUNT_CLOUD
                 else -> SettingsPage.ROOT
@@ -263,7 +272,7 @@ fun SettingsDrawer(
     if (isOpen) {
         BackHandler {
             when (currentPage) {
-                SettingsPage.FAB_MENU_DESIGN -> currentPage = SettingsPage.APPEARANCE
+                SettingsPage.FAB_MENU_DESIGN, SettingsPage.FONT_SELECTION -> currentPage = SettingsPage.APPEARANCE
                 SettingsPage.ROOT -> onClose()
                 else -> currentPage = SettingsPage.ROOT
             }
@@ -520,7 +529,7 @@ fun SettingsDrawer(
                                             interactionSource = remember { MutableInteractionSource() },
                                             indication = ripple(bounded = true)
                                         ) {
-                                            currentPage = if (currentPage == SettingsPage.FAB_MENU_DESIGN) {
+                                            currentPage = if (currentPage == SettingsPage.FAB_MENU_DESIGN || currentPage == SettingsPage.FONT_SELECTION) {
                                                 SettingsPage.APPEARANCE
                                             } else {
                                                 SettingsPage.ROOT
@@ -550,6 +559,12 @@ fun SettingsDrawer(
                                             "Add (+) Menu Design",
                                             "Aɣanib n tqeffalt (+)"
                                         )
+                                        SettingsPage.FONT_SELECTION -> tr(
+                                            "خطوط التطبيق والكتابة",
+                                            "Polices du texte",
+                                            "App & Editor Fonts",
+                                            "Tisefsa n usnas"
+                                        )
                                         SettingsPage.SECURITY -> "Security"
                                     },
                                     style = MaterialTheme.typography.titleLarge.copy(
@@ -562,7 +577,7 @@ fun SettingsDrawer(
                                 )
                                 if (currentPage != SettingsPage.ROOT) {
                                     Text(
-                                        text = if (currentPage == SettingsPage.FAB_MENU_DESIGN) {
+                                        text = if (currentPage == SettingsPage.FAB_MENU_DESIGN || currentPage == SettingsPage.FONT_SELECTION) {
                                             tr("المظهر", "Apparence", "Appearance", "Timeẓri")
                                         } else {
                                             tr("الإعدادات", "Paramètres", "Settings", "Iɣewwaṛen")
@@ -605,6 +620,7 @@ fun SettingsDrawer(
                         targetState = currentPage,
                         transitionSpec = {
                             val forward = targetState == SettingsPage.FAB_MENU_DESIGN ||
+                                targetState == SettingsPage.FONT_SELECTION ||
                                 (initialState == SettingsPage.ROOT && targetState != SettingsPage.ROOT)
                             val dir = if (forward) 1 else -1
                             (slideInHorizontally(tween(240, easing = SmoothEaseOut)) { it * dir / 3 } +
@@ -2017,24 +2033,51 @@ fun SettingsDrawer(
                                         customFill = cardTileColor,
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
-                                        CalmNavigationRow(
-                                            icon = Icons.Rounded.AddCircleOutline,
-                                            iconTint = primaryAccent,
-                                            title = tr(
-                                                "تصميم قائمة زر الإضافة (+)",
-                                                "Design du menu d'ajout (+)",
-                                                "Add (+) Menu Design",
-                                                "Aɣanib n umuɣ n tmerniwt (+)"
-                                            ),
-                                            subtitle = activeFabStyleLabel,
-                                            badgeCount = 0,
-                                            textColor = textColor,
-                                            subTextColor = subTextColor,
-                                            testTag = "settings_fab_menu_design_button",
-                                            onClick = {
-                                                currentPage = SettingsPage.FAB_MENU_DESIGN
-                                            }
-                                        )
+                                        Column(modifier = Modifier.fillMaxWidth()) {
+                                            CalmNavigationRow(
+                                                icon = Icons.Rounded.AddCircleOutline,
+                                                iconTint = primaryAccent,
+                                                title = tr(
+                                                    "تصميم قائمة زر الإضافة (+)",
+                                                    "Design du menu d'ajout (+)",
+                                                    "Add (+) Menu Design",
+                                                    "Aɣanib n umuɣ n tmerniwt (+)"
+                                                ),
+                                                subtitle = activeFabStyleLabel,
+                                                badgeCount = 0,
+                                                textColor = textColor,
+                                                subTextColor = subTextColor,
+                                                testTag = "settings_fab_menu_design_button",
+                                                onClick = {
+                                                    currentPage = SettingsPage.FAB_MENU_DESIGN
+                                                }
+                                            )
+
+                                            HorizontalDivider(
+                                                color = dividerColor,
+                                                modifier = Modifier.padding(horizontal = 16.dp)
+                                            )
+
+                                            val currentFontOption = AppFontCatalog.resolve(selectedFontId)
+                                            CalmNavigationRow(
+                                                icon = Icons.Rounded.TextFields,
+                                                iconTint = secondaryAccent,
+                                                title = tr(
+                                                    "الخطوط ونمط الكتابة",
+                                                    "Polices d'écriture",
+                                                    "Font Style & Typefaces",
+                                                    "Tisefsa n tira"
+                                                ),
+                                                subtitle = currentFontOption.displayName,
+                                                badgeCount = 0,
+                                                textColor = textColor,
+                                                subTextColor = subTextColor,
+                                                testTag = "settings_font_style_button",
+                                                onClick = {
+                                                    currentPage = SettingsPage.FONT_SELECTION
+                                                }
+                                            )
+                                        }
                                     }
                                 }
 
@@ -2323,6 +2366,108 @@ fun SettingsDrawer(
                                             }
                                         }
                                     }
+                                }
+
+                                SettingsPage.FONT_SELECTION -> {
+                                    val activeFontOption = AppFontCatalog.resolve(selectedFontId)
+
+                                    // 1. Live Font + Italic Specimen Card
+                                    LiquidGlassCard(
+                                        isDark = effectiveDark,
+                                        tint = GlassTint.FROST,
+                                        shape = RoundedCornerShape(20.dp),
+                                        borderWidth = 1.dp,
+                                        customFill = cardTileColor,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Text(
+                                                text = tr(
+                                                    "معاينة مباشرة للخط والمائل",
+                                                    "Aperçu en direct",
+                                                    "Live Font & Italic Preview",
+                                                    "Taskant srid n tsefsit"
+                                                ),
+                                                fontSize = 11.5.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = primaryAccent
+                                            )
+                                            RichContentView(
+                                                rawText = if (isArabic) {
+                                                    "**${activeFontOption.displayName}**\nنص عادي • *نص مائل بوضوح* • *Italic Sample*"
+                                                } else {
+                                                    "**${activeFontOption.displayName}**\nNormal text • *Crisp Slanted Italic* • *نص مائل*"
+                                                },
+                                                fontSizeSp = 14.5f,
+                                                isDark = effectiveDark,
+                                                isArabic = isArabic,
+                                                accentColor = primaryAccent,
+                                                textColor = textColor,
+                                                bodyColor = textColor,
+                                                metaColor = subTextColor
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(12.dp))
+
+                                    val systemFonts = AppFontCatalog.allFonts.filter { it.category == FontCategory.SYSTEM }
+                                    val customFonts = AppFontCatalog.allFonts.filter { it.category != FontCategory.SYSTEM }
+
+                                    FontSectionHeader(
+                                        title = tr(
+                                            "الخطوط الأساسية (النظام)",
+                                            "Polices système",
+                                            "System Font Families",
+                                            "Tisefsa n unagraw"
+                                        ),
+                                        accentColor = primaryAccent
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    FontOptionsListCard(
+                                        fonts = systemFonts,
+                                        selectedFontId = activeFontOption.id,
+                                        effectiveDark = effectiveDark,
+                                        isArabic = isArabic,
+                                        cardTileColor = cardTileColor,
+                                        dividerColor = dividerColor,
+                                        primaryAccent = primaryAccent,
+                                        textColor = textColor,
+                                        subTextColor = subTextColor,
+                                        checkTint = if (effectiveDark) activePreset.background else Color.White,
+                                        onSelectFont = onSelectFont
+                                    )
+
+                                    Spacer(modifier = Modifier.height(14.dp))
+
+                                    FontSectionHeader(
+                                        title = tr(
+                                            "خطوط عربية وعالمية مخصصة",
+                                            "Polices artistiques & modernes",
+                                            "Curated Arabic & Studio Fonts",
+                                            "Tisefsa n tsekla d tmazirt"
+                                        ),
+                                        accentColor = secondaryAccent
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    FontOptionsListCard(
+                                        fonts = customFonts,
+                                        selectedFontId = activeFontOption.id,
+                                        effectiveDark = effectiveDark,
+                                        isArabic = isArabic,
+                                        cardTileColor = cardTileColor,
+                                        dividerColor = dividerColor,
+                                        primaryAccent = secondaryAccent,
+                                        textColor = textColor,
+                                        subTextColor = subTextColor,
+                                        checkTint = if (effectiveDark) activePreset.background else Color.White,
+                                        onSelectFont = onSelectFont
+                                    )
                                 }
 
                                 SettingsPage.SECURITY -> {
@@ -3199,3 +3344,141 @@ private fun CalmSettingRow(
         }
     }
 }
+
+@Composable
+private fun FontSectionHeader(
+    title: String,
+    accentColor: Color
+) {
+    Text(
+        text = title,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Bold,
+        color = accentColor,
+        modifier = Modifier.padding(horizontal = 4.dp)
+    )
+}
+
+@Composable
+private fun FontOptionsListCard(
+    fonts: List<AppFontOption>,
+    selectedFontId: String,
+    effectiveDark: Boolean,
+    isArabic: Boolean,
+    cardTileColor: Color,
+    dividerColor: Color,
+    primaryAccent: Color,
+    textColor: Color,
+    subTextColor: Color,
+    checkTint: Color,
+    onSelectFont: (AppFontOption) -> Unit
+) {
+    LiquidGlassCard(
+        isDark = effectiveDark,
+        tint = GlassTint.FROST,
+        shape = RoundedCornerShape(20.dp),
+        borderWidth = 1.dp,
+        customFill = cardTileColor,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            fonts.forEachIndexed { idx, font ->
+                val isSelected = font.id == selectedFontId
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = 64.dp)
+                        .background(
+                            if (isSelected) primaryAccent.copy(alpha = if (effectiveDark) 0.14f else 0.08f)
+                            else Color.Transparent
+                        )
+                        .testTag("font_option_${font.id}")
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = ripple(bounded = true)
+                        ) { onSelectFont(font) }
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(RoundedCornerShape(13.dp))
+                                .background(
+                                    if (isSelected) primaryAccent.copy(alpha = 0.22f)
+                                    else subTextColor.copy(alpha = 0.10f)
+                                )
+                                .border(
+                                    width = if (isSelected) 1.3.dp else 0.7.dp,
+                                    color = if (isSelected) primaryAccent.copy(alpha = 0.72f) else dividerColor,
+                                    shape = RoundedCornerShape(13.dp)
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (isArabic) "أب" else "Aa",
+                                fontFamily = font.fontFamily,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isSelected) primaryAccent else textColor
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = font.displayName,
+                                fontFamily = font.fontFamily,
+                                fontSize = 14.5.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                color = textColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = if (isArabic) font.subtitleAr else font.subtitleEn,
+                                fontFamily = font.fontFamily,
+                                fontSize = 11.5.sp,
+                                color = subTextColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    if (isSelected) {
+                        Box(
+                            modifier = Modifier
+                                .size(26.dp)
+                                .clip(CircleShape)
+                                .background(primaryAccent),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Check,
+                                contentDescription = null,
+                                tint = checkTint,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+
+                if (idx < fonts.lastIndex) {
+                    HorizontalDivider(
+                        color = dividerColor,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+

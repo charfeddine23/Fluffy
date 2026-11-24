@@ -149,7 +149,7 @@ fun SignatureStudioDialog(
                                 Icon(
                                     imageVector = Icons.Default.DeleteOutline,
                                     contentDescription = null,
-                                    tint = Color(0xFFEF4444),
+                                    tint = ScannerGlassPalette.RoseGlow,
                                     modifier = Modifier.size(16.dp)
                                 )
                             }
@@ -231,7 +231,7 @@ fun SignatureStudioDialog(
                                 .background(Color(argb.toInt()))
                                 .border(
                                     width = if (active) 2.5.dp else 1.dp,
-                                    color = if (active) ScannerGlassPalette.CyanGlow else Color.White.copy(alpha = 0.4f),
+                                    color = if (active) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.SubtleStroke,
                                     shape = CircleShape
                                 )
                                 .clickable { selectedColorArgb = argb }
@@ -261,9 +261,11 @@ fun SignatureStudioDialog(
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = ScannerGlassPalette.CyanGlow,
-                    unfocusedBorderColor = Color.White.copy(alpha = 0.25f),
+                    unfocusedBorderColor = ScannerGlassPalette.SubtleStroke,
                     focusedTextColor = ScannerGlassPalette.TextPrimary,
-                    unfocusedTextColor = ScannerGlassPalette.TextPrimary
+                    unfocusedTextColor = ScannerGlassPalette.TextPrimary,
+                    focusedLabelColor = ScannerGlassPalette.CyanGlow,
+                    unfocusedLabelColor = ScannerGlassPalette.TextSecondary
                 ),
                 modifier = Modifier.fillMaxWidth()
             )
@@ -310,7 +312,7 @@ fun SignatureStudioDialog(
                     ) {
                         Text(
                             if (isArabic) "حفظ وإدراج" else "Save & Stamp",
-                            color = Color(0xFF04101B),
+                            color = ScannerGlassPalette.OnAccent,
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -357,9 +359,11 @@ fun WatermarkConfigDialog(
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = ScannerGlassPalette.CyanGlow,
-                    unfocusedBorderColor = Color.White.copy(alpha = 0.24f),
+                    unfocusedBorderColor = ScannerGlassPalette.SubtleStroke,
                     focusedTextColor = ScannerGlassPalette.TextPrimary,
-                    unfocusedTextColor = ScannerGlassPalette.TextPrimary
+                    unfocusedTextColor = ScannerGlassPalette.TextPrimary,
+                    focusedLabelColor = ScannerGlassPalette.CyanGlow,
+                    unfocusedLabelColor = ScannerGlassPalette.TextSecondary
                 ),
                 modifier = Modifier.fillMaxWidth()
             )
@@ -397,7 +401,7 @@ fun WatermarkConfigDialog(
                             .background(Color(argb.toInt()))
                             .border(
                                 if (colorArgb == argb) 2.dp else 1.dp,
-                                if (colorArgb == argb) ScannerGlassPalette.CyanGlow else Color.White.copy(alpha = 0.4f),
+                                if (colorArgb == argb) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.SubtleStroke,
                                 CircleShape
                             )
                             .clickable { colorArgb = argb }
@@ -426,7 +430,7 @@ fun WatermarkConfigDialog(
                             onDismiss()
                         }
                     ) {
-                        Text(if (isArabic) "تطبيق" else "Apply", color = Color(0xFF04101B), fontWeight = FontWeight.Bold)
+                        Text(if (isArabic) "تطبيق" else "Apply", color = ScannerGlassPalette.OnAccent, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -514,9 +518,11 @@ fun ScannerBiometricPinDialog(
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = ScannerGlassPalette.CyanGlow,
-                    unfocusedBorderColor = Color.White.copy(alpha = 0.25f),
+                    unfocusedBorderColor = ScannerGlassPalette.SubtleStroke,
                     focusedTextColor = ScannerGlassPalette.TextPrimary,
-                    unfocusedTextColor = ScannerGlassPalette.TextPrimary
+                    unfocusedTextColor = ScannerGlassPalette.TextPrimary,
+                    focusedLabelColor = ScannerGlassPalette.CyanGlow,
+                    unfocusedLabelColor = ScannerGlassPalette.TextSecondary
                 ),
                 modifier = Modifier.fillMaxWidth()
             )
@@ -549,7 +555,7 @@ fun ScannerBiometricPinDialog(
                         } else {
                             if (isArabic) "تأكيد" else "Unlock"
                         },
-                        color = Color(0xFF04101B),
+                        color = ScannerGlassPalette.OnAccent,
                         fontWeight = FontWeight.Bold
                     )
                 }

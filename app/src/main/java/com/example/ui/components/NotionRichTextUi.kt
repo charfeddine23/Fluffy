@@ -91,13 +91,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.MultiParagraph
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -106,9 +113,11 @@ import androidx.compose.ui.text.font.FontSynthesis
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.resolveDefaults
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -125,7 +134,7 @@ import com.example.data.model.RichTextCodec
 import java.io.File
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.glass.liquidGlass
-import com.example.ui.theme.EditorFontFamily
+import com.example.ui.theme.LocalAppFontOption
 
 /**
  * Sleek Liquid Glass formatting bar for Writing Mode containing:
@@ -1212,7 +1221,7 @@ fun TableEditorDialog(
                                                     .fillMaxWidth()
                                                     .testTag("table_cell_${rIdx}_$cIdx"),
                                                 textStyle = TextStyle(
-                                                    fontFamily = EditorFontFamily,
+                                                    fontFamily = LocalAppFontOption.current.fontFamily,
                                                     fontSynthesis = FontSynthesis.All,
                                                     fontSize = if (isHeader) 13.sp else 12.5.sp,
                                                     fontWeight = if (isHeader) FontWeight.Bold else FontWeight.Normal,
@@ -1573,6 +1582,13 @@ fun SegmentedRichPageEditor(
                         else -> placeholderText
                     }
 
+                    val activeFontFamily = LocalAppFontOption.current.fontFamily
+                    var fieldLayoutResult by remember(segIdx) { mutableStateOf<TextLayoutResult?>(null) }
+                    val fieldOverlay = rememberObliqueOverlayState(
+                        layoutResult = fieldLayoutResult,
+                        defaultTextColor = bodyColor
+                    )
+
                     BasicTextField(
                         value = fieldValue,
                         onValueChange = { updatedVal ->
@@ -1599,6 +1615,7 @@ fun SegmentedRichPageEditor(
                             )
                         },
                         visualTransformation = richVisualTransformation,
+                        onTextLayout = { fieldLayoutResult = it },
                         modifier = Modifier
                             .fillMaxWidth()
                             .defaultMinSize(minHeight = segMinHeight)
@@ -1607,7 +1624,7 @@ fun SegmentedRichPageEditor(
                             }
                             .testTag(if (segIdx == 0) fieldTestTag else "${fieldTestTag}_seg_$segIdx"),
                         textStyle = TextStyle(
-                            fontFamily = EditorFontFamily,
+                            fontFamily = activeFontFamily,
                             fontSynthesis = FontSynthesis.All,
                             fontSize = fontSizeSp.sp,
                             color = bodyColor,
@@ -1616,13 +1633,17 @@ fun SegmentedRichPageEditor(
                         ),
                         cursorBrush = SolidColor(accentColor),
                         decorationBox = { innerTextField ->
-                            Box(modifier = Modifier.fillMaxWidth()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .drawObliqueOverlay(fieldOverlay)
+                            ) {
                                 if (seg.text.isEmpty() && (!hasTables || segIdx == segments.lastIndex || segIdx == 0)) {
                                     Text(
                                         text = segPlaceholder,
                                         modifier = Modifier.fillMaxWidth(),
                                         style = TextStyle(
-                                            fontFamily = EditorFontFamily,
+                                            fontFamily = activeFontFamily,
                                             fontSynthesis = FontSynthesis.All,
                                             fontSize = fontSizeSp.sp,
                                             color = metaColor.copy(alpha = 0.56f),
@@ -1870,8 +1891,10 @@ fun RichContentView(
     modifier: Modifier = Modifier,
     textAlign: TextAlign = TextAlign.Start
 ) {
-    val blocks = remember(rawText, accentColor, isDark) {
-        RichTextCodec.parseRichBlocks(rawText, accentColor, isDark)
+    val activeFontOption = LocalAppFontOption.current
+    val activeFontFamily = activeFontOption.fontFamily
+    val blocks = remember(rawText, accentColor, isDark, activeFontOption) {
+        RichTextCodec.parseRichBlocks(rawText, accentColor, isDark, activeFontOption)
     }
 
     Column(
@@ -1886,10 +1909,10 @@ fun RichContentView(
                         2 -> (fontSizeSp + 5f).coerceIn(16f, 32f)
                         else -> (fontSizeSp + 2.5f).coerceIn(15f, 28f)
                     }
-                    Text(
+                    ObliqueAwareText(
                         text = block.text,
                         style = TextStyle(
-                            fontFamily = EditorFontFamily,
+                            fontFamily = activeFontFamily,
                             fontSynthesis = FontSynthesis.All,
                             fontSize = size.sp,
                             fontWeight = if (block.level == 1) FontWeight.Black else FontWeight.ExtraBold,
@@ -1907,10 +1930,10 @@ fun RichContentView(
                     if (block.text.isEmpty()) {
                         Spacer(modifier = Modifier.height(6.dp))
                     } else {
-                        Text(
+                        ObliqueAwareText(
                             text = block.text,
                             style = TextStyle(
-                                fontFamily = EditorFontFamily,
+                                fontFamily = activeFontFamily,
                                 fontSynthesis = FontSynthesis.All,
                                 fontSize = fontSizeSp.sp,
                                 color = bodyColor,
@@ -1936,10 +1959,10 @@ fun RichContentView(
                             fontWeight = FontWeight.Black,
                             color = accentColor
                         )
-                        Text(
+                        ObliqueAwareText(
                             text = block.text,
                             style = TextStyle(
-                                fontFamily = EditorFontFamily,
+                                fontFamily = activeFontFamily,
                                 fontSynthesis = FontSynthesis.All,
                                 fontSize = fontSizeSp.sp,
                                 color = bodyColor,
@@ -1964,10 +1987,10 @@ fun RichContentView(
                             fontWeight = FontWeight.Bold,
                             color = accentColor
                         )
-                        Text(
+                        ObliqueAwareText(
                             text = block.text,
                             style = TextStyle(
-                                fontFamily = EditorFontFamily,
+                                fontFamily = activeFontFamily,
                                 fontSynthesis = FontSynthesis.All,
                                 fontSize = fontSizeSp.sp,
                                 color = bodyColor,
@@ -1998,10 +2021,10 @@ fun RichContentView(
                                 .padding(top = 2.dp)
                                 .size(19.dp)
                         )
-                        Text(
+                        ObliqueAwareText(
                             text = block.text,
                             style = TextStyle(
-                                fontFamily = EditorFontFamily,
+                                fontFamily = activeFontFamily,
                                 fontSynthesis = FontSynthesis.All,
                                 fontSize = fontSizeSp.sp,
                                 color = if (block.checked) metaColor else bodyColor,
@@ -2027,10 +2050,10 @@ fun RichContentView(
                             verticalAlignment = Alignment.Top
                         ) {
                             Text(text = "💡", fontSize = (fontSizeSp + 1f).sp)
-                            Text(
+                            ObliqueAwareText(
                                 text = block.text,
                                 style = TextStyle(
-                                    fontFamily = EditorFontFamily,
+                                    fontFamily = activeFontFamily,
                                     fontSynthesis = FontSynthesis.All,
                                     fontSize = fontSizeSp.sp,
                                     fontWeight = FontWeight.Medium,
@@ -2058,13 +2081,12 @@ fun RichContentView(
                                     .clip(CircleShape)
                                     .background(accentColor)
                             )
-                            Text(
+                            ObliqueAwareText(
                                 text = block.text,
                                 style = TextStyle(
-                                    fontFamily = EditorFontFamily,
+                                    fontFamily = activeFontFamily,
                                     fontSynthesis = FontSynthesis.All,
                                     fontSize = fontSizeSp.sp,
-                                    fontStyle = FontStyle.Italic,
                                     color = metaColor,
                                     lineHeight = (fontSizeSp * 1.46f).sp
                                 ),
@@ -2322,14 +2344,16 @@ fun StyledMarkdownTable(
                                 .padding(horizontal = 10.dp, vertical = 8.dp),
                             contentAlignment = Alignment.CenterStart
                         ) {
-                            Text(
+                            val activeFontOption = LocalAppFontOption.current
+                            ObliqueAwareText(
                                 text = RichTextCodec.renderInlineRichAnnotatedString(
                                     rawLine = cell,
                                     accentColor = accentColor,
-                                    isDark = isDark
+                                    isDark = isDark,
+                                    fontOption = activeFontOption
                                 ),
                                 style = TextStyle(
-                                    fontFamily = EditorFontFamily,
+                                    fontFamily = activeFontOption.fontFamily,
                                     fontSynthesis = FontSynthesis.All,
                                     fontSize = 12.5.sp,
                                     fontWeight = if (isHeader) FontWeight.Bold else FontWeight.Normal,
@@ -2344,4 +2368,145 @@ fun StyledMarkdownTable(
             }
         }
     }
+}
+
+private data class ObliqueOverlayState(
+    val layoutResult: TextLayoutResult,
+    val overlayParagraph: MultiParagraph,
+    val obliqueRanges: List<AnnotatedString.Range<String>>
+)
+
+private fun buildObliqueOverlayAnnotatedString(
+    primary: AnnotatedString,
+    defaultTextColor: Color
+): AnnotatedString? {
+    val annotations = primary.getStringAnnotations(RichTextCodec.OBLIQUE_SPAN_TAG, 0, primary.length)
+    if (annotations.isEmpty()) return null
+    val builder = AnnotatedString.Builder(primary.text)
+    builder.addStyle(
+        SpanStyle(color = Color.Transparent, background = Color.Unspecified, textDecoration = null),
+        0,
+        primary.length
+    )
+    for (range in primary.spanStyles) {
+        builder.addStyle(
+            range.item.copy(
+                color = Color.Transparent,
+                background = Color.Unspecified,
+                textDecoration = null
+            ),
+            range.start,
+            range.end
+        )
+    }
+    for (ann in annotations) {
+        val visibleColor = RichTextCodec.decodeObliqueColor(ann.item, defaultTextColor)
+        val combinedDeco = primary.spanStyles
+            .filter { it.start < ann.end && it.end > ann.start && it.item.textDecoration != null }
+            .mapNotNull { it.item.textDecoration }
+            .takeIf { it.isNotEmpty() }
+            ?.let { TextDecoration.combine(it) }
+        builder.addStyle(
+            SpanStyle(
+                color = visibleColor,
+                fontStyle = FontStyle.Normal,
+                textDecoration = combinedDeco
+            ),
+            ann.start,
+            ann.end
+        )
+    }
+    return builder.toAnnotatedString()
+}
+
+@Composable
+private fun rememberObliqueOverlayState(
+    layoutResult: TextLayoutResult?,
+    defaultTextColor: Color
+): ObliqueOverlayState? {
+    val primaryAnnotated = layoutResult?.layoutInput?.text ?: return null
+    val overlayAnnotated = remember(primaryAnnotated, defaultTextColor) {
+        buildObliqueOverlayAnnotatedString(primaryAnnotated, defaultTextColor)
+    } ?: return null
+    val obliqueRanges = remember(primaryAnnotated) {
+        primaryAnnotated.getStringAnnotations(RichTextCodec.OBLIQUE_SPAN_TAG, 0, primaryAnnotated.length)
+    }
+    if (obliqueRanges.isEmpty()) return null
+
+    return remember(overlayAnnotated, layoutResult, obliqueRanges) {
+        val input = layoutResult.layoutInput
+        val resolvedStyle = resolveDefaults(
+            style = input.style.copy(color = Color.Transparent, fontStyle = FontStyle.Normal),
+            direction = input.layoutDirection
+        )
+        val maxLines = if (input.softWrap) input.maxLines else 1
+        val paragraph = MultiParagraph(
+            annotatedString = overlayAnnotated,
+            style = resolvedStyle,
+            constraints = Constraints(maxWidth = layoutResult.size.width),
+            density = input.density,
+            fontFamilyResolver = input.fontFamilyResolver,
+            placeholders = input.placeholders,
+            maxLines = maxLines,
+            ellipsis = input.overflow == TextOverflow.Ellipsis
+        )
+        ObliqueOverlayState(
+            layoutResult = layoutResult,
+            overlayParagraph = paragraph,
+            obliqueRanges = obliqueRanges
+        )
+    }
+}
+
+private fun Modifier.drawObliqueOverlay(state: ObliqueOverlayState?): Modifier {
+    if (state == null) return this
+    return drawWithContent {
+        drawContent()
+        val lr = state.layoutResult
+        val op = state.overlayParagraph
+        val ranges = state.obliqueRanges
+        drawIntoCanvas { canvas ->
+            val native = canvas.nativeCanvas
+            val lastLine = lr.lineCount - 1
+            for (line in 0 until lr.lineCount) {
+                val lStart = lr.getLineStart(line)
+                val lEnd = lr.getLineEnd(line, visibleEnd = false)
+                val hasObliqueOnLine = ranges.any { it.start < lEnd && it.end > lStart }
+                if (!hasObliqueOnLine) continue
+                val top = if (line == 0) lr.getLineTop(line) - 8f else lr.getLineTop(line)
+                val bottom = if (line == lastLine) lr.getLineBottom(line) + 8f else lr.getLineBottom(line)
+                val baseline = lr.getLineBaseline(line)
+                canvas.save()
+                canvas.clipRect(-64f, top, size.width + 64f, bottom)
+                native.translate(0f, baseline)
+                native.skew(-0.25f, 0f)
+                native.translate(0f, -baseline)
+                op.paint(canvas)
+                canvas.restore()
+            }
+        }
+    }
+}
+
+@Composable
+private fun ObliqueAwareText(
+    text: AnnotatedString,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+    maxLines: Int = Int.MAX_VALUE,
+    overflow: TextOverflow = TextOverflow.Clip
+) {
+    var layoutResult by remember(text) { mutableStateOf<TextLayoutResult?>(null) }
+    val overlayState = rememberObliqueOverlayState(
+        layoutResult = layoutResult,
+        defaultTextColor = style.color
+    )
+    Text(
+        text = text,
+        style = style,
+        maxLines = maxLines,
+        overflow = overflow,
+        onTextLayout = { layoutResult = it },
+        modifier = modifier.drawObliqueOverlay(overlayState)
+    )
 }

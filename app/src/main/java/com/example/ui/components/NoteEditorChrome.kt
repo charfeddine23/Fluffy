@@ -89,7 +89,7 @@ import com.example.data.model.GlassTint
 import com.example.data.model.NotePagesCodec
 import com.example.data.model.RichFormatAction
 import com.example.ui.glass.liquidGlass
-import com.example.ui.theme.EditorFontFamily
+import com.example.ui.theme.LocalAppFontFamily
 
 /**
  * Minimal Dark Liquid Glass Top App Bar:
@@ -542,6 +542,7 @@ fun EditorNoteHeader(
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 // Main Note Title
+                val activeFontFamily = LocalAppFontFamily.current
                 if (isEditMode) {
                     BasicTextField(
                         value = title,
@@ -551,7 +552,7 @@ fun EditorNoteHeader(
                             .padding(top = 4.dp, bottom = 10.dp)
                             .testTag("editor_title_input"),
                         textStyle = TextStyle(
-                            fontFamily = EditorFontFamily,
+                            fontFamily = activeFontFamily,
                             fontSize = 25.sp,
                             fontWeight = FontWeight.Bold,
                             lineHeight = 32.sp,
@@ -565,7 +566,7 @@ fun EditorNoteHeader(
                                     Text(
                                         text = if (isArabic) "عنوان الملاحظة..." else "Note title...",
                                         style = TextStyle(
-                                            fontFamily = EditorFontFamily,
+                                            fontFamily = activeFontFamily,
                                             fontSize = 25.sp,
                                             fontWeight = FontWeight.Bold,
                                             lineHeight = 32.sp,
@@ -587,7 +588,7 @@ fun EditorNoteHeader(
                                 .padding(top = 4.dp, bottom = 10.dp)
                                 .testTag("editor_title_readonly"),
                             style = TextStyle(
-                                fontFamily = EditorFontFamily,
+                                fontFamily = activeFontFamily,
                                 fontSize = 25.sp,
                                 fontWeight = FontWeight.Bold,
                                 lineHeight = 32.sp,
@@ -881,6 +882,7 @@ fun EditorPageTitleField(
                         )
                     }
 
+                    val activeFontFamily = LocalAppFontFamily.current
                     BasicTextField(
                         value = currentPageTitle,
                         onValueChange = onPageTitleChange,
@@ -889,7 +891,7 @@ fun EditorPageTitleField(
                             .weight(1f)
                             .testTag("editor_page_title_input_$pageIndex"),
                         textStyle = TextStyle(
-                            fontFamily = EditorFontFamily,
+                            fontFamily = activeFontFamily,
                             fontSize = 15.5.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = textColor
@@ -904,7 +906,7 @@ fun EditorPageTitleField(
                                         } else {
                                             "Page ${pageIndex + 1} title (optional)..."
                                         },
-                                        fontFamily = EditorFontFamily,
+                                        fontFamily = activeFontFamily,
                                         fontSize = 14.5.sp,
                                         fontWeight = FontWeight.Medium,
                                         color = metaColor.copy(alpha = 0.52f)
@@ -931,6 +933,7 @@ fun EditorPageTitleField(
             }
         }
     } else if (currentPageTitle.isNotBlank() || pageIndex > 0) {
+        val activeFontFamily = LocalAppFontFamily.current
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -955,7 +958,7 @@ fun EditorPageTitleField(
                 SelectionContainer {
                     Text(
                         text = currentPageTitle,
-                        fontFamily = EditorFontFamily,
+                        fontFamily = activeFontFamily,
                         fontSize = 17.sp,
                         fontWeight = FontWeight.ExtraBold,
                         color = textColor,

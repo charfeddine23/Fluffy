@@ -525,7 +525,7 @@ fun CameraScannerScreen(
                     ) {
                         Text(
                             text = if (isArabic) "تفعيل الكاميرا" else "Grant Camera Access",
-                            color = ScannerGlassPalette.DeepObsidian,
+                            color = ScannerGlassPalette.OnAccent,
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -732,8 +732,8 @@ fun CameraScannerScreen(
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            ScannerGlassPalette.DeepObsidian.copy(alpha = 0.78f),
-                            ScannerGlassPalette.DeepObsidian.copy(alpha = 0.28f),
+                            Color.Black.copy(alpha = 0.62f),
+                            Color.Black.copy(alpha = 0.22f),
                             Color.Transparent
                         )
                     )
@@ -748,12 +748,16 @@ fun CameraScannerScreen(
                     Brush.verticalGradient(
                         colors = listOf(
                             Color.Transparent,
-                            ScannerGlassPalette.DeepObsidian.copy(alpha = 0.45f),
-                            ScannerGlassPalette.DeepObsidian.copy(alpha = 0.88f)
+                            Color.Black.copy(alpha = 0.36f),
+                            Color.Black.copy(alpha = 0.78f)
                         )
                     )
                 )
         )
+
+        val edgeOverlayCyan = ScannerGlassPalette.EdgeOverlayCyan
+        val edgeOverlayPurple = ScannerGlassPalette.EdgeOverlayPurple
+        val edgeOverlayEmerald = ScannerGlassPalette.EmeraldGlow
 
         // 3. Precision Architectural Overlays: Grid, Real-Time Polygon, Book Spine, ID Frame, QR Reticle
         Canvas(modifier = Modifier.fillMaxSize()) {
@@ -777,7 +781,7 @@ fun CameraScannerScreen(
                     val arm = 28.dp.toPx()
                     val strokeW = 3.2.dp.toPx()
                     val qrBrush = Brush.linearGradient(
-                        listOf(ScannerGlassPalette.EdgeOverlayCyan, ScannerGlassPalette.EdgeOverlayPurple)
+                        listOf(edgeOverlayCyan, edgeOverlayPurple)
                     )
                     // 4 Corner Brackets + Laser Scan Line
                     drawLine(qrBrush, Offset(left, top + arm), Offset(left, top), strokeW, StrokeCap.Round)
@@ -792,7 +796,7 @@ fun CameraScannerScreen(
                     val laserY = top + boxSize * ((scanSweepFraction - 0.24f) / 0.48f).coerceIn(0.08f, 0.92f)
                     drawLine(
                         brush = Brush.horizontalGradient(
-                            listOf(Color.Transparent, ScannerGlassPalette.EdgeOverlayCyan, ScannerGlassPalette.EdgeOverlayPurple, Color.Transparent)
+                            listOf(Color.Transparent, edgeOverlayCyan, edgeOverlayPurple, Color.Transparent)
                         ),
                         start = Offset(left + 14.dp.toPx(), laserY),
                         end = Offset(left + boxSize - 14.dp.toPx(), laserY),
@@ -808,8 +812,8 @@ fun CameraScannerScreen(
                         brush = Brush.verticalGradient(
                             listOf(
                                 Color.Transparent,
-                                ScannerGlassPalette.EdgeOverlayCyan,
-                                ScannerGlassPalette.EdgeOverlayPurple,
+                                edgeOverlayCyan,
+                                edgeOverlayPurple,
                                 Color.Transparent
                             )
                         ),
@@ -833,14 +837,14 @@ fun CameraScannerScreen(
                     val left = (w - cardW) / 2f
                     val top = (h - cardH) / 2f - 20.dp.toPx()
                     drawRoundRect(
-                        color = ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.08f),
+                        color = edgeOverlayCyan.copy(alpha = 0.08f),
                         topLeft = Offset(left, top),
                         size = Size(cardW, cardH),
                         cornerRadius = CornerRadius(18.dp.toPx(), 18.dp.toPx())
                     )
                     drawRoundRect(
                         brush = Brush.linearGradient(
-                            listOf(ScannerGlassPalette.EdgeOverlayCyan, ScannerGlassPalette.EdgeOverlayPurple)
+                            listOf(edgeOverlayCyan, edgeOverlayPurple)
                         ),
                         topLeft = Offset(left, top),
                         size = Size(cardW, cardH),
@@ -875,23 +879,23 @@ fun CameraScannerScreen(
                 }
                 drawPath(
                     path = polyPath,
-                    color = ScannerGlassPalette.EmeraldGlow.copy(alpha = 0.14f)
+                    color = edgeOverlayEmerald.copy(alpha = 0.14f)
                 )
                 drawPath(
                     path = polyPath,
                     brush = Brush.linearGradient(
-                        listOf(ScannerGlassPalette.EmeraldGlow, ScannerGlassPalette.EdgeOverlayCyan)
+                        listOf(edgeOverlayEmerald, edgeOverlayCyan)
                     ),
                     style = Stroke(width = 2.6.dp.toPx(), join = StrokeJoin.Round, cap = StrokeCap.Round)
                 )
                 pts.forEach { pt ->
                     drawCircle(
-                        color = ScannerGlassPalette.DeepObsidian,
+                        color = Color.Black.copy(alpha = 0.82f),
                         radius = 6.dp.toPx(),
                         center = pt
                     )
                     drawCircle(
-                        color = ScannerGlassPalette.EmeraldGlow,
+                        color = edgeOverlayEmerald,
                         radius = 4.2.dp.toPx(),
                         center = pt
                     )
@@ -918,7 +922,7 @@ fun CameraScannerScreen(
                 }
                 val isOverheadAligned = abs(tiltRollDeg) < 6.5f && abs(tiltPitchDeg) < 6.5f
                 val levelColor = if (isOverheadAligned) {
-                    ScannerGlassPalette.EdgeOverlayCyan
+                    edgeOverlayCyan
                 } else {
                     Color.White.copy(alpha = 0.48f)
                 }
@@ -951,12 +955,12 @@ fun CameraScannerScreen(
             // Tap-to-Focus glowing reticle
             focusTapOffset?.let { pt ->
                 drawCircle(
-                    color = ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.25f),
+                    color = edgeOverlayCyan.copy(alpha = 0.25f),
                     radius = 28.dp.toPx(),
                     center = pt
                 )
                 drawCircle(
-                    color = ScannerGlassPalette.EdgeOverlayCyan,
+                    color = edgeOverlayCyan,
                     radius = 28.dp.toPx(),
                     center = pt,
                     style = Stroke(width = 1.8.dp.toPx())
@@ -1042,7 +1046,7 @@ fun CameraScannerScreen(
                             modifier = Modifier
                                 .width(0.8.dp)
                                 .height(18.dp)
-                                .background(Color.White.copy(alpha = 0.14f))
+                                .background(ScannerGlassPalette.SubtleDivider)
                         )
 
                         IconButton(
@@ -1071,7 +1075,7 @@ fun CameraScannerScreen(
                             modifier = Modifier
                                 .width(0.8.dp)
                                 .height(18.dp)
-                                .background(Color.White.copy(alpha = 0.14f))
+                                .background(ScannerGlassPalette.SubtleDivider)
                         )
 
                         IconButton(
@@ -1116,7 +1120,7 @@ fun CameraScannerScreen(
                             CircularProgressIndicator(
                                 progress = { animStability.coerceIn(0.08f, 1f) },
                                 color = ScannerGlassPalette.EdgeOverlayCyan,
-                                trackColor = Color.White.copy(alpha = 0.18f),
+                                trackColor = ScannerGlassPalette.SubtleStroke,
                                 strokeWidth = 2.4.dp,
                                 modifier = Modifier.size(16.dp)
                             )
@@ -1377,13 +1381,15 @@ fun CameraScannerScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         // Outer Neon Ring + Live Stability Progress Arc
+                        val shutterCyan = ScannerGlassPalette.EdgeOverlayCyan
+                        val shutterPurple = ScannerGlassPalette.EdgeOverlayPurple
                         Canvas(modifier = Modifier.fillMaxSize()) {
                             val stroke = 3.2.dp.toPx()
                             drawCircle(
                                 brush = Brush.linearGradient(
                                     listOf(
                                         Color.White.copy(alpha = if (isDocumentActive) 0.45f else 0.16f),
-                                        ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = if (isDocumentActive) 0.55f else 0.16f)
+                                        shutterCyan.copy(alpha = if (isDocumentActive) 0.55f else 0.16f)
                                     )
                                 ),
                                 style = Stroke(width = stroke)
@@ -1392,9 +1398,9 @@ fun CameraScannerScreen(
                                 drawArc(
                                     brush = Brush.sweepGradient(
                                         listOf(
-                                            ScannerGlassPalette.EdgeOverlayCyan,
-                                            ScannerGlassPalette.EdgeOverlayPurple,
-                                            ScannerGlassPalette.EdgeOverlayCyan
+                                            shutterCyan,
+                                            shutterPurple,
+                                            shutterCyan
                                         )
                                     ),
                                     startAngle = -90f,
@@ -1467,7 +1473,7 @@ fun CameraScannerScreen(
                                         ) {
                                             Text(
                                                 text = "${batchFrames.size}",
-                                                color = ScannerGlassPalette.DeepObsidian,
+                                                color = ScannerGlassPalette.OnAccent,
                                                 fontWeight = FontWeight.ExtraBold,
                                                 fontSize = 10.sp
                                             )

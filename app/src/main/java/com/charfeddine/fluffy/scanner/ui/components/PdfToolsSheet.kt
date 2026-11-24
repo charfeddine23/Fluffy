@@ -199,7 +199,12 @@ fun PdfToolsSheet(
             }
         }
 
-        val tools = remember {
+        val cyanGlow = ScannerGlassPalette.CyanGlow
+        val violetGlow = ScannerGlassPalette.VioletGlow
+        val emeraldGlow = ScannerGlassPalette.EmeraldGlow
+        val amberGlow = ScannerGlassPalette.AmberGlow
+
+        val tools = remember(cyanGlow, violetGlow, emeraldGlow, amberGlow) {
             listOf(
                 PdfToolDescriptor(
                     index = 0,
@@ -208,7 +213,7 @@ fun PdfToolsSheet(
                     subtitleAr = "تجميع وترتيب عدة ملفات",
                     subtitleEn = "Combine & reorder files",
                     icon = Icons.Default.MergeType,
-                    accent = ScannerGlassPalette.CyanGlow
+                    accent = cyanGlow
                 ),
                 PdfToolDescriptor(
                     index = 1,
@@ -217,7 +222,7 @@ fun PdfToolsSheet(
                     subtitleAr = "استخراج كل صفحة بملف",
                     subtitleEn = "Extract individual pages",
                     icon = Icons.AutoMirrored.Filled.CallSplit,
-                    accent = ScannerGlassPalette.VioletGlow
+                    accent = violetGlow
                 ),
                 PdfToolDescriptor(
                     index = 2,
@@ -226,7 +231,7 @@ fun PdfToolsSheet(
                     subtitleAr = "تقليص الحجم مع معاينة",
                     subtitleEn = "Shrink size cleanly",
                     icon = Icons.Default.Compress,
-                    accent = ScannerGlassPalette.EmeraldGlow
+                    accent = emeraldGlow
                 ),
                 PdfToolDescriptor(
                     index = 3,
@@ -235,7 +240,7 @@ fun PdfToolsSheet(
                     subtitleAr = "قفل المستند بكلمة مرور",
                     subtitleEn = "Lock with password",
                     icon = Icons.Default.Lock,
-                    accent = ScannerGlassPalette.AmberGlow
+                    accent = amberGlow
                 )
             )
         }
@@ -263,9 +268,9 @@ fun PdfToolsSheet(
 
         val textFieldColors = OutlinedTextFieldDefaults.colors(
             focusedBorderColor = activeDescriptor.accent,
-            unfocusedBorderColor = Color.White.copy(alpha = 0.20f),
-            focusedContainerColor = Color(0xFF0A1122).copy(alpha = 0.65f),
-            unfocusedContainerColor = Color(0xFF0A1122).copy(alpha = 0.45f),
+            unfocusedBorderColor = ScannerGlassPalette.SubtleStroke,
+            focusedContainerColor = ScannerGlassPalette.InputContainer,
+            unfocusedContainerColor = ScannerGlassPalette.InputContainer.copy(alpha = 0.78f),
             focusedTextColor = ScannerGlassPalette.TextPrimary,
             unfocusedTextColor = ScannerGlassPalette.TextPrimary,
             focusedLabelColor = activeDescriptor.accent,
@@ -551,10 +556,7 @@ fun PdfToolsSheet(
                     else -> if (isArabic) "تشفير وحفظ الملف المحمي" else "Encrypt & Save Protected PDF"
                 }
 
-                val buttonTextColor = when (activeTool) {
-                    1 -> Color.White
-                    else -> Color(0xFF04101B)
-                }
+                val buttonTextColor = ScannerGlassPalette.contrastOn(activeDescriptor.accent)
 
                 Column(
                     modifier = Modifier
@@ -616,7 +618,7 @@ fun PdfToolsSheet(
                         shape = RoundedCornerShape(18.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = activeDescriptor.accent,
-                            disabledContainerColor = Color.White.copy(alpha = 0.10f),
+                            disabledContainerColor = ScannerGlassPalette.SubtleChipBg,
                             contentColor = buttonTextColor,
                             disabledContentColor = ScannerGlassPalette.TextSecondary.copy(alpha = 0.65f)
                         ),
@@ -893,7 +895,7 @@ private fun PdfThumbnailFrame(
         modifier = Modifier
             .size(width = widthDp.dp, height = heightDp.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(Color(0xFF0A1124))
+            .background(ScannerGlassPalette.ThumbnailFrame)
             .border(1.dp, accent.copy(alpha = 0.45f), RoundedCornerShape(10.dp)),
         contentAlignment = Alignment.Center
     ) {
@@ -1000,8 +1002,8 @@ private fun MergeWorkspaceSection(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(16.dp))
-                        .background(Color(0xFF0A1123).copy(alpha = 0.72f))
-                        .border(0.8.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(16.dp))
+                        .background(ScannerGlassPalette.FrostedCardDark)
+                        .border(0.8.dp, ScannerGlassPalette.SubtleStroke, RoundedCornerShape(16.dp))
                         .padding(10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -1278,7 +1280,7 @@ private fun CompressWorkspaceSection(
                         .fillMaxWidth()
                         .height(7.dp)
                         .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.10f))
+                        .background(ScannerGlassPalette.SubtleChipBg)
                 ) {
                     Box(
                         modifier = Modifier
@@ -1358,7 +1360,7 @@ private fun CompressWorkspaceSection(
                         modifier = Modifier
                             .size(20.dp)
                             .clip(CircleShape)
-                            .border(1.5.dp, if (isSel) accent else Color.White.copy(alpha = 0.28f), CircleShape)
+                            .border(1.5.dp, if (isSel) accent else ScannerGlassPalette.SubtleStroke, CircleShape)
                             .background(if (isSel) accent else Color.Transparent),
                         contentAlignment = Alignment.Center
                     ) {
@@ -1367,7 +1369,7 @@ private fun CompressWorkspaceSection(
                                 modifier = Modifier
                                     .size(7.dp)
                                     .clip(CircleShape)
-                                    .background(Color(0xFF042117))
+                                    .background(ScannerGlassPalette.contrastOn(accent))
                             )
                         }
                     }
@@ -1492,7 +1494,7 @@ private fun ProtectWorkspaceSection(
                                 .height(5.dp)
                                 .clip(CircleShape)
                                 .background(
-                                    if (step < strength) strengthColor else Color.White.copy(alpha = 0.12f)
+                                    if (step < strength) strengthColor else ScannerGlassPalette.SubtleChipBg
                                 )
                         )
                     }

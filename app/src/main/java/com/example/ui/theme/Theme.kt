@@ -6,14 +6,20 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import com.example.ui.glass.LocalColoredContainerBorders
+
+val LocalAppFontFamily = staticCompositionLocalOf<FontFamily> { FontFamily.SansSerif }
+val LocalAppFontOption = staticCompositionLocalOf<AppFontOption> { AppFontCatalog.defaultFont }
 
 @Composable
 fun FluffyTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     themePreset: AppThemePreset = if (darkTheme) AppThemeRegistry.defaultDark else AppThemeRegistry.defaultLight,
     coloredContainerBorders: Boolean = true,
+    fontOption: AppFontOption = AppFontCatalog.defaultFont,
     content: @Composable () -> Unit
 ) {
     val colorScheme = if (themePreset.isDark) {
@@ -58,11 +64,13 @@ fun FluffyTheme(
 
     CompositionLocalProvider(
         LocalAppThemePreset provides themePreset,
-        LocalColoredContainerBorders provides coloredContainerBorders
+        LocalColoredContainerBorders provides coloredContainerBorders,
+        LocalAppFontFamily provides fontOption.fontFamily,
+        LocalAppFontOption provides fontOption
     ) {
         MaterialTheme(
             colorScheme = colorScheme,
-            typography = Typography,
+            typography = buildAppTypography(fontOption.fontFamily),
             content = content
         )
     }

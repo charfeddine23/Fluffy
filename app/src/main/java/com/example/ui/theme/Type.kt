@@ -15,41 +15,51 @@ import androidx.compose.ui.unit.sp
  */
 val EditorFontFamily: FontFamily = FontFamily.SansSerif
 
-// Set of Material typography styles
-val Typography =
-  Typography(
-    bodyLarge =
-      TextStyle(
-        fontFamily = EditorFontFamily,
-        fontSynthesis = FontSynthesis.All,
-        fontWeight = FontWeight.Normal,
-        fontSize = 16.sp,
-        lineHeight = 24.sp,
-        letterSpacing = 0.5.sp,
-      ),
-    bodyMedium =
-      TextStyle(
-        fontFamily = EditorFontFamily,
-        fontSynthesis = FontSynthesis.All,
-        fontWeight = FontWeight.Normal,
-        fontSize = 14.sp,
-        lineHeight = 20.sp,
-      ),
-    titleLarge =
-      TextStyle(
-        fontFamily = EditorFontFamily,
-        fontSynthesis = FontSynthesis.All,
-        fontWeight = FontWeight.Bold,
-        fontSize = 22.sp,
-        lineHeight = 28.sp,
-      ),
-    labelSmall =
-      TextStyle(
-        fontFamily = EditorFontFamily,
-        fontSynthesis = FontSynthesis.All,
-        fontWeight = FontWeight.Medium,
-        fontSize = 11.sp,
-        lineHeight = 16.sp,
-        letterSpacing = 0.5.sp,
-      ),
-  )
+fun buildAppTypography(fontFamily: FontFamily = EditorFontFamily): Typography {
+    val base = Typography()
+    return Typography(
+        displayLarge = base.displayLarge.copy(fontFamily = fontFamily, fontSynthesis = FontSynthesis.All),
+        displayMedium = base.displayMedium.copy(fontFamily = fontFamily, fontSynthesis = FontSynthesis.All),
+        displaySmall = base.displaySmall.copy(fontFamily = fontFamily, fontSynthesis = FontSynthesis.All),
+        headlineLarge = base.headlineLarge.copy(fontFamily = fontFamily, fontSynthesis = FontSynthesis.All),
+        headlineMedium = base.headlineMedium.copy(fontFamily = fontFamily, fontSynthesis = FontSynthesis.All),
+        headlineSmall = base.headlineSmall.copy(fontFamily = fontFamily, fontSynthesis = FontSynthesis.All),
+        titleLarge = TextStyle(
+            fontFamily = fontFamily,
+            fontSynthesis = FontSynthesis.All,
+            fontWeight = FontWeight.Bold,
+            fontSize = 22.sp,
+            lineHeight = 28.sp
+        ),
+        titleMedium = base.titleMedium.copy(fontFamily = fontFamily, fontSynthesis = FontSynthesis.All),
+        titleSmall = base.titleSmall.copy(fontFamily = fontFamily, fontSynthesis = FontSynthesis.All),
+        bodyLarge = TextStyle(
+            fontFamily = fontFamily,
+            fontSynthesis = FontSynthesis.All,
+            fontWeight = FontWeight.Normal,
+            fontSize = 16.sp,
+            lineHeight = 24.sp,
+            letterSpacing = 0.5.sp
+        ),
+        bodyMedium = TextStyle(
+            fontFamily = fontFamily,
+            fontSynthesis = FontSynthesis.All,
+            fontWeight = FontWeight.Normal,
+            fontSize = 14.sp,
+            lineHeight = 20.sp
+        ),
+        bodySmall = base.bodySmall.copy(fontFamily = fontFamily, fontSynthesis = FontSynthesis.All),
+        labelLarge = base.labelLarge.copy(fontFamily = fontFamily, fontSynthesis = FontSynthesis.All),
+        labelMedium = base.labelMedium.copy(fontFamily = fontFamily, fontSynthesis = FontSynthesis.All),
+        labelSmall = TextStyle(
+            fontFamily = fontFamily,
+            fontSynthesis = FontSynthesis.All,
+            fontWeight = FontWeight.Medium,
+            fontSize = 11.sp,
+            lineHeight = 16.sp,
+            letterSpacing = 0.5.sp
+        )
+    )
+}
+
+val Typography = buildAppTypography(EditorFontFamily)

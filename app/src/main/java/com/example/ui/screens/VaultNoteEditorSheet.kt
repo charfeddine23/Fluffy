@@ -807,12 +807,14 @@ fun VaultNoteEditorSheet(
                         )
 
                         // Rich Notion-Style Page Body Editor with Clean Interactive Tables
+                        val activeFontOption = com.example.ui.theme.LocalAppFontOption.current
                         val activePageText = pages.getOrElse(safePageIdx) { "" }
-                        val richVisualTransformation = remember(accentColor, metaColor, effectiveDark) {
+                        val richVisualTransformation = remember(accentColor, metaColor, effectiveDark, activeFontOption) {
                             RichTextCodec.createRichVisualTransformation(
                                 accentColor = accentColor,
                                 metaColor = metaColor,
-                                isDark = effectiveDark
+                                isDark = effectiveDark,
+                                fontOption = activeFontOption
                             )
                         }
                         val preferredSegIdx = activeSegmentByPage[safePageIdx] ?: 0

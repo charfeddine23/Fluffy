@@ -349,10 +349,12 @@ class NoteDraftAndRichTextTest {
         )
         val rendered = transformed.text
         assertFalse(rendered.text.contains("*"))
+        val obliqueAnnotations = rendered.getStringAnnotations(RichTextCodec.OBLIQUE_SPAN_TAG, 0, rendered.length)
+        assertTrue(obliqueAnnotations.any { rendered.text.substring(it.start, it.end) == "عربي مائل وعريض" })
+        assertTrue(obliqueAnnotations.any { rendered.text.substring(it.start, it.end) == "مائل" })
         assertTrue(rendered.spanStyles.any {
-            it.item.fontStyle == androidx.compose.ui.text.font.FontStyle.Italic &&
-                (it.item.fontWeight == androidx.compose.ui.text.font.FontWeight.Bold ||
-                    it.item.fontWeight == androidx.compose.ui.text.font.FontWeight.ExtraBold) &&
+            (it.item.fontWeight == androidx.compose.ui.text.font.FontWeight.Bold ||
+                it.item.fontWeight == androidx.compose.ui.text.font.FontWeight.ExtraBold) &&
                 it.item.fontSynthesis == androidx.compose.ui.text.font.FontSynthesis.All
         })
 
@@ -446,16 +448,30 @@ class NoteDraftAndRichTextTest {
         )
         assertEquals("*hello* ok", imeAutocorrectPlain.fieldValue.text)
 
-        // 6. EditorFontFamily + FontStyle.Italic + FontSynthesis.All emitted for Latin and Arabic
+        // 6. Native italic for Latin and oblique-synthesis annotation for Arabic under SansSerif (EditorFontFamily)
         val transformed = RichTextCodec.transformForEditor(
             raw = "*italic* و *مائل*",
             accentColor = Color(0xFF8B5CF6),
             metaColor = Color(0xFF94A3B8),
             isDark = true
         )
-        assertEquals(2, transformed.text.spanStyles.count {
+        assertEquals(1, transformed.text.spanStyles.count {
             it.item.fontFamily == com.example.ui.theme.EditorFontFamily &&
                 it.item.fontStyle == androidx.compose.ui.text.font.FontStyle.Italic &&
+                it.item.fontSynthesis == androidx.compose.ui.text.font.FontSynthesis.All &&
+                transformed.text.text.substring(it.start, it.end) == "italic"
+        })
+        val arabicOblique = transformed.text.getStringAnnotations(
+            RichTextCodec.OBLIQUE_SPAN_TAG,
+            0,
+            transformed.text.length
+        )
+        assertEquals(1, arabicOblique.size)
+        assertEquals("مائل", transformed.text.text.substring(arabicOblique.first().start, arabicOblique.first().end))
+        assertTrue(transformed.text.spanStyles.any {
+            it.start == arabicOblique.first().start &&
+                it.end == arabicOblique.first().end &&
+                it.item.fontFamily == com.example.ui.theme.EditorFontFamily &&
                 it.item.fontSynthesis == androidx.compose.ui.text.font.FontSynthesis.All
         })
 

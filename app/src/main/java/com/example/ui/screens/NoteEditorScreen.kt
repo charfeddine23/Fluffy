@@ -1175,12 +1175,14 @@ fun NoteEditorScreen(
                                 onPageTitleChange = { updatePageTitleBounded(pageIndex, it) }
                             )
 
+                            val activeFontOption = com.example.ui.theme.LocalAppFontOption.current
                             val pageText = pages[pageIndex]
-                            val richVisualTransformation = remember(accentColor, metaColor, effectiveDark) {
+                            val richVisualTransformation = remember(accentColor, metaColor, effectiveDark, activeFontOption) {
                                 RichTextCodec.createRichVisualTransformation(
                                     accentColor = accentColor,
                                     metaColor = metaColor,
-                                    isDark = effectiveDark
+                                    isDark = effectiveDark,
+                                    fontOption = activeFontOption
                                 )
                             }
                             val remainingMinHeight = (minCanvasHeight - 130.dp).coerceAtLeast(180.dp)

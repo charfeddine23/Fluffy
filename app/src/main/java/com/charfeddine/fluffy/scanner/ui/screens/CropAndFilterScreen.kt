@@ -506,12 +506,13 @@ fun CropAndFilterScreen(
     }
 
     ScannerDarkLiquidBackdrop {
-        // Subtle ambient cyan & violet glow accents tuned for dark liquid glass depth
+        // Subtle ambient glow accents tuned to the active app theme preset
+        val phaseGlowColor = if (isCropPhase) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.VioletGlow
         Canvas(modifier = Modifier.fillMaxSize()) {
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        (if (isCropPhase) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.VioletGlow).copy(alpha = 0.14f),
+                        phaseGlowColor.copy(alpha = 0.14f),
                         Color.Transparent
                     ),
                     center = Offset(size.width * 0.85f, size.height * 0.14f),
@@ -578,7 +579,7 @@ fun CropAndFilterScreen(
                     ) {
                         Text(
                             text = if (isArabic) "1. القص" else "1. Crop",
-                            color = if (isCropPhase) Color(0xFF04101B) else ScannerGlassPalette.TextSecondary,
+                            color = if (isCropPhase) ScannerGlassPalette.OnAccent else ScannerGlassPalette.TextSecondary,
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 12.sp
                         )
@@ -600,7 +601,7 @@ fun CropAndFilterScreen(
                     ) {
                         Text(
                             text = if (isArabic) "2. التحسين" else "2. Enhance",
-                            color = if (!isCropPhase) Color(0xFF04101B) else ScannerGlassPalette.TextSecondary,
+                            color = if (!isCropPhase) ScannerGlassPalette.OnAccent else ScannerGlassPalette.TextSecondary,
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 12.sp
                         )
@@ -873,7 +874,7 @@ fun CropAndFilterScreen(
                     ) {
                         Text(
                             text = if (isArabic) "تصحيح المنظور →" else "Warp & Filter →",
-                            color = Color(0xFF04101B),
+                            color = ScannerGlassPalette.OnAccent,
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.sp
                         )
@@ -933,10 +934,10 @@ fun CropAndFilterScreen(
                                         .fillMaxWidth()
                                         .height(48.dp)
                                         .clip(RoundedCornerShape(12.dp))
-                                        .background(Color(0xFF0A1226))
+                                        .background(ScannerGlassPalette.ThumbnailFrame)
                                         .border(
                                             width = if (selected) 1.3.dp else 0.7.dp,
-                                            color = if (selected) ScannerGlassPalette.CyanGlow else Color.White.copy(alpha = 0.14f),
+                                            color = if (selected) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.SubtleStroke,
                                             shape = RoundedCornerShape(12.dp)
                                         ),
                                     contentAlignment = Alignment.Center
@@ -955,7 +956,7 @@ fun CropAndFilterScreen(
                                                 .clip(CircleShape)
                                                 .background(
                                                     if (selected) ScannerGlassPalette.CyanGlow.copy(alpha = 0.45f)
-                                                    else Color.White.copy(alpha = 0.14f)
+                                                    else ScannerGlassPalette.SubtleChipBg
                                                 )
                                         )
                                     }
@@ -973,7 +974,7 @@ fun CropAndFilterScreen(
                                             Icon(
                                                 imageVector = Icons.Default.Check,
                                                 contentDescription = null,
-                                                tint = Color(0xFF04101B),
+                                                tint = ScannerGlassPalette.OnAccent,
                                                 modifier = Modifier.size(11.dp)
                                             )
                                         }
@@ -1241,7 +1242,7 @@ fun CropAndFilterScreen(
                                     colors = SliderDefaults.colors(
                                         thumbColor = ScannerGlassPalette.CyanGlow,
                                         activeTrackColor = ScannerGlassPalette.CyanGlow,
-                                        inactiveTrackColor = Color.White.copy(alpha = 0.14f)
+                                        inactiveTrackColor = ScannerGlassPalette.SubtleStroke
                                     )
                                 )
                                 1 -> Slider(
@@ -1255,7 +1256,7 @@ fun CropAndFilterScreen(
                                     colors = SliderDefaults.colors(
                                         thumbColor = ScannerGlassPalette.VioletGlow,
                                         activeTrackColor = ScannerGlassPalette.VioletGlow,
-                                        inactiveTrackColor = Color.White.copy(alpha = 0.14f)
+                                        inactiveTrackColor = ScannerGlassPalette.SubtleStroke
                                     )
                                 )
                                 else -> Slider(
@@ -1269,7 +1270,7 @@ fun CropAndFilterScreen(
                                     colors = SliderDefaults.colors(
                                         thumbColor = ScannerGlassPalette.EmeraldGlow,
                                         activeTrackColor = ScannerGlassPalette.EmeraldGlow,
-                                        inactiveTrackColor = Color.White.copy(alpha = 0.14f)
+                                        inactiveTrackColor = ScannerGlassPalette.SubtleStroke
                                     )
                                 )
                             }
@@ -1300,9 +1301,9 @@ fun CropAndFilterScreen(
                                 shape = RoundedCornerShape(16.dp),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = ScannerGlassPalette.CyanGlow,
-                                    unfocusedBorderColor = Color.White.copy(alpha = 0.18f),
-                                    focusedContainerColor = Color(0xFF0A1122).copy(alpha = 0.60f),
-                                    unfocusedContainerColor = Color(0xFF0A1122).copy(alpha = 0.42f),
+                                    unfocusedBorderColor = ScannerGlassPalette.SubtleStroke,
+                                    focusedContainerColor = ScannerGlassPalette.InputContainer,
+                                    unfocusedContainerColor = ScannerGlassPalette.InputContainer.copy(alpha = 0.78f),
                                     focusedTextColor = ScannerGlassPalette.TextPrimary,
                                     unfocusedTextColor = ScannerGlassPalette.TextPrimary,
                                     cursorColor = ScannerGlassPalette.CyanGlow
@@ -1349,13 +1350,13 @@ fun CropAndFilterScreen(
                                 .testTag("crop_save_document_btn")
                         ) {
                             if (isBusy) {
-                                CircularProgressIndicator(color = Color(0xFF04101B), modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                CircularProgressIndicator(color = ScannerGlassPalette.OnAccent, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                             } else {
-                                Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFF04101B))
+                                Icon(Icons.Default.Check, contentDescription = null, tint = ScannerGlassPalette.OnAccent)
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
                                     text = if (isArabic) "حفظ ($outputPageCount)" else "Save ($outputPageCount)",
-                                    color = Color(0xFF04101B),
+                                    color = ScannerGlassPalette.OnAccent,
                                     fontWeight = FontWeight.ExtraBold
                                 )
                             }
@@ -1480,6 +1481,9 @@ private fun InteractiveCropWithMagnifier(
             y = ((baseY - offsetY) / displayScaleY) / bh
         )
     }
+
+    val cropEdgeCyan = ScannerGlassPalette.EdgeOverlayCyan
+    val cropEdgePurple = ScannerGlassPalette.EdgeOverlayPurple
 
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
         Box(
@@ -1868,11 +1872,11 @@ private fun InteractiveCropWithMagnifier(
                     lineTo(bl.x, bl.y)
                     close()
                 }
-                drawPath(path, ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.12f))
+                drawPath(path, cropEdgeCyan.copy(alpha = 0.12f))
                 drawPath(
                     path,
                     brush = Brush.linearGradient(
-                        listOf(ScannerGlassPalette.EdgeOverlayCyan, ScannerGlassPalette.EdgeOverlayPurple)
+                        listOf(cropEdgeCyan, cropEdgePurple)
                     ),
                     style = Stroke(width = 2.6.dp.toPx())
                 )
@@ -1886,12 +1890,12 @@ private fun InteractiveCropWithMagnifier(
                 ).forEach { (hTarget, pt) ->
                     val isSelected = activeHandle == hTarget
                     drawCircle(
-                        color = ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = if (isSelected) 0.55f else 0.30f),
+                        color = cropEdgeCyan.copy(alpha = if (isSelected) 0.55f else 0.30f),
                         radius = (if (isSelected) 20.dp else 14.dp).toPx(),
                         center = pt
                     )
                     drawCircle(
-                        color = ScannerGlassPalette.EdgeOverlayCyan,
+                        color = cropEdgeCyan,
                         radius = (if (isSelected) 12.dp else 9.5.dp).toPx(),
                         center = pt
                     )
@@ -1907,7 +1911,7 @@ private fun InteractiveCropWithMagnifier(
                 ).forEach { (hTarget, mid) ->
                     val isSelected = activeHandle == hTarget
                     drawCircle(
-                        color = ScannerGlassPalette.EdgeOverlayPurple,
+                        color = cropEdgePurple,
                         radius = (if (isSelected) 9.5.dp else 7.dp).toPx(),
                         center = mid
                     )
@@ -2013,11 +2017,11 @@ private fun InteractiveCropWithMagnifier(
                         .size(loupeSizeDp)
                         .shadow(16.dp, CircleShape, ambientColor = ScannerGlassPalette.CyanGlow, spotColor = ScannerGlassPalette.VioletGlow)
                         .clip(CircleShape)
-                        .background(Color(0xFF060A14))
+                        .background(ScannerGlassPalette.DeepObsidian)
                         .border(
                             width = 2.5.dp,
                             brush = Brush.linearGradient(
-                                listOf(ScannerGlassPalette.EdgeOverlayCyan, ScannerGlassPalette.EdgeOverlayPurple)
+                                listOf(cropEdgeCyan, cropEdgePurple)
                             ),
                             shape = CircleShape
                         )
@@ -2038,13 +2042,13 @@ private fun InteractiveCropWithMagnifier(
                             dstSize = IntSize(dstW, dstH)
                         )
                         drawLine(
-                            ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.85f),
+                            cropEdgeCyan.copy(alpha = 0.85f),
                             Offset(size.width / 2f, 0f),
                             Offset(size.width / 2f, size.height),
                             strokeWidth = 1.dp.toPx()
                         )
                         drawLine(
-                            ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.85f),
+                            cropEdgeCyan.copy(alpha = 0.85f),
                             Offset(0f, size.height / 2f),
                             Offset(size.width, size.height / 2f),
                             strokeWidth = 1.dp.toPx()
@@ -2056,7 +2060,7 @@ private fun InteractiveCropWithMagnifier(
                             style = Stroke(width = 1.5.dp.toPx())
                         )
                         drawCircle(
-                            color = ScannerGlassPalette.EdgeOverlayCyan,
+                            color = cropEdgeCyan,
                             radius = 2.5.dp.toPx(),
                             center = Offset(size.width / 2f, size.height / 2f)
                         )
@@ -2067,7 +2071,7 @@ private fun InteractiveCropWithMagnifier(
                             .align(Alignment.BottomCenter)
                             .padding(bottom = 6.dp)
                             .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.65f))
+                            .background(ScannerGlassPalette.FrostedElevated)
                             .padding(horizontal = 7.dp, vertical = 2.dp)
                     ) {
                         Text(
@@ -2466,7 +2470,10 @@ private fun BeforeAfterComparisonViewport(
                     }
 
                     if (showSplitCompare && viewportSize.width > 0 && viewportSize.height > 0) {
-                        // Glowing Cyan-to-Purple Split Divider Beam & Frosted Handle in screen space
+                        // Glowing Split Divider Beam & Frosted Handle in screen space
+                        val beamCyan = ScannerGlassPalette.EdgeOverlayCyan
+                        val beamPurple = ScannerGlassPalette.EdgeOverlayPurple
+                        val beamHandleFill = ScannerGlassPalette.FrostedElevated
                         Canvas(modifier = Modifier.fillMaxSize()) {
                             val paperTopPx = (size.height - paperH.toPx()) * 0.5f
                             val paperBotPx = (size.height + paperH.toPx()) * 0.5f
@@ -2478,9 +2485,9 @@ private fun BeforeAfterComparisonViewport(
                             drawLine(
                                 brush = Brush.verticalGradient(
                                     colors = listOf(
-                                        ScannerGlassPalette.EdgeOverlayCyan,
-                                        ScannerGlassPalette.EdgeOverlayPurple,
-                                        ScannerGlassPalette.EdgeOverlayCyan
+                                        beamCyan,
+                                        beamPurple,
+                                        beamCyan
                                     )
                                 ),
                                 start = Offset(splitX, lineTop),
@@ -2489,13 +2496,13 @@ private fun BeforeAfterComparisonViewport(
                             )
                             val cy = ((lineTop + lineBot) * 0.5f).coerceIn(20.dp.toPx(), size.height - 20.dp.toPx())
                             drawCircle(
-                                color = Color(0xFF0A1224).copy(alpha = 0.88f),
+                                color = beamHandleFill,
                                 radius = 17.dp.toPx(),
                                 center = Offset(splitX, cy)
                             )
                             drawCircle(
                                 brush = Brush.linearGradient(
-                                    listOf(ScannerGlassPalette.EdgeOverlayCyan, ScannerGlassPalette.EdgeOverlayPurple)
+                                    listOf(beamCyan, beamPurple)
                                 ),
                                 radius = 17.dp.toPx(),
                                 center = Offset(splitX, cy),
@@ -2504,13 +2511,13 @@ private fun BeforeAfterComparisonViewport(
                             val barHalfH = 5.dp.toPx()
                             val gap = 3.5.dp.toPx()
                             drawLine(
-                                color = ScannerGlassPalette.EdgeOverlayCyan,
+                                color = beamCyan,
                                 start = Offset(splitX - gap, cy - barHalfH),
                                 end = Offset(splitX - gap, cy + barHalfH),
                                 strokeWidth = 1.6.dp.toPx()
                             )
                             drawLine(
-                                color = ScannerGlassPalette.EdgeOverlayCyan,
+                                color = beamCyan,
                                 start = Offset(splitX + gap, cy - barHalfH),
                                 end = Offset(splitX + gap, cy + barHalfH),
                                 strokeWidth = 1.6.dp.toPx()
@@ -2546,7 +2553,7 @@ private fun BeforeAfterComparisonViewport(
                             ) {
                                 Text(
                                     text = if (isArabic) "بعد" else "After",
-                                    color = Color(0xFF04101B),
+                                    color = ScannerGlassPalette.OnAccent,
                                     fontSize = 10.5.sp,
                                     fontWeight = FontWeight.ExtraBold
                                 )

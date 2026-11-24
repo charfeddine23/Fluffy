@@ -317,7 +317,7 @@ fun DocumentDetailEditorScreen(
                     .windowInsetsPadding(WindowInsets.navigationBars)
                     .padding(top = 68.dp, bottom = 92.dp, start = 10.dp, end = 10.dp)
                     .clip(RoundedCornerShape(22.dp))
-                    .background(Color(0xFF060A15).copy(alpha = 0.65f))
+                    .background(ScannerGlassPalette.StageSurface)
                     .border(
                         width = if (activeTool != AnnotationTool.NONE) 1.2.dp else 0.75.dp,
                         brush = if (activeTool != AnnotationTool.NONE) {
@@ -658,7 +658,7 @@ fun DocumentDetailEditorScreen(
                             modifier = Modifier
                                 .width(0.8.dp)
                                 .height(20.dp)
-                                .background(Color.White.copy(alpha = 0.16f))
+                                .background(ScannerGlassPalette.SubtleDivider)
                         )
                         IconButton(
                             onClick = { showMoreMenu = true },
@@ -783,7 +783,7 @@ fun DocumentDetailEditorScreen(
                                 showRenameDialog = true
                             }
                         )
-                        HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+                        HorizontalDivider(color = ScannerGlassPalette.SubtleDivider)
                         DropdownMenuItem(
                             leadingIcon = {
                                 Icon(
@@ -891,7 +891,7 @@ fun DocumentDetailEditorScreen(
                                         Icon(
                                             Icons.Default.Check,
                                             contentDescription = if (isArabic) "تم" else "Done",
-                                            tint = ScannerGlassPalette.DeepObsidian,
+                                            tint = ScannerGlassPalette.OnAccent,
                                             modifier = Modifier.size(15.dp)
                                         )
                                     }
@@ -944,7 +944,7 @@ fun DocumentDetailEditorScreen(
                                                 .background(Color(argb.toInt()))
                                                 .border(
                                                     if (isPicked) 2.2.dp else 1.dp,
-                                                    if (isPicked) Color.White else Color.White.copy(alpha = 0.25f),
+                                                    if (isPicked) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.SubtleStroke,
                                                     CircleShape
                                                 )
                                                 .clickable { penColorArgb = argb }
@@ -1062,7 +1062,7 @@ fun DocumentDetailEditorScreen(
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = ScannerGlassPalette.CyanGlow,
-                        unfocusedBorderColor = Color.White.copy(alpha = 0.24f),
+                        unfocusedBorderColor = ScannerGlassPalette.SubtleStroke,
                         focusedTextColor = ScannerGlassPalette.TextPrimary,
                         unfocusedTextColor = ScannerGlassPalette.TextPrimary
                     ),
@@ -1079,7 +1079,7 @@ fun DocumentDetailEditorScreen(
                             showRenameDialog = false
                         }
                     ) {
-                        Text(if (isArabic) "حفظ" else "Save", color = Color(0xFF04101B), fontWeight = FontWeight.Bold)
+                        Text(if (isArabic) "حفظ" else "Save", color = ScannerGlassPalette.OnAccent, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -1112,10 +1112,10 @@ fun DocumentDetailEditorScreen(
                         Box(
                             modifier = Modifier
                                 .clip(CircleShape)
-                                .background(if (selected) tagColor.copy(alpha = 0.24f) else Color.White.copy(alpha = 0.06f))
+                                .background(if (selected) tagColor.copy(alpha = 0.24f) else ScannerGlassPalette.SubtleChipBg)
                                 .border(
                                     width = if (selected) 1.5.dp else 0.8.dp,
-                                    color = if (selected) tagColor else Color.White.copy(alpha = 0.16f),
+                                    color = if (selected) tagColor else ScannerGlassPalette.SubtleStroke,
                                     shape = CircleShape
                                 )
                                 .clickable { scannerViewModel.toggleTagOnDocument(doc, preset.name) }
@@ -1135,7 +1135,7 @@ fun DocumentDetailEditorScreen(
                         colors = ButtonDefaults.buttonColors(containerColor = ScannerGlassPalette.CyanGlow),
                         onClick = { showTagsDialog = false }
                     ) {
-                        Text(if (isArabic) "تم" else "Done", color = Color(0xFF04101B), fontWeight = FontWeight.Bold)
+                        Text(if (isArabic) "تم" else "Done", color = ScannerGlassPalette.OnAccent, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -1256,9 +1256,9 @@ fun DocumentDetailEditorScreen(
                             Toast.makeText(context, if (isArabic) "تم نسخ النص ✓" else "Text copied ✓", Toast.LENGTH_SHORT).show()
                         }
                     ) {
-                        Icon(Icons.Default.ContentCopy, contentDescription = null, tint = Color(0xFF04101B), modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.ContentCopy, contentDescription = null, tint = ScannerGlassPalette.OnAccent, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text(if (isArabic) "نسخ الكل" else "Copy All", color = Color(0xFF04101B), fontWeight = FontWeight.Bold)
+                        Text(if (isArabic) "نسخ الكل" else "Copy All", color = ScannerGlassPalette.OnAccent, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -1304,7 +1304,7 @@ private fun LiquidDockItem(
                             ),
                             CircleShape
                         )
-                        .border(0.8.dp, Color.White.copy(alpha = 0.28f), CircleShape)
+                        .border(0.8.dp, ScannerGlassPalette.SubtleStroke, CircleShape)
                 } else {
                     Modifier
                 }
@@ -1344,11 +1344,11 @@ private fun MarkupSubChip(
             .clip(CircleShape)
             .background(
                 if (selected) ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.22f)
-                else Color.White.copy(alpha = 0.06f)
+                else ScannerGlassPalette.SubtleChipBg
             )
             .border(
                 width = 0.9.dp,
-                color = if (selected) ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.75f) else Color.White.copy(alpha = 0.12f),
+                color = if (selected) ScannerGlassPalette.EdgeOverlayCyan.copy(alpha = 0.75f) else ScannerGlassPalette.SubtleStroke,
                 shape = CircleShape
             )
             .clickable(onClick = onClick)
@@ -1458,7 +1458,7 @@ private fun DocumentPagesManagerSheet(
                                 .fillMaxWidth()
                                 .height(98.dp)
                                 .clip(RoundedCornerShape(10.dp))
-                                .background(Color.Black)
+                                .background(ScannerGlassPalette.ThumbnailFrame)
                         )
                         Text(
                             text = if (isArabic) "صفحة ${idx + 1}" else "Page ${idx + 1}",
@@ -2083,9 +2083,11 @@ private fun DocumentExportSheet(
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = ScannerGlassPalette.AmberGlow,
-                            unfocusedBorderColor = Color.White.copy(alpha = 0.25f),
+                            unfocusedBorderColor = ScannerGlassPalette.SubtleStroke,
                             focusedTextColor = ScannerGlassPalette.TextPrimary,
-                            unfocusedTextColor = ScannerGlassPalette.TextPrimary
+                            unfocusedTextColor = ScannerGlassPalette.TextPrimary,
+                            focusedLabelColor = ScannerGlassPalette.AmberGlow,
+                            unfocusedLabelColor = ScannerGlassPalette.TextSecondary
                         ),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -2101,9 +2103,9 @@ private fun DocumentExportSheet(
                     colors = ButtonDefaults.buttonColors(containerColor = ScannerGlassPalette.CyanGlow),
                     modifier = Modifier.weight(1f).height(50.dp)
                 ) {
-                    Icon(Icons.Default.FileDownload, contentDescription = null, tint = Color(0xFF04101B))
+                    Icon(Icons.Default.FileDownload, contentDescription = null, tint = ScannerGlassPalette.OnAccent)
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(if (isArabic) "حفظ في الهاتف" else "Save Downloads", color = Color(0xFF04101B), fontWeight = FontWeight.Bold, fontSize = 12.5.sp)
+                    Text(if (isArabic) "حفظ في الهاتف" else "Save Downloads", color = ScannerGlassPalette.OnAccent, fontWeight = FontWeight.Bold, fontSize = 12.5.sp)
                 }
                 OutlinedButton(
                     onClick = {

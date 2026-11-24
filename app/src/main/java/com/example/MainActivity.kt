@@ -84,6 +84,7 @@ class MainActivity : FragmentActivity() {
             val isArabic by viewModel.isArabic.collectAsState()
             val selectedThemeId by viewModel.selectedThemeId.collectAsState()
             val isColoredBordersEnabled by viewModel.isColoredBordersEnabled.collectAsState()
+            val selectedFontId by viewModel.selectedFontId.collectAsState()
             val isScreenshotProtectionEnabled by viewModel.isScreenshotProtectionEnabled.collectAsState()
             val isVaultLockEnabled by viewModel.isVaultLockEnabled.collectAsState()
             val hasVaultPasskey by viewModel.hasVaultPasskey.collectAsState()
@@ -122,6 +123,9 @@ class MainActivity : FragmentActivity() {
 
             val activeThemePreset = remember(selectedThemeId, isDark) {
                 AppThemeRegistry.resolve(selectedThemeId, isDark)
+            }
+            val activeFontOption = remember(selectedFontId) {
+                com.example.ui.theme.AppFontCatalog.resolve(selectedFontId)
             }
 
             val context = LocalContext.current
@@ -162,7 +166,8 @@ class MainActivity : FragmentActivity() {
                 FluffyTheme(
                     darkTheme = isDark,
                     themePreset = activeThemePreset,
-                    coloredContainerBorders = isColoredBordersEnabled
+                    coloredContainerBorders = isColoredBordersEnabled,
+                    fontOption = activeFontOption
                 ) {
                     Surface(
                         modifier = Modifier.fillMaxSize(),

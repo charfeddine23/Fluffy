@@ -463,7 +463,7 @@ fun ScannerHubScreen(
                         shape = RoundedCornerShape(22.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = ScannerGlassPalette.CyanGlow.copy(alpha = 0.7f),
-                            unfocusedBorderColor = Color.White.copy(alpha = 0.14f),
+                            unfocusedBorderColor = ScannerGlassPalette.SubtleStroke,
                             focusedContainerColor = ScannerGlassPalette.FrostedCardDark,
                             unfocusedContainerColor = ScannerGlassPalette.FrostedCardDark,
                             focusedTextColor = ScannerGlassPalette.TextPrimary,
@@ -921,7 +921,7 @@ fun ScannerHubScreen(
                                 listOf(ScannerGlassPalette.CyanGlow, ScannerGlassPalette.VioletGlow)
                             )
                         )
-                        .border(1.2.dp, Color.White.copy(alpha = 0.42f), CircleShape)
+                        .border(1.2.dp, ScannerGlassPalette.SubtleStroke, CircleShape)
                         .clickable { onLaunchPrimaryScan() }
                         .padding(horizontal = 30.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -930,12 +930,12 @@ fun ScannerHubScreen(
                     Icon(
                         imageVector = Icons.Default.DocumentScanner,
                         contentDescription = if (isArabic) "مسح مستند" else "Scan",
-                        tint = Color(0xFF04101B),
+                        tint = ScannerGlassPalette.OnAccent,
                         modifier = Modifier.size(22.dp)
                     )
                     Text(
                         text = if (isArabic) "مسح مستند" else "Scan",
-                        color = Color(0xFF04101B),
+                        color = ScannerGlassPalette.OnAccent,
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 15.5.sp
                     )
@@ -969,9 +969,11 @@ fun ScannerHubScreen(
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = ScannerGlassPalette.CyanGlow,
-                        unfocusedBorderColor = Color.White.copy(alpha = 0.24f),
+                        unfocusedBorderColor = ScannerGlassPalette.SubtleStroke,
                         focusedTextColor = ScannerGlassPalette.TextPrimary,
-                        unfocusedTextColor = ScannerGlassPalette.TextPrimary
+                        unfocusedTextColor = ScannerGlassPalette.TextPrimary,
+                        focusedLabelColor = ScannerGlassPalette.CyanGlow,
+                        unfocusedLabelColor = ScannerGlassPalette.TextSecondary
                     ),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -982,7 +984,7 @@ fun ScannerHubScreen(
                                 .size(30.dp)
                                 .clip(CircleShape)
                                 .background(Color(argb.toInt()))
-                                .border(if (folderColor == argb) 2.5.dp else 0.dp, Color.White, CircleShape)
+                                .border(if (folderColor == argb) 2.5.dp else 0.dp, ScannerGlassPalette.TextPrimary, CircleShape)
                                 .clickable { folderColor = argb }
                         )
                     }
@@ -999,7 +1001,7 @@ fun ScannerHubScreen(
                             showCreateFolderDialog = false
                         }
                     ) {
-                        Text(if (isArabic) "إنشاء" else "Create", color = Color(0xFF04101B), fontWeight = FontWeight.Bold)
+                        Text(if (isArabic) "إنشاء" else "Create", color = ScannerGlassPalette.OnAccent, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -1055,8 +1057,8 @@ fun ScannerHubScreen(
                         modifier = Modifier
                             .size(52.dp)
                             .clip(RoundedCornerShape(14.dp))
-                            .background(Color(0xFF0A1224))
-                            .border(0.8.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(14.dp)),
+                            .background(ScannerGlassPalette.ThumbnailFrame)
+                            .border(0.8.dp, ScannerGlassPalette.SubtleStroke, RoundedCornerShape(14.dp)),
                         contentAlignment = Alignment.Center
                     ) {
                         if (!isDocUnlocked) {
@@ -1111,7 +1113,7 @@ fun ScannerHubScreen(
                     }
                 }
 
-                HorizontalDivider(color = Color.White.copy(alpha = 0.10f))
+                HorizontalDivider(color = ScannerGlassPalette.SubtleDivider)
 
                 // 1. Pin / Unpin
                 ContextMenuActionRow(
@@ -1244,7 +1246,7 @@ fun ScannerHubScreen(
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = ScannerGlassPalette.CyanGlow,
-                        unfocusedBorderColor = Color.White.copy(alpha = 0.24f),
+                        unfocusedBorderColor = ScannerGlassPalette.SubtleStroke,
                         focusedTextColor = ScannerGlassPalette.TextPrimary,
                         unfocusedTextColor = ScannerGlassPalette.TextPrimary
                     ),
@@ -1262,7 +1264,7 @@ fun ScannerHubScreen(
                             docToRename = null
                         }
                     ) {
-                        Text(if (isArabic) "حفظ" else "Save", color = Color(0xFF04101B), fontWeight = FontWeight.Bold)
+                        Text(if (isArabic) "حفظ" else "Save", color = ScannerGlassPalette.OnAccent, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -1373,7 +1375,7 @@ private fun FilterChipPill(
             .background(if (selected) accentColor.copy(alpha = 0.18f) else ScannerGlassPalette.FrostedCardDark)
             .border(
                 width = 1.dp,
-                color = if (selected) accentColor.copy(alpha = 0.70f) else Color.White.copy(alpha = 0.12f),
+                color = if (selected) accentColor.copy(alpha = 0.70f) else ScannerGlassPalette.SubtleStroke,
                 shape = CircleShape
             )
             .clickable(onClick = onClick)
@@ -1531,7 +1533,7 @@ private fun DocumentGridCard(
                 .fillMaxWidth()
                 .height(136.dp)
                 .clip(RoundedCornerShape(14.dp))
-                .background(Color(0xFF0A1224)),
+                .background(ScannerGlassPalette.ThumbnailFrame),
             contentAlignment = Alignment.Center
         ) {
             if (!isUnlocked) {
@@ -1553,7 +1555,7 @@ private fun DocumentGridCard(
                         .align(Alignment.TopStart)
                         .padding(6.dp)
                         .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.68f))
+                        .background(ScannerGlassPalette.FrostedElevated)
                         .padding(5.dp)
                 ) {
                     Icon(
@@ -1570,7 +1572,7 @@ private fun DocumentGridCard(
                     .align(Alignment.TopEnd)
                     .padding(6.dp)
                     .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.65f))
+                    .background(ScannerGlassPalette.FrostedElevated)
                     .padding(horizontal = 8.dp, vertical = 2.dp)
             ) {
                 Text("${doc.pageCount}p", color = ScannerGlassPalette.CyanGlow, fontSize = 10.sp, fontWeight = FontWeight.Bold)
@@ -1696,7 +1698,7 @@ private fun DocumentListCard(
             modifier = Modifier
                 .size(56.dp)
                 .clip(RoundedCornerShape(12.dp))
-                .background(Color(0xFF0A1224)),
+                .background(ScannerGlassPalette.ThumbnailFrame),
             contentAlignment = Alignment.Center
         ) {
             if (!isUnlocked) {

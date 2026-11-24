@@ -109,6 +109,7 @@ fun FluffyHomeScreen(
     val selectedThemeId by viewModel.selectedThemeId.collectAsState()
     val isColoredBordersEnabled by viewModel.isColoredBordersEnabled.collectAsState()
     val fabMenuStyle by viewModel.fabMenuStyle.collectAsState()
+    val selectedFontId by viewModel.selectedFontId.collectAsState()
     val isBiometricEnabled by viewModel.isBiometricEnabled.collectAsState()
     val isScreenshotProtectionEnabled by viewModel.isScreenshotProtectionEnabled.collectAsState()
     val isVaultLockEnabled by viewModel.isVaultLockEnabled.collectAsState()
@@ -1123,6 +1124,8 @@ fun FluffyHomeScreen(
                 fabMenuStyle = fabMenuStyle,
                 onSelectFabMenuStyle = { viewModel.setFabMenuStyle(it) },
                 onToggleCustomFabMenu = { viewModel.setCustomFabMenuEnabled(it) },
+                selectedFontId = selectedFontId,
+                onSelectFont = { viewModel.selectFont(it) },
                 onOpenThemes = { viewModel.openThemesScreen(fromSettings = true) },
                 trashedCount = trashedNotes.size,
                 archivedCount = archivedNotes.size,

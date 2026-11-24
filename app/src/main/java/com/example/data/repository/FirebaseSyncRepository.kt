@@ -382,6 +382,7 @@ object FirebaseSyncRepository {
             "coloredContainerBorders" to settings.coloredContainerBorders,
             "isPremium" to settings.isPremium,
             "fabMenuStyle" to settings.fabMenuStyle,
+            "selectedFontId" to settings.selectedFontId,
             "updatedAt" to updatedAt,
             "serverUpdatedAt" to FieldValue.serverTimestamp()
         )
@@ -635,7 +636,8 @@ object FirebaseSyncRepository {
             coloredContainerBorders = getBoolean("coloredContainerBorders") ?: true,
             notesViewMode = getString("notesViewMode") ?: if (isGrid) "grid" else "list",
             isPremium = getBoolean("isPremium") ?: false,
-            fabMenuStyle = getString("fabMenuStyle") ?: "vertical_stack"
+            fabMenuStyle = getString("fabMenuStyle") ?: "vertical_stack",
+            selectedFontId = getString("selectedFontId") ?: "sans_serif"
         )
         return RemoteSettingsPayload(
             snapshot = snapshot,

@@ -14,6 +14,8 @@ import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.sp
+import com.example.ui.theme.AppFontCatalog
+import com.example.ui.theme.AppFontOption
 import com.example.ui.theme.EditorFontFamily
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -1952,34 +1954,43 @@ object RichTextCodec {
         return -1
     }
 
+    const val OBLIQUE_SPAN_TAG = "fluffy_oblique_span"
+
+    private fun encodeObliqueColor(color: Color): String =
+        if (color == Color.Unspecified) "default" else color.value.toString()
+
+    fun decodeObliqueColor(raw: String, fallback: Color): Color =
+        if (raw == "default") fallback else raw.toULongOrNull()?.let { Color(it) } ?: fallback
+
     private fun spanStyleForKind(
         kind: InlineKind,
         accentColor: Color,
-        isDark: Boolean
+        isDark: Boolean,
+        editorFontFamily: FontFamily = EditorFontFamily
     ): SpanStyle {
         return when (kind) {
             InlineKind.BOLD_ITALIC -> SpanStyle(
-                fontFamily = EditorFontFamily,
+                fontFamily = editorFontFamily,
                 fontWeight = FontWeight.Bold,
                 fontStyle = FontStyle.Italic,
                 fontSynthesis = FontSynthesis.All
             )
             InlineKind.BOLD -> SpanStyle(
-                fontFamily = EditorFontFamily,
+                fontFamily = editorFontFamily,
                 fontWeight = FontWeight.Bold,
                 fontSynthesis = FontSynthesis.All
             )
             InlineKind.ITALIC -> SpanStyle(
-                fontFamily = EditorFontFamily,
+                fontFamily = editorFontFamily,
                 fontStyle = FontStyle.Italic,
                 fontSynthesis = FontSynthesis.All
             )
             InlineKind.UNDERLINE -> SpanStyle(
-                fontFamily = EditorFontFamily,
+                fontFamily = editorFontFamily,
                 textDecoration = TextDecoration.Underline
             )
             InlineKind.STRIKETHROUGH -> SpanStyle(
-                fontFamily = EditorFontFamily,
+                fontFamily = editorFontFamily,
                 textDecoration = TextDecoration.LineThrough
             )
             InlineKind.CODE -> SpanStyle(
@@ -1988,10 +1999,49 @@ object RichTextCodec {
                 color = accentColor
             )
             InlineKind.HIGHLIGHT -> SpanStyle(
-                fontFamily = EditorFontFamily,
+                fontFamily = editorFontFamily,
                 background = Color(0xFFFBBF24).copy(alpha = if (isDark) 0.34f else 0.42f),
                 fontWeight = FontWeight.Medium
             )
+        }
+    }
+
+    private fun appendTextWithObliqueCheck(
+        builder: AnnotatedString.Builder,
+        text: String,
+        style: SpanStyle?,
+        fontOption: AppFontOption
+    ) {
+        if (text.isEmpty()) return
+        if (style != null && style.fontStyle == FontStyle.Italic) {
+            val runs = AppFontCatalog.splitObliqueRuns(text, fontOption)
+            for (run in runs) {
+                val outStart = builder.length
+                builder.append(run.text)
+                if (builder.length > outStart) {
+                    if (run.needsObliqueSynthesis) {
+                        builder.addStyle(
+                            style.copy(fontStyle = FontStyle.Normal, color = Color.Transparent),
+                            outStart,
+                            builder.length
+                        )
+                        builder.addStringAnnotation(
+                            tag = OBLIQUE_SPAN_TAG,
+                            annotation = encodeObliqueColor(style.color),
+                            start = outStart,
+                            end = builder.length
+                        )
+                    } else {
+                        builder.addStyle(style, outStart, builder.length)
+                    }
+                }
+            }
+            return
+        }
+        val outStart = builder.length
+        builder.append(text)
+        if (style != null && builder.length > outStart) {
+            builder.addStyle(style, outStart, builder.length)
         }
     }
 
@@ -2003,7 +2053,8 @@ object RichTextCodec {
         rawLine: String,
         accentColor: Color,
         isDark: Boolean,
-        extraInnerStyle: SpanStyle? = null
+        extraInnerStyle: SpanStyle? = null,
+        fontOption: AppFontOption = AppFontCatalog.defaultFont
     ): AnnotatedString {
         val builder = AnnotatedString.Builder()
         appendInlineSegment(
@@ -2013,7 +2064,8 @@ object RichTextCodec {
             end = rawLine.length,
             accentColor = accentColor,
             isDark = isDark,
-            inheritedStyle = extraInnerStyle
+            inheritedStyle = extraInnerStyle,
+            fontOption = fontOption
         )
         return builder.toAnnotatedString()
     }
@@ -2025,7 +2077,8 @@ object RichTextCodec {
         end: Int,
         accentColor: Color,
         isDark: Boolean,
-        inheritedStyle: SpanStyle?
+        inheritedStyle: SpanStyle?,
+        fontOption: AppFontOption
     ) {
         var cursor = start
         while (cursor < end) {
@@ -2033,32 +2086,20 @@ object RichTextCodec {
             val matched = firstInlineMatch(sub)
             if (matched == null) {
                 val text = raw.substring(cursor, end)
-                val outStart = builder.length
-                builder.append(text)
-                if (inheritedStyle != null && builder.length > outStart) {
-                    builder.addStyle(inheritedStyle, outStart, builder.length)
-                }
+                appendTextWithObliqueCheck(builder, text, inheritedStyle, fontOption)
                 return
             }
             if (matched.rawStart > 0) {
                 val plain = sub.substring(0, matched.rawStart)
-                val outStart = builder.length
-                builder.append(plain)
-                if (inheritedStyle != null && builder.length > outStart) {
-                    builder.addStyle(inheritedStyle, outStart, builder.length)
-                }
+                appendTextWithObliqueCheck(builder, plain, inheritedStyle, fontOption)
             }
-            val kindStyle = spanStyleForKind(matched.kind, accentColor, isDark)
+            val kindStyle = spanStyleForKind(matched.kind, accentColor, isDark, fontOption.fontFamily)
             val merged = mergeInlineStyles(inheritedStyle, kindStyle)
             val absInnerStart = cursor + matched.innerStart
             val absInnerEnd = cursor + matched.innerEnd
             if (matched.kind == InlineKind.CODE) {
                 val codeText = raw.substring(absInnerStart, absInnerEnd)
-                val outStart = builder.length
-                builder.append(codeText)
-                if (builder.length > outStart) {
-                    builder.addStyle(merged, outStart, builder.length)
-                }
+                appendTextWithObliqueCheck(builder, codeText, merged, fontOption)
             } else {
                 appendInlineSegment(
                     builder = builder,
@@ -2067,7 +2108,8 @@ object RichTextCodec {
                     end = absInnerEnd,
                     accentColor = accentColor,
                     isDark = isDark,
-                    inheritedStyle = merged
+                    inheritedStyle = merged,
+                    fontOption = fontOption
                 )
             }
             cursor += matched.rawEnd
@@ -2130,10 +2172,11 @@ object RichTextCodec {
     fun createRichVisualTransformation(
         accentColor: Color,
         metaColor: Color,
-        isDark: Boolean
+        isDark: Boolean,
+        fontOption: AppFontOption = AppFontCatalog.defaultFont
     ): VisualTransformation {
         return VisualTransformation { annotatedString ->
-            transformForEditor(annotatedString.text, accentColor, metaColor, isDark)
+            transformForEditor(annotatedString.text, accentColor, metaColor, isDark, fontOption)
         }
     }
 
@@ -2141,14 +2184,17 @@ object RichTextCodec {
         raw: String,
         accentColor: Color,
         metaColor: Color,
-        isDark: Boolean
+        isDark: Boolean,
+        fontOption: AppFontOption = AppFontCatalog.defaultFont
     ): TransformedText {
         if (raw.isEmpty()) {
             return TransformedText(AnnotatedString(""), OffsetMapping.Identity)
         }
 
+        val activeFontFamily = fontOption.fontFamily
         val sb = StringBuilder(raw.length)
         val spans = mutableListOf<AnnotatedString.Range<SpanStyle>>()
+        val obliqueAnnotations = mutableListOf<AnnotatedString.Range<String>>()
         val origToTrans = IntArray(raw.length + 1)
         val transToOrigList = ArrayList<Int>(raw.length + 1)
         var cursorOrig = 0
@@ -2163,6 +2209,43 @@ object RichTextCodec {
 
         fun emitRawSlice(start: Int, end: Int, style: SpanStyle? = null) {
             advanceHidden(start)
+            val sliceText = if (end > start) raw.substring(start, end) else ""
+            if (style != null && style.fontStyle == FontStyle.Italic && sliceText.isNotEmpty()) {
+                val runs = AppFontCatalog.splitObliqueRuns(sliceText, fontOption)
+                var localOffset = start
+                for (run in runs) {
+                    val runTransStart = sb.length
+                    for (k in run.text.indices) {
+                        origToTrans[localOffset] = sb.length
+                        sb.append(raw[localOffset])
+                        transToOrigList.add(localOffset)
+                        localOffset++
+                    }
+                    if (sb.length > runTransStart) {
+                        if (run.needsObliqueSynthesis) {
+                            spans.add(
+                                AnnotatedString.Range(
+                                    style.copy(fontStyle = FontStyle.Normal, color = Color.Transparent),
+                                    runTransStart,
+                                    sb.length
+                                )
+                            )
+                            obliqueAnnotations.add(
+                                AnnotatedString.Range(
+                                    encodeObliqueColor(style.color),
+                                    runTransStart,
+                                    sb.length,
+                                    OBLIQUE_SPAN_TAG
+                                )
+                            )
+                        } else {
+                            spans.add(AnnotatedString.Range(style, runTransStart, sb.length))
+                        }
+                    }
+                }
+                cursorOrig = end
+                return
+            }
             val transStart = sb.length
             for (idx in start until end) {
                 origToTrans[idx] = sb.length
@@ -2203,7 +2286,7 @@ object RichTextCodec {
                 if (match.rawStart > 0) {
                     emitRawSlice(pos, pos + match.rawStart, inheritedStyle)
                 }
-                val kindStyle = spanStyleForKind(match.kind, accentColor, isDark)
+                val kindStyle = spanStyleForKind(match.kind, accentColor, isDark, activeFontFamily)
                 val merged = mergeInlineStyles(inheritedStyle, kindStyle)
                 val openAbsStart = pos + match.rawStart
                 val innerAbsStart = pos + match.innerStart
@@ -2217,7 +2300,6 @@ object RichTextCodec {
                     emitInlineWithOffsets(innerAbsStart, innerAbsEnd, merged)
                 }
                 advanceHidden(closeAbsEnd)
-                // If somehow match had zero chars before openAbsStart, ensure progress
                 if (cursorOrig < openAbsStart) advanceHidden(openAbsStart)
                 pos = closeAbsEnd
             }
@@ -2260,7 +2342,7 @@ object RichTextCodec {
                             lineStart + 4,
                             lineEnd,
                             SpanStyle(
-                                fontFamily = EditorFontFamily,
+                                fontFamily = activeFontFamily,
                                 fontSynthesis = FontSynthesis.All,
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold,
@@ -2274,7 +2356,7 @@ object RichTextCodec {
                             lineStart + 3,
                             lineEnd,
                             SpanStyle(
-                                fontFamily = EditorFontFamily,
+                                fontFamily = activeFontFamily,
                                 fontSynthesis = FontSynthesis.All,
                                 fontSize = 20.5.sp,
                                 fontWeight = FontWeight.ExtraBold
@@ -2287,7 +2369,7 @@ object RichTextCodec {
                             lineStart + 2,
                             lineEnd,
                             SpanStyle(
-                                fontFamily = EditorFontFamily,
+                                fontFamily = activeFontFamily,
                                 fontSynthesis = FontSynthesis.All,
                                 fontSize = 25.sp,
                                 fontWeight = FontWeight.Black
@@ -2305,7 +2387,7 @@ object RichTextCodec {
                             lineStart + 6,
                             lineEnd,
                             SpanStyle(
-                                fontFamily = EditorFontFamily,
+                                fontFamily = activeFontFamily,
                                 fontSynthesis = FontSynthesis.All,
                                 color = metaColor,
                                 textDecoration = TextDecoration.LineThrough
@@ -2341,7 +2423,7 @@ object RichTextCodec {
                             lineStart + 5,
                             lineEnd,
                             SpanStyle(
-                                fontFamily = EditorFontFamily,
+                                fontFamily = activeFontFamily,
                                 fontSynthesis = FontSynthesis.All,
                                 fontWeight = FontWeight.Medium,
                                 background = accentColor.copy(alpha = if (isDark) 0.16f else 0.10f)
@@ -2359,7 +2441,7 @@ object RichTextCodec {
                             lineStart + 2,
                             lineEnd,
                             SpanStyle(
-                                fontFamily = EditorFontFamily,
+                                fontFamily = activeFontFamily,
                                 fontStyle = FontStyle.Italic,
                                 fontSynthesis = FontSynthesis.All,
                                 color = metaColor
@@ -2416,10 +2498,12 @@ object RichTextCodec {
             }
         }
 
-        return TransformedText(
-            AnnotatedString(text = sb.toString(), spanStyles = spans),
-            mapping
-        )
+        val transformedAnnotated = AnnotatedString.Builder(sb.toString()).apply {
+            spans.forEach { addStyle(it.item, it.start, it.end) }
+            obliqueAnnotations.forEach { addStringAnnotation(it.tag, it.item, it.start, it.end) }
+        }.toAnnotatedString()
+
+        return TransformedText(transformedAnnotated, mapping)
     }
 
     // --- Structured Block Parser (Read Mode & Vault Draft Browser) ---
@@ -2427,7 +2511,8 @@ object RichTextCodec {
     fun parseRichBlocks(
         rawText: String,
         accentColor: Color,
-        isDark: Boolean
+        isDark: Boolean,
+        fontOption: AppFontOption = AppFontCatalog.defaultFont
     ): List<RichBlock> {
         if (rawText.isBlank()) return emptyList()
         val lines = rawText.split('\n')
@@ -2494,7 +2579,7 @@ object RichTextCodec {
                     blocks.add(
                         RichBlock.Heading(
                             3,
-                            renderInlineRichAnnotatedString(rawLine.drop(4), accentColor, isDark)
+                            renderInlineRichAnnotatedString(rawLine.drop(4), accentColor, isDark, fontOption = fontOption)
                         )
                     )
                 }
@@ -2502,7 +2587,7 @@ object RichTextCodec {
                     blocks.add(
                         RichBlock.Heading(
                             2,
-                            renderInlineRichAnnotatedString(rawLine.drop(3), accentColor, isDark)
+                            renderInlineRichAnnotatedString(rawLine.drop(3), accentColor, isDark, fontOption = fontOption)
                         )
                     )
                 }
@@ -2510,7 +2595,7 @@ object RichTextCodec {
                     blocks.add(
                         RichBlock.Heading(
                             1,
-                            renderInlineRichAnnotatedString(rawLine.drop(2), accentColor, isDark)
+                            renderInlineRichAnnotatedString(rawLine.drop(2), accentColor, isDark, fontOption = fontOption)
                         )
                     )
                 }
@@ -2519,7 +2604,7 @@ object RichTextCodec {
                         RichBlock.ChecklistBlockItem(
                             checked = true,
                             lineStartOffset = lineStarts[i],
-                            text = renderInlineRichAnnotatedString(rawLine.drop(6), accentColor, isDark)
+                            text = renderInlineRichAnnotatedString(rawLine.drop(6), accentColor, isDark, fontOption = fontOption)
                         )
                     )
                 }
@@ -2528,14 +2613,14 @@ object RichTextCodec {
                         RichBlock.ChecklistBlockItem(
                             checked = false,
                             lineStartOffset = lineStarts[i],
-                            text = renderInlineRichAnnotatedString(rawLine.drop(6), accentColor, isDark)
+                            text = renderInlineRichAnnotatedString(rawLine.drop(6), accentColor, isDark, fontOption = fontOption)
                         )
                     )
                 }
                 rawLine.startsWith("- ") || rawLine.startsWith("• ") -> {
                     blocks.add(
                         RichBlock.BulletItem(
-                            renderInlineRichAnnotatedString(rawLine.drop(2), accentColor, isDark)
+                            renderInlineRichAnnotatedString(rawLine.drop(2), accentColor, isDark, fontOption = fontOption)
                         )
                     )
                 }
@@ -2543,7 +2628,7 @@ object RichTextCodec {
                     blocks.add(
                         RichBlock.Quote(
                             isCallout = true,
-                            text = renderInlineRichAnnotatedString(rawLine.drop(5), accentColor, isDark)
+                            text = renderInlineRichAnnotatedString(rawLine.drop(5), accentColor, isDark, fontOption = fontOption)
                         )
                     )
                 }
@@ -2551,7 +2636,17 @@ object RichTextCodec {
                     blocks.add(
                         RichBlock.Quote(
                             isCallout = false,
-                            text = renderInlineRichAnnotatedString(rawLine.drop(2), accentColor, isDark)
+                            text = renderInlineRichAnnotatedString(
+                                rawLine.drop(2),
+                                accentColor,
+                                isDark,
+                                extraInnerStyle = SpanStyle(
+                                    fontFamily = fontOption.fontFamily,
+                                    fontStyle = FontStyle.Italic,
+                                    fontSynthesis = FontSynthesis.All
+                                ),
+                                fontOption = fontOption
+                            )
                         )
                     )
                 }
@@ -2565,14 +2660,15 @@ object RichTextCodec {
                                 text = renderInlineRichAnnotatedString(
                                     rawLine.drop(numMatch.value.length),
                                     accentColor,
-                                    isDark
+                                    isDark,
+                                    fontOption = fontOption
                                 )
                             )
                         )
                     } else if (rawLine.isNotEmpty()) {
                         blocks.add(
                             RichBlock.Paragraph(
-                                renderInlineRichAnnotatedString(rawLine, accentColor, isDark)
+                                renderInlineRichAnnotatedString(rawLine, accentColor, isDark, fontOption = fontOption)
                             )
                         )
                     } else {
