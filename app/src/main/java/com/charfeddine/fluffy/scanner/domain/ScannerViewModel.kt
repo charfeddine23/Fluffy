@@ -57,7 +57,11 @@ import java.util.concurrent.ConcurrentHashMap
 sealed interface ScannerSubRoute {
     data object Hub : ScannerSubRoute
     data class Camera(val appendToDocId: String? = null) : ScannerSubRoute
-    data class CropAndFilter(val appendToDocId: String? = null) : ScannerSubRoute
+    data class CropAndFilter(
+        val appendToDocId: String? = null,
+        val editDocumentId: String? = null,
+        val editPageId: String? = null
+    ) : ScannerSubRoute
     data class DocumentDetail(val documentId: String) : ScannerSubRoute
 }
 
@@ -83,7 +87,7 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
     val hasPinConfigured = MutableStateFlow(CryptoVaultHelper.hasPinConfigured(application))
 
     // Active Capture / Batch / Crop Pipeline State
-    val activeScanMode = MutableStateFlow(ScanMode.ID_CARD)
+    val activeScanMode = MutableStateFlow(ScanMode.DOCUMENT)
     val idCardPrintMode = MutableStateFlow(IdCardPrintMode.RECTO)
     val batchFrames = MutableStateFlow<List<BatchCapturedFrame>>(emptyList())
     val idCardFrontRawPath = MutableStateFlow<String?>(null)
@@ -461,6 +465,46 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                     }
 
                     when (mode) {
+                        ScanMode.DOCUMENT -> {
+                            val docQuad = when {
+                                mappedLiveQuad != null && DocumentImageProcessor.isValidDocumentQuad(mappedLiveQuad) ->
+                                    mappedLiveQuad
+                                else -> {
+                                    val detected = DocumentImageProcessor.detectQuadFromBitmap(
+                                        bitmap = rawBmp,
+                                        isIdCardHint = false
+                                    )
+                                    if (DocumentImageProcessor.isValidDocumentQuad(detected)) detected
+                                    else DocumentQuad.SAFE_DEFAULT_MARGIN
+                                }
+                            }
+                            val thumbWarped = DocumentImageProcessor.warpPerspective(rawBmp, docQuad, 900)
+                            val thumbEnhanced = DocumentImageProcessor.applyEnhancements(
+                                source = thumbWarped,
+                                filter = ScannerFilterType.MAGIC_COLOR,
+                                brightness = 0f,
+                                contrast = 1.05f,
+                                sharpness = 0.2f,
+                                rotationDeg = 0,
+                                enableSuperRes = false
+                            )
+                            if (thumbWarped !== thumbEnhanced && !thumbWarped.isRecycled) thumbWarped.recycle()
+                            val thumbFile = File(repository.docsRootDir, "thumb_doc_${UUID.randomUUID()}.jpg")
+                            withContext(Dispatchers.IO) {
+                                DocumentImageProcessor.saveBitmapAsJpeg(thumbEnhanced, thumbFile, 88)
+                            }
+                            if (!thumbEnhanced.isRecycled) thumbEnhanced.recycle()
+                            if (!rawBmp.isRecycled) rawBmp.recycle()
+                            listOf(
+                                BatchCapturedFrame(
+                                    rawImagePath = file.absolutePath,
+                                    processedImagePath = thumbFile.absolutePath,
+                                    detectedQuad = docQuad,
+                                    filter = ScannerFilterType.MAGIC_COLOR
+                                )
+                            )
+                        }
+
                         ScanMode.ID_CARD -> {
                             val printMode = idCardPrintMode.value
                             val firstPath = idCardFrontRawPath.value
@@ -1223,6 +1267,124 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun openPageCropEditor(docId: String, page: ScannedPageEntity) {
+        val rawPath = page.originalImagePath.takeIf { it.isNotBlank() && File(it).exists() }
+            ?: page.processedImagePath
+        if (rawPath.isBlank() || !File(rawPath).exists()) return
+        val frame = BatchCapturedFrame(
+            id = page.id,
+            rawImagePath = rawPath,
+            processedImagePath = page.processedImagePath.ifBlank { rawPath },
+            detectedQuad = DocumentQuad.fromJson(page.cornersJson),
+            filter = ScannerFilterType.fromId(page.filterId),
+            brightness = page.brightness,
+            contrast = page.contrast,
+            sharpness = page.sharpness,
+            rotationDeg = page.rotationDeg,
+            ocrText = page.ocrText
+        )
+        batchFrames.value = listOf(frame)
+        idCardFrontRawPath.value = null
+        idCardFrontQuad = null
+        activeCropIndex.value = 0
+        currentRoute.value = ScannerSubRoute.CropAndFilter(
+            appendToDocId = null,
+            editDocumentId = docId,
+            editPageId = page.id
+        )
+    }
+
+    fun saveEditedPageFrame(docId: String, pageId: String, isArabic: Boolean) {
+        val frame = batchFrames.value.firstOrNull() ?: return
+        viewModelScope.launch {
+            isBusy.value = true
+            try {
+                val updated = withContext(Dispatchers.IO) {
+                    val existingDoc = repository.getDocumentOnce(docId) ?: return@withContext false
+                    val existingPages = repository.getPagesOnce(docId)
+                    val targetPage = existingPages.firstOrNull { it.id == pageId } ?: return@withContext false
+
+                    val rawPath = targetPage.originalImagePath.takeIf { it.isNotBlank() && File(it).exists() }
+                        ?: frame.rawImagePath
+                    val rawBmp = repository.decodeSampledPageBitmap(rawPath, 2400)
+                        ?: return@withContext false
+
+                    val enhanced = withContext(Dispatchers.Default) {
+                        val warped = DocumentImageProcessor.warpPerspective(rawBmp, frame.detectedQuad, 2400)
+                        if (rawBmp !== warped && !rawBmp.isRecycled) rawBmp.recycle()
+                        val out = DocumentImageProcessor.applyEnhancements(
+                            source = warped,
+                            filter = frame.filter,
+                            brightness = frame.brightness,
+                            contrast = frame.contrast,
+                            sharpness = frame.sharpness,
+                            rotationDeg = frame.rotationDeg
+                        )
+                        if (warped !== out && !warped.isRecycled) warped.recycle()
+                        out
+                    }
+
+                    val outFile = File(repository.docsRootDir, "page_${UUID.randomUUID()}.jpg")
+                    DocumentImageProcessor.saveBitmapAsJpeg(enhanced, outFile, 94)
+                    val ocrRes = OfflineOcrAndBarcodeEngine.extractTextOffline(enhanced)
+                    if (!enhanced.isRecycled) enhanced.recycle()
+
+                    repository.encryptFileIfLocked(outFile, existingDoc.isLocked)
+
+                    val oldProcessed = targetPage.processedImagePath
+                    if (oldProcessed.isNotBlank() &&
+                        oldProcessed != outFile.absolutePath &&
+                        oldProcessed != targetPage.originalImagePath
+                    ) {
+                        runCatching { File(oldProcessed).delete() }
+                    }
+
+                    val updatedPage = targetPage.copy(
+                        originalImagePath = rawPath,
+                        processedImagePath = outFile.absolutePath,
+                        cornersJson = frame.detectedQuad.toJson(),
+                        filterId = frame.filter.id,
+                        brightness = frame.brightness,
+                        contrast = frame.contrast,
+                        sharpness = frame.sharpness,
+                        rotationDeg = frame.rotationDeg,
+                        ocrText = ocrRes.fullText.ifBlank { targetPage.ocrText }
+                    )
+                    repository.upsertPage(updatedPage)
+                    repository.syncDocumentStats(docId)
+                    markDocumentModified(docId)
+                    true
+                }
+
+                if (updated) {
+                    batchFrames.value = emptyList()
+                    currentRoute.value = ScannerSubRoute.DocumentDetail(docId)
+                    statusMessage.value = if (isArabic) {
+                        "تم تحديث حواف وتحسينات الصفحة ✓"
+                    } else {
+                        "Page edges & enhancements updated ✓"
+                    }
+                } else {
+                    statusMessage.value = if (isArabic) {
+                        "تعذر حفظ تعديل الصفحة، حاول مجدداً"
+                    } else {
+                        "Unable to save page changes, please retry"
+                    }
+                }
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                throw ce
+            } catch (_: Throwable) {
+                statusMessage.value = if (isArabic) {
+                    "تعذر حفظ تعديل الصفحة، حاول مجدداً"
+                } else {
+                    "Unable to save page changes, please retry"
+                }
+            } finally {
+                isBusy.value = false
+            }
+        }
+    }
+
     // --- Document Detail & Page Management Operations ---
     fun observeDocument(docId: String): Flow<ScannedDocumentEntity?> = repository.observeDocument(docId)
 
@@ -1338,10 +1500,24 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                 val srcFile = File(page.processedImagePath)
                 val copyFile = File(repository.docsRootDir, "dup_${UUID.randomUUID()}.jpg")
                 if (srcFile.exists()) srcFile.copyTo(copyFile, overwrite = true)
+
+                val srcOrig = File(page.originalImagePath)
+                val copyOrigPath = if (page.originalImagePath.isNotBlank() &&
+                    page.originalImagePath != page.processedImagePath &&
+                    srcOrig.exists()
+                ) {
+                    val rawDup = File(repository.docsRootDir, "dup_raw_${UUID.randomUUID()}.jpg")
+                    srcOrig.copyTo(rawDup, overwrite = true)
+                    rawDup.absolutePath
+                } else {
+                    copyFile.absolutePath
+                }
+
                 val pages = repository.getPagesOnce(docId)
                 val inserted = page.copy(
                     id = UUID.randomUUID().toString(),
                     pageOrder = page.pageOrder + 1,
+                    originalImagePath = copyOrigPath,
                     processedImagePath = copyFile.absolutePath
                 )
                 val updated = buildList {
@@ -1375,6 +1551,22 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                     val bmp = repository.decodePageBitmap(page.processedImagePath)
                     if (bmp != null) {
                         DocumentImageProcessor.saveBitmapAsJpeg(bmp, destImg, 92)
+                        val destRawPath = if (page.originalImagePath.isNotBlank() &&
+                            page.originalImagePath != page.processedImagePath &&
+                            File(page.originalImagePath).exists()
+                        ) {
+                            val rawExtFile = File(repository.docsRootDir, "ext_raw_${UUID.randomUUID()}.jpg")
+                            val rawOrigBmp = repository.decodeSampledPageBitmap(page.originalImagePath, 2560)
+                            if (rawOrigBmp != null) {
+                                DocumentImageProcessor.saveBitmapAsJpeg(rawOrigBmp, rawExtFile, 95)
+                                rawOrigBmp.recycle()
+                                rawExtFile.absolutePath
+                            } else {
+                                destImg.absolutePath
+                            }
+                        } else {
+                            destImg.absolutePath
+                        }
                         val pdfFile = File(repository.docsRootDir, "doc_$newDocId.pdf")
                         PdfEngine.buildPdfFromBitmaps(pdfFile, listOf(PdfRenderedPageInput(bmp)))
                         bmp.recycle()
@@ -1393,7 +1585,7 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                             id = UUID.randomUUID().toString(),
                             documentId = newDocId,
                             pageOrder = 0,
-                            originalImagePath = destImg.absolutePath,
+                            originalImagePath = destRawPath,
                             processedImagePath = destImg.absolutePath
                         )
                         repository.upsertDocument(newDoc)

@@ -1,8 +1,5 @@
 package com.charfeddine.fluffy.scanner.ui.components
 
-import android.app.Activity
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -25,11 +22,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -43,7 +38,6 @@ import com.charfeddine.fluffy.scanner.ui.screens.DocumentDetailEditorScreen
 import com.charfeddine.fluffy.scanner.ui.screens.ScannerHubScreen
 import com.charfeddine.fluffy.scanner.ui.theme.ScannerGlassPalette
 import com.charfeddine.fluffy.scanner.ui.theme.scannerGlassSurface
-import com.charfeddine.fluffy.scanner.utils.MlKitDocumentScannerHelper
 
 @Composable
 fun ScannerRootHost(
@@ -58,46 +52,7 @@ fun ScannerRootHost(
     val hasPin by scannerViewModel.hasPinConfigured.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    val context = LocalContext.current
     var pendingUnlockTarget by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
-    var pendingScanAppendDocId by rememberSaveable { mutableStateOf<String?>(null) }
-
-    val mlKitScannerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartIntentSenderForResult()
-    ) { activityResult ->
-        val appendTarget = pendingScanAppendDocId
-        pendingScanAppendDocId = null
-        if (activityResult.resultCode == Activity.RESULT_OK) {
-            val payload = MlKitDocumentScannerHelper.parseResult(activityResult.data)
-            if (payload != null) {
-                scannerViewModel.importMlKitScanResult(
-                    payload = payload,
-                    appendToDocId = appendTarget,
-                    isArabic = isArabic
-                )
-            } else {
-                scannerViewModel.openCameraScanner(
-                    appendToDocId = appendTarget,
-                    initialMode = ScanMode.ID_CARD
-                )
-            }
-        }
-    }
-
-    fun launchGoogleScanner(appendToDocId: String?) {
-        pendingScanAppendDocId = appendToDocId
-        MlKitDocumentScannerHelper.launch(
-            context = context,
-            launcher = mlKitScannerLauncher,
-            onFallbackToCameraX = {
-                pendingScanAppendDocId = null
-                scannerViewModel.openCameraScanner(
-                    appendToDocId = appendToDocId,
-                    initialMode = ScanMode.ID_CARD
-                )
-            }
-        )
-    }
 
     LaunchedEffect(statusMsg) {
         statusMsg?.let {
@@ -120,14 +75,24 @@ fun ScannerRootHost(
                     ScannerHubScreen(
                         scannerViewModel = scannerViewModel,
                         isArabic = isArabic,
-                        onLaunchPrimaryScan = { launchGoogleScanner(appendToDocId = null) },
+                        onLaunchPrimaryScan = {
+                            scannerViewModel.openCameraScanner(
+                                appendToDocId = null,
+                                initialMode = ScanMode.DOCUMENT
+                            )
+                        },
                         onLaunchAppIdScanner = {
                             scannerViewModel.openCameraScanner(
                                 appendToDocId = null,
                                 initialMode = ScanMode.ID_CARD
                             )
                         },
-                        onAddMoreCamera = { docId -> launchGoogleScanner(appendToDocId = docId) },
+                        onAddMoreCamera = { docId ->
+                            scannerViewModel.openCameraScanner(
+                                appendToDocId = docId,
+                                initialMode = ScanMode.DOCUMENT
+                            )
+                        },
                         onRequestProtectedAccess = { targetId, onUnlocked ->
                             pendingUnlockTarget = targetId to onUnlocked
                         },
@@ -155,9 +120,17 @@ fun ScannerRootHost(
                     CropAndFilterScreen(
                         scannerViewModel = scannerViewModel,
                         appendToDocId = current.appendToDocId,
+                        editDocumentId = current.editDocumentId,
+                        editPageId = current.editPageId,
                         isArabic = isArabic,
                         onBackToCamera = {
-                            scannerViewModel.currentRoute.value = ScannerSubRoute.Camera(current.appendToDocId)
+                            val editDoc = current.editDocumentId
+                            if (editDoc != null) {
+                                scannerViewModel.batchFrames.value = emptyList()
+                                scannerViewModel.openDocumentDetail(editDoc)
+                            } else {
+                                scannerViewModel.currentRoute.value = ScannerSubRoute.Camera(current.appendToDocId)
+                            }
                         }
                     )
                 }
@@ -168,7 +141,10 @@ fun ScannerRootHost(
                         documentId = current.documentId,
                         isArabic = isArabic,
                         onAddMorePages = {
-                            launchGoogleScanner(appendToDocId = current.documentId)
+                            scannerViewModel.openCameraScanner(
+                                appendToDocId = current.documentId,
+                                initialMode = ScanMode.DOCUMENT
+                            )
                         },
                         onBackToHub = { scannerViewModel.navigateBackToHub() }
                     )

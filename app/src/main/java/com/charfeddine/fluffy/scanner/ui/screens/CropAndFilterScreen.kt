@@ -144,11 +144,14 @@ private enum class DragHandleTarget {
 fun CropAndFilterScreen(
     scannerViewModel: ScannerViewModel,
     appendToDocId: String?,
+    editDocumentId: String? = null,
+    editPageId: String? = null,
     isArabic: Boolean,
     onBackToCamera: () -> Unit
 ) {
     BackHandler { onBackToCamera() }
 
+    val isEditExistingMode = editDocumentId != null && editPageId != null
     val batchFrames by scannerViewModel.batchFrames.collectAsState()
     val activeIdx by scannerViewModel.activeCropIndex.collectAsState()
     val currentRoute by scannerViewModel.currentRoute.collectAsState()
@@ -167,7 +170,7 @@ fun CropAndFilterScreen(
     val uiScope = rememberCoroutineScope()
     val density = LocalDensity.current
     val pageStripState = rememberLazyListState()
-    var isCropPhase by rememberSaveable { mutableStateOf(true) }
+    var isCropPhase by rememberSaveable(frame.id, editPageId) { mutableStateOf(true) }
     var docTitle by remember { mutableStateOf("") }
     var showAdjustSliders by remember { mutableStateOf(false) }
     var activeToneMetric by remember { mutableIntStateOf(0) } // 0=Brightness, 1=Contrast, 2=Sharpness
@@ -212,7 +215,7 @@ fun CropAndFilterScreen(
     LaunchedEffect(frame.id, frame.rawImagePath, batchFrames, activeIdx) {
         if (rawBitmapCache[frame.id] == null) {
             val decoded = withContext(Dispatchers.IO) {
-                DocumentImageProcessor.decodeSampledBitmap(File(frame.rawImagePath), 1280)
+                scannerViewModel.repository.decodeSampledPageBitmap(frame.rawImagePath, 1280)
             }
             if (decoded != null) {
                 rawBitmapCache[frame.id] = decoded
@@ -227,7 +230,7 @@ fun CropAndFilterScreen(
         for (neighbor in neighbors) {
             if (rawBitmapCache[neighbor.id] == null) {
                 val nBmp = withContext(Dispatchers.IO) {
-                    DocumentImageProcessor.decodeSampledBitmap(File(neighbor.rawImagePath), 1280)
+                    scannerViewModel.repository.decodeSampledPageBitmap(neighbor.rawImagePath, 1280)
                 }
                 if (nBmp != null) {
                     rawBitmapCache[neighbor.id] = nBmp
@@ -285,7 +288,7 @@ fun CropAndFilterScreen(
                         }
                     } else {
                         val partnerRaw = withContext(Dispatchers.IO) {
-                            DocumentImageProcessor.decodeSampledBitmap(File(pairedPartner.rawImagePath), 700)
+                            scannerViewModel.repository.decodeSampledPageBitmap(pairedPartner.rawImagePath, 700)
                         }
                         if (partnerRaw != null) {
                             val isFrameFront = frame.idCardSide == IdCardSide.FRONT || pairedPartner.idCardSide == IdCardSide.BACK
@@ -405,7 +408,7 @@ fun CropAndFilterScreen(
 
                     if (pairedPartner != null) {
                         val partnerRaw = withContext(Dispatchers.IO) {
-                            DocumentImageProcessor.decodeSampledBitmap(File(pairedPartner.rawImagePath), 1280)
+                            scannerViewModel.repository.decodeSampledPageBitmap(pairedPartner.rawImagePath, 1280)
                         }
                         if (partnerRaw != null) {
                             val isFrameFront = frame.idCardSide == IdCardSide.FRONT || pairedPartner.idCardSide == IdCardSide.BACK
@@ -608,23 +611,27 @@ fun CropAndFilterScreen(
                     }
                 }
 
-                Box(
-                    modifier = Modifier
-                        .size(46.dp)
-                        .minimumInteractiveComponentSize()
-                        .iosLiquidGlass(shape = CircleShape, glowAccent = false, fillAlpha = 0.78f)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = ripple(bounded = true)
-                        ) { scannerViewModel.removeBatchFrame(activeIdx) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.DeleteOutline,
-                        contentDescription = if (isArabic) "حذف الصفحة" else "Remove Page",
-                        tint = ScannerGlassPalette.RoseGlow,
-                        modifier = Modifier.size(20.dp)
-                    )
+                if (isEditExistingMode) {
+                    Spacer(modifier = Modifier.size(46.dp))
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(46.dp)
+                            .minimumInteractiveComponentSize()
+                            .iosLiquidGlass(shape = CircleShape, glowAccent = false, fillAlpha = 0.78f)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = ripple(bounded = true)
+                            ) { scannerViewModel.removeBatchFrame(activeIdx) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DeleteOutline,
+                            contentDescription = if (isArabic) "حذف الصفحة" else "Remove Page",
+                            tint = ScannerGlassPalette.RoseGlow,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
             }
 
@@ -1286,7 +1293,15 @@ fun CropAndFilterScreen(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (appendToDocId == null) {
+                        if (isEditExistingMode) {
+                            Text(
+                                text = if (isArabic) "تعديل حواف وتحسين الصفحة" else "Edit Page Edges & Filter",
+                                color = ScannerGlassPalette.TextSecondary,
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.weight(1f)
+                            )
+                        } else if (appendToDocId == null) {
                             OutlinedTextField(
                                 value = docTitle,
                                 onValueChange = { docTitle = it },
@@ -1341,7 +1356,17 @@ fun CropAndFilterScreen(
                         }
 
                         Button(
-                            onClick = { scannerViewModel.commitBatchToDocument(docTitle, appendToDocId, isArabic) },
+                            onClick = {
+                                if (isEditExistingMode) {
+                                    scannerViewModel.saveEditedPageFrame(
+                                        docId = editDocumentId!!,
+                                        pageId = editPageId!!,
+                                        isArabic = isArabic
+                                    )
+                                } else {
+                                    scannerViewModel.commitBatchToDocument(docTitle, appendToDocId, isArabic)
+                                }
+                            },
                             enabled = !isBusy,
                             shape = RoundedCornerShape(16.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = ScannerGlassPalette.CyanGlow),
@@ -1355,7 +1380,11 @@ fun CropAndFilterScreen(
                                 Icon(Icons.Default.Check, contentDescription = null, tint = ScannerGlassPalette.OnAccent)
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = if (isArabic) "حفظ ($outputPageCount)" else "Save ($outputPageCount)",
+                                    text = if (isEditExistingMode) {
+                                        if (isArabic) "حفظ التعديل" else "Save"
+                                    } else {
+                                        if (isArabic) "حفظ ($outputPageCount)" else "Save ($outputPageCount)"
+                                    },
                                     color = ScannerGlassPalette.OnAccent,
                                     fontWeight = FontWeight.ExtraBold
                                 )

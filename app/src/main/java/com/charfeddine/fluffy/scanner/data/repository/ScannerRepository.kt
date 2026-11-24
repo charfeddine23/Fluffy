@@ -3,12 +3,14 @@ package com.charfeddine.fluffy.scanner.data.repository
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.ExifInterface
 import com.charfeddine.fluffy.scanner.data.local.ScannerDao
 import com.charfeddine.fluffy.scanner.data.model.SavedSignatureEntity
 import com.charfeddine.fluffy.scanner.data.model.ScannedDocumentEntity
 import com.charfeddine.fluffy.scanner.data.model.ScannedPageEntity
 import com.charfeddine.fluffy.scanner.data.model.ScannerFolderEntity
 import com.charfeddine.fluffy.scanner.utils.CryptoVaultHelper
+import com.charfeddine.fluffy.scanner.utils.DocumentImageProcessor
 import com.charfeddine.fluffy.scanner.utils.OfflineOcrAndBarcodeEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -203,6 +205,51 @@ class ScannerRepository(
             bytes
         }
         return BitmapFactory.decodeByteArray(plain, 0, plain.size)
+    }
+
+    fun decodeSampledPageBitmap(path: String, maxSide: Int = 2560): Bitmap? {
+        val file = File(path)
+        if (!file.exists()) return null
+        val bytes = file.readBytes()
+        val plain = if (bytes.size > MAGIC_ENC_HEADER.size &&
+            bytes.copyOfRange(0, MAGIC_ENC_HEADER.size).contentEquals(MAGIC_ENC_HEADER)
+        ) {
+            CryptoVaultHelper.decryptBytes(bytes.copyOfRange(MAGIC_ENC_HEADER.size, bytes.size))
+        } else {
+            bytes
+        }
+        if (plain.isEmpty()) return null
+
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(plain, 0, plain.size, opts)
+        var inSampleSize = 1
+        while ((opts.outWidth / inSampleSize) > maxSide || (opts.outHeight / inSampleSize) > maxSide) {
+            inSampleSize *= 2
+        }
+        val decoded = BitmapFactory.decodeByteArray(
+            plain,
+            0,
+            plain.size,
+            BitmapFactory.Options().apply {
+                this.inSampleSize = inSampleSize
+                this.inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+        ) ?: return null
+
+        val orientation = runCatching {
+            ExifInterface(plain.inputStream()).getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_NORMAL
+            )
+        }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+
+        return DocumentImageProcessor.applyExifOrientation(decoded, orientation)
+    }
+
+    fun encryptFileIfLocked(file: File, isLocked: Boolean) {
+        if (isLocked) {
+            encryptFileInPlaceIfPlain(file)
+        }
     }
 
     suspend fun saveEncryptedSignature(name: String, bitmap: Bitmap, colorArgb: Long): SavedSignatureEntity =

@@ -32,8 +32,10 @@ import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -67,6 +69,7 @@ import androidx.compose.material.icons.filled.BorderColor
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.CopyAll
+import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Draw
 import androidx.compose.material.icons.filled.Edit
@@ -235,35 +238,44 @@ fun DocumentDetailEditorScreen(
     }
 
     val pageBitmapCache = remember(doc.id, doc.isLocked) { mutableStateMapOf<String, Bitmap>() }
+    val pageBitmapPathCache = remember(doc.id, doc.isLocked) { mutableStateMapOf<String, String>() }
     LaunchedEffect(currentPage?.id, currentPage?.processedImagePath, doc.isLocked, pages, safePageIndex) {
         val curr = currentPage ?: return@LaunchedEffect
-        if (pageBitmapCache[curr.id] == null) {
+        if (pageBitmapCache[curr.id] == null || pageBitmapPathCache[curr.id] != curr.processedImagePath) {
             val decoded = withContext(Dispatchers.IO) {
                 scannerViewModel.repository.decodePageBitmap(curr.processedImagePath)
             }
             if (decoded != null) {
                 pageBitmapCache[curr.id] = decoded
+                pageBitmapPathCache[curr.id] = curr.processedImagePath
             }
         }
         val activePageIds = pages.map { it.id }.toSet()
-        pageBitmapCache.keys.toList().filter { it !in activePageIds }.forEach { pageBitmapCache.remove(it) }
+        pageBitmapCache.keys.toList().filter { it !in activePageIds }.forEach {
+            pageBitmapCache.remove(it)
+            pageBitmapPathCache.remove(it)
+        }
         val neighbors = listOfNotNull(
             pages.getOrNull(safePageIndex + 1),
             pages.getOrNull(safePageIndex - 1)
         )
         for (neighbor in neighbors) {
-            if (pageBitmapCache[neighbor.id] == null) {
+            if (pageBitmapCache[neighbor.id] == null || pageBitmapPathCache[neighbor.id] != neighbor.processedImagePath) {
                 val nBmp = withContext(Dispatchers.IO) {
                     scannerViewModel.repository.decodePageBitmap(neighbor.processedImagePath)
                 }
                 if (nBmp != null) {
                     pageBitmapCache[neighbor.id] = nBmp
+                    pageBitmapPathCache[neighbor.id] = neighbor.processedImagePath
                 }
             }
         }
         if (pageBitmapCache.size > 6) {
             val keepIds = (-2..2).mapNotNull { offset -> pages.getOrNull(safePageIndex + offset)?.id }.toSet()
-            pageBitmapCache.keys.toList().filter { it !in keepIds }.forEach { pageBitmapCache.remove(it) }
+            pageBitmapCache.keys.toList().filter { it !in keepIds }.forEach {
+                pageBitmapCache.remove(it)
+                pageBitmapPathCache.remove(it)
+            }
         }
     }
 
@@ -748,6 +760,28 @@ fun DocumentDetailEditorScreen(
                         DropdownMenuItem(
                             leadingIcon = {
                                 Icon(
+                                    imageVector = Icons.Default.Crop,
+                                    contentDescription = null,
+                                    tint = ScannerGlassPalette.CyanGlow
+                                )
+                            },
+                            text = {
+                                Text(
+                                    text = if (isArabic) "تعديل الحواف والفلاتر" else "Edit Edges & Filter",
+                                    color = ScannerGlassPalette.TextPrimary
+                                )
+                            },
+                            onClick = {
+                                showMoreMenu = false
+                                activeTool = AnnotationTool.NONE
+                                currentPage?.let { pg ->
+                                    scannerViewModel.openPageCropEditor(doc.id, pg)
+                                }
+                            }
+                        )
+                        DropdownMenuItem(
+                            leadingIcon = {
+                                Icon(
                                     imageVector = Icons.Default.Layers,
                                     contentDescription = null,
                                     tint = ScannerGlassPalette.VioletGlow
@@ -959,70 +993,96 @@ fun DocumentDetailEditorScreen(
                 // Signature iOS 27 Floating Glass Pill Bar + Detached Circular `+` Action Orb
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
+                    BoxWithConstraints(
                         modifier = Modifier
                             .weight(1f)
                             .height(64.dp)
                             .shadow(20.dp, CircleShape, ambientColor = Color.Black, spotColor = Color.Black)
                             .iosLiquidGlass(CircleShape, fillAlpha = 0.74f)
-                            .padding(horizontal = 6.dp, vertical = 5.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(horizontal = 4.dp, vertical = 5.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        LiquidDockItem(
-                            icon = Icons.Default.BorderColor,
-                            label = if (isArabic) "تحرير" else "Markup",
-                            active = activeTool != AnnotationTool.NONE,
-                            modifier = Modifier.weight(1f),
-                            onClick = {
-                                activeTool = if (activeTool == AnnotationTool.NONE) AnnotationTool.PEN else AnnotationTool.NONE
-                            }
-                        )
-                        LiquidDockItem(
-                            icon = Icons.Default.Draw,
-                            label = if (isArabic) "توقيع" else "Sign",
-                            active = showSignatureDialog,
-                            modifier = Modifier.weight(1f),
-                            onClick = { showSignatureDialog = true }
-                        )
-                        LiquidDockItem(
-                            icon = Icons.Default.WaterDrop,
-                            label = if (isArabic) "علامة" else "Mark",
-                            active = activeWatermark != null,
-                            modifier = Modifier.weight(1f),
-                            onClick = { showWatermarkDialog = true }
-                        )
-                        LiquidDockItem(
-                            icon = Icons.Default.TextSnippet,
-                            label = "OCR",
-                            active = showOcrDialog,
-                            modifier = Modifier.weight(1f),
-                            onClick = {
-                                currentPage?.let { pg ->
-                                    scannerViewModel.runOfflineOcrOnPage(pg, isArabic) { text ->
-                                        ocrResultText = text
-                                        if (text.isNotBlank()) showOcrDialog = true
+                        val fitAllEqual = maxWidth >= 288.dp
+                        val dockModifier = if (fitAllEqual) {
+                            Modifier.fillMaxWidth()
+                        } else {
+                            Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
+                        }
+                        Row(
+                            modifier = dockModifier,
+                            horizontalArrangement = if (fitAllEqual) Arrangement.SpaceEvenly else Arrangement.spacedBy(2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val itemMod = if (fitAllEqual) Modifier.weight(1f) else Modifier.width(50.dp)
+                            LiquidDockItem(
+                                icon = Icons.Default.Crop,
+                                label = if (isArabic) "تعديل" else "Edit",
+                                active = false,
+                                modifier = itemMod.testTag("doc_edit_page_btn"),
+                                onClick = {
+                                    activeTool = AnnotationTool.NONE
+                                    currentPage?.let { pg ->
+                                        scannerViewModel.openPageCropEditor(doc.id, pg)
                                     }
                                 }
-                            }
-                        )
-                        LiquidDockItem(
-                            icon = Icons.Default.Layers,
-                            label = if (isArabic) "الصفحات" else "Pages",
-                            active = showPagesSheet,
-                            modifier = Modifier.weight(1f),
-                            onClick = { showPagesSheet = true }
-                        )
+                            )
+                            LiquidDockItem(
+                                icon = Icons.Default.BorderColor,
+                                label = if (isArabic) "تأشير" else "Markup",
+                                active = activeTool != AnnotationTool.NONE,
+                                modifier = itemMod.testTag("doc_markup_btn"),
+                                onClick = {
+                                    activeTool = if (activeTool == AnnotationTool.NONE) AnnotationTool.PEN else AnnotationTool.NONE
+                                }
+                            )
+                            LiquidDockItem(
+                                icon = Icons.Default.Draw,
+                                label = if (isArabic) "توقيع" else "Sign",
+                                active = showSignatureDialog,
+                                modifier = itemMod.testTag("doc_sign_btn"),
+                                onClick = { showSignatureDialog = true }
+                            )
+                            LiquidDockItem(
+                                icon = Icons.Default.WaterDrop,
+                                label = if (isArabic) "علامة" else "Mark",
+                                active = activeWatermark != null,
+                                modifier = itemMod.testTag("doc_watermark_btn"),
+                                onClick = { showWatermarkDialog = true }
+                            )
+                            LiquidDockItem(
+                                icon = Icons.Default.TextSnippet,
+                                label = "OCR",
+                                active = showOcrDialog,
+                                modifier = itemMod.testTag("doc_ocr_btn"),
+                                onClick = {
+                                    currentPage?.let { pg ->
+                                        scannerViewModel.runOfflineOcrOnPage(pg, isArabic) { text ->
+                                            ocrResultText = text
+                                            if (text.isNotBlank()) showOcrDialog = true
+                                        }
+                                    }
+                                }
+                            )
+                            LiquidDockItem(
+                                icon = Icons.Default.Layers,
+                                label = if (isArabic) "الصفحات" else "Pages",
+                                active = showPagesSheet,
+                                modifier = itemMod.testTag("doc_pages_btn"),
+                                onClick = { showPagesSheet = true }
+                            )
+                        }
                     }
 
                     // Signature Detached iOS 27 Circular `+` Liquid Glass Orb (Add / Scan Page)
                     IconButton(
                         onClick = onAddMorePages,
                         modifier = Modifier
-                            .size(62.dp)
+                            .size(58.dp)
                             .shadow(20.dp, CircleShape, ambientColor = ScannerGlassPalette.EdgeOverlayCyan, spotColor = Color.Black)
                             .iosLiquidGlass(CircleShape, glowAccent = true, fillAlpha = 0.80f)
                             .testTag("doc_add_page_btn")
@@ -1031,7 +1091,7 @@ fun DocumentDetailEditorScreen(
                             imageVector = Icons.Default.Add,
                             contentDescription = if (isArabic) "إضافة صفحة" else "Add Page",
                             tint = ScannerGlassPalette.EdgeOverlayCyan,
-                            modifier = Modifier.size(26.dp)
+                            modifier = Modifier.size(25.dp)
                         )
                     }
                 }
@@ -1142,7 +1202,7 @@ fun DocumentDetailEditorScreen(
         }
     }
 
-    // Visual Pages Manager Sheet (Reorder, Duplicate, Extract, Delete, Add Page)
+    // Visual Pages Manager Sheet (Edit Edges, Reorder, Duplicate, Extract, Delete, Add Page)
     if (showPagesSheet && currentPage != null) {
         DocumentPagesManagerSheet(
             doc = doc,
@@ -1152,6 +1212,11 @@ fun DocumentDetailEditorScreen(
             onSelectPage = { idx ->
                 activePageIndex = idx
                 showPagesSheet = false
+            },
+            onEditPage = { pg ->
+                showPagesSheet = false
+                activeTool = AnnotationTool.NONE
+                scannerViewModel.openPageCropEditor(doc.id, pg)
             },
             onMoveEarlier = { idx ->
                 if (idx > 0) {
@@ -1379,6 +1444,7 @@ private fun DocumentPagesManagerSheet(
     activePageIndex: Int,
     isArabic: Boolean,
     onSelectPage: (Int) -> Unit,
+    onEditPage: (ScannedPageEntity) -> Unit,
     onMoveEarlier: (Int) -> Unit,
     onMoveLater: (Int) -> Unit,
     onDuplicatePage: (ScannedPageEntity) -> Unit,
@@ -1477,51 +1543,68 @@ private fun DocumentPagesManagerSheet(
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold
                 )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    SheetActionTile(
-                        icon = Icons.Default.ArrowBackIosNew,
-                        label = if (isArabic) "تقديم" else "Move ←",
-                        enabled = activePageIndex > 0,
-                        tint = ScannerGlassPalette.TextPrimary,
-                        modifier = Modifier.weight(1f),
-                        onClick = { onMoveEarlier(activePageIndex) }
-                    )
-                    SheetActionTile(
-                        icon = Icons.Default.ArrowForwardIos,
-                        label = if (isArabic) "تأخير" else "Move →",
-                        enabled = activePageIndex < pages.lastIndex,
-                        tint = ScannerGlassPalette.TextPrimary,
-                        modifier = Modifier.weight(1f),
-                        onClick = { onMoveLater(activePageIndex) }
-                    )
-                    SheetActionTile(
-                        icon = Icons.Default.CopyAll,
-                        label = if (isArabic) "تكرار" else "Duplicate",
-                        enabled = true,
-                        tint = ScannerGlassPalette.CyanGlow,
-                        modifier = Modifier.weight(1f),
-                        onClick = { onDuplicatePage(selectedPage) }
-                    )
-                    SheetActionTile(
-                        icon = Icons.Default.Output,
-                        label = if (isArabic) "استخراج" else "Extract",
-                        enabled = true,
-                        tint = ScannerGlassPalette.VioletGlow,
-                        modifier = Modifier.weight(1f),
-                        onClick = { onExtractPage(selectedPage) }
-                    )
-                    if (pages.size > 1) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         SheetActionTile(
-                            icon = Icons.Default.DeleteOutline,
-                            label = if (isArabic) "حذف" else "Delete",
+                            icon = Icons.Default.Crop,
+                            label = if (isArabic) "تعديل الحواف" else "Edit Edges",
                             enabled = true,
-                            tint = ScannerGlassPalette.RoseGlow,
-                            modifier = Modifier.weight(1f),
-                            onClick = { onDeletePage(selectedPage) }
+                            tint = ScannerGlassPalette.CyanGlow,
+                            modifier = Modifier.weight(1f).testTag("pages_sheet_edit_btn"),
+                            onClick = { onEditPage(selectedPage) }
                         )
+                        SheetActionTile(
+                            icon = Icons.Default.ArrowBackIosNew,
+                            label = if (isArabic) "تقديم" else "Move ←",
+                            enabled = activePageIndex > 0,
+                            tint = ScannerGlassPalette.TextPrimary,
+                            modifier = Modifier.weight(1f),
+                            onClick = { onMoveEarlier(activePageIndex) }
+                        )
+                        SheetActionTile(
+                            icon = Icons.Default.ArrowForwardIos,
+                            label = if (isArabic) "تأخير" else "Move →",
+                            enabled = activePageIndex < pages.lastIndex,
+                            tint = ScannerGlassPalette.TextPrimary,
+                            modifier = Modifier.weight(1f),
+                            onClick = { onMoveLater(activePageIndex) }
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        SheetActionTile(
+                            icon = Icons.Default.CopyAll,
+                            label = if (isArabic) "تكرار" else "Duplicate",
+                            enabled = true,
+                            tint = ScannerGlassPalette.CyanGlow,
+                            modifier = Modifier.weight(1f),
+                            onClick = { onDuplicatePage(selectedPage) }
+                        )
+                        SheetActionTile(
+                            icon = Icons.Default.Output,
+                            label = if (isArabic) "استخراج" else "Extract",
+                            enabled = true,
+                            tint = ScannerGlassPalette.VioletGlow,
+                            modifier = Modifier.weight(1f),
+                            onClick = { onExtractPage(selectedPage) }
+                        )
+                        if (pages.size > 1) {
+                            SheetActionTile(
+                                icon = Icons.Default.DeleteOutline,
+                                label = if (isArabic) "حذف" else "Delete",
+                                enabled = true,
+                                tint = ScannerGlassPalette.RoseGlow,
+                                modifier = Modifier.weight(1f),
+                                onClick = { onDeletePage(selectedPage) }
+                            )
+                        } else {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
                     }
                 }
             }
