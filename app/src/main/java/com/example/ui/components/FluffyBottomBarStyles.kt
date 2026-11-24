@@ -137,6 +137,7 @@ internal fun OriginalCapsuleMenu(
     cancelLabel: String,
     addNoteLabel: String,
     actions: List<FabActionItem>,
+    dragController: FabDragSelectionController,
     onExpand: () -> Unit,
     onCollapse: () -> Unit,
     modifier: Modifier = Modifier
@@ -190,6 +191,50 @@ internal fun OriginalCapsuleMenu(
             } else {
                 accentColor.copy(alpha = if (isDark) 0.44f else 0.88f)
             }
+            val hoveredAction = if (dragController.isDragSessionActive) {
+                actions.firstOrNull { it.testTag == dragController.hoveredActionTag }
+            } else {
+                null
+            }
+
+            AnimatedVisibility(
+                visible = hoveredAction != null,
+                enter = fadeIn(tween(110)),
+                exit = fadeOut(tween(100)),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 80.dp)
+            ) {
+                hoveredAction?.let { selected ->
+                    val pillFill = selected.tintColor
+                        .copy(alpha = if (isDark) 0.22f else 0.12f)
+                        .compositeOver(expandedSurface)
+                    Row(
+                        modifier = Modifier
+                            .background(pillFill, RoundedCornerShape(20.dp))
+                            .border(1.4.dp, selected.tintColor, RoundedCornerShape(20.dp))
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = selected.icon,
+                            contentDescription = null,
+                            tint = selected.tintColor,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = selected.contentDescription,
+                            maxLines = 1,
+                            style = TextStyle(
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isDark) Color.White else Color(0xFF0F172A)
+                            )
+                        )
+                    }
+                }
+            }
 
             Box(
                 modifier = Modifier
@@ -201,6 +246,16 @@ internal fun OriginalCapsuleMenu(
                     )
                     .width(capsuleWidth)
                     .height(64.dp)
+                    .fabPressAndDragAnchor(
+                        controller = dragController,
+                        isExpanded = isExpanded,
+                        expandProgress = expandProgress,
+                        actions = actions,
+                        hitSlopDp = 12.dp,
+                        topExtraSlopDp = 34.dp,
+                        onExpand = onExpand,
+                        onCollapse = onCollapse
+                    )
                     .graphicsLayer {
                         if (!isExpanded) {
                             scaleX = plusScale
@@ -228,6 +283,7 @@ internal fun OriginalCapsuleMenu(
                             .minimumInteractiveComponentSize()
                             .testTag("floating_new_note_button")
                             .clickable(
+                                enabled = !isExpanded,
                                 interactionSource = plusInteraction,
                                 indication = ripple(bounded = true, color = Color.White),
                                 onClick = onExpand
@@ -242,6 +298,8 @@ internal fun OriginalCapsuleMenu(
                         )
                     }
                 } else {
+                    val activeHoveredTag = dragController.hoveredActionTag
+                    val isAnyHovered = dragController.isDragSessionActive && activeHoveredTag != null
                     Row(
                         modifier = Modifier
                             .fillMaxSize()
@@ -259,6 +317,9 @@ internal fun OriginalCapsuleMenu(
                                 tintColor = action.tintColor,
                                 isDark = isDark,
                                 testTag = action.testTag,
+                                isDragHovered = activeHoveredTag == action.testTag,
+                                isDimmed = isAnyHovered && activeHoveredTag != action.testTag,
+                                modifier = Modifier.fabDragTarget(dragController, action.testTag),
                                 onClick = action.onClick
                             )
                         }
@@ -268,6 +329,9 @@ internal fun OriginalCapsuleMenu(
                             tintColor = if (isDark) Color.White else Color(0xFF0F172A),
                             isDark = isDark,
                             testTag = "action_collapse_dock_btn",
+                            isDragHovered = false,
+                            isDimmed = false,
+                            modifier = Modifier.fabCancelTarget(dragController, active = isExpanded),
                             onClick = onCollapse
                         )
                     }
@@ -284,32 +348,55 @@ private fun HorizontalCapsuleOrbButton(
     tintColor: Color,
     isDark: Boolean,
     testTag: String,
+    isDragHovered: Boolean = false,
+    isDimmed: Boolean = false,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(
-        targetValue = if (pressed) 0.86f else 1f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        targetValue = when {
+            isDragHovered -> 1.22f
+            pressed -> 0.86f
+            else -> 1f
+        },
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = 420f),
         label = "capsule_orb_scale"
+    )
+    val dimAlpha by animateFloatAsState(
+        targetValue = if (isDimmed) 0.65f else 1f,
+        animationSpec = tween(120),
+        label = "capsule_orb_dim"
     )
     val preset = LocalAppThemePreset.current
     val baseOpaqueSurface = if (isDark) preset.surface.copy(alpha = 1f) else Color.White
-    val orbFill = tintColor.copy(alpha = if (isDark) 0.22f else 0.14f).compositeOver(baseOpaqueSurface)
-    val orbBorder = tintColor.copy(alpha = 0.55f).compositeOver(baseOpaqueSurface)
+    val orbFill = tintColor
+        .copy(alpha = when {
+            isDragHovered -> if (isDark) 0.36f else 0.24f
+            isDark -> 0.22f
+            else -> 0.14f
+        })
+        .compositeOver(baseOpaqueSurface)
+    val orbBorder = if (isDragHovered) {
+        tintColor
+    } else {
+        tintColor.copy(alpha = 0.55f).compositeOver(baseOpaqueSurface)
+    }
 
     Box(
-        modifier = Modifier
+        modifier = modifier
             .size(48.dp)
             .minimumInteractiveComponentSize()
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
+                alpha = dimAlpha
             }
             .testTag(testTag)
             .clip(CircleShape)
             .background(orbFill)
-            .border(1.dp, orbBorder, CircleShape)
+            .border(if (isDragHovered) 2.2.dp else 1.dp, orbBorder, CircleShape)
             .clickable(
                 interactionSource = interaction,
                 indication = ripple(bounded = true, color = tintColor),
@@ -339,6 +426,7 @@ internal fun VerticalGlassStackMenu(
     cancelLabel: String,
     addNoteLabel: String,
     actions: List<FabActionItem>,
+    dragController: FabDragSelectionController,
     onExpand: () -> Unit,
     onCollapse: () -> Unit,
     modifier: Modifier = Modifier
@@ -380,37 +468,62 @@ internal fun VerticalGlassStackMenu(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             if (expandProgress > 0.02f) {
+                val activeHoveredTag = dragController.hoveredActionTag
+                val isAnyHovered = dragController.isDragSessionActive && activeHoveredTag != null
                 val ordered = actions.reversed()
                 ordered.forEachIndexed { idx, action ->
                     val reverseIdx = (ordered.size - 1) - idx
                     val stagger = ((expandProgress - reverseIdx * 0.07f) / (1f - reverseIdx * 0.07f)).coerceIn(0f, 1f)
+                    val isDragHovered = activeHoveredTag == action.testTag
+                    val isDimmed = isAnyHovered && !isDragHovered
                     val itemInteraction = remember { MutableInteractionSource() }
                     val pressed by itemInteraction.collectIsPressedAsState()
                     val pressScale by animateFloatAsState(
-                        targetValue = if (pressed) 0.94f else 1f,
-                        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+                        targetValue = when {
+                            isDragHovered -> 1.09f
+                            pressed -> 0.94f
+                            else -> 1f
+                        },
+                        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = 420f),
                         label = "stack_pill_press"
                     )
-                    val cardFill = if (isDark) {
+                    val dimAlpha by animateFloatAsState(
+                        targetValue = if (isDimmed) 0.70f else 1f,
+                        animationSpec = tween(120),
+                        label = "stack_pill_dim"
+                    )
+                    val baseCardFill = if (isDark) {
                         preset.surface.copy(alpha = 1f)
                     } else {
                         Color.White
                     }
+                    val cardFill = if (isDragHovered) {
+                        action.tintColor
+                            .copy(alpha = if (isDark) 0.22f else 0.14f)
+                            .compositeOver(baseCardFill)
+                    } else {
+                        baseCardFill
+                    }
                     val iconBadgeFill = action.tintColor
-                        .copy(alpha = if (isDark) 0.24f else 0.16f)
+                        .copy(alpha = if (isDragHovered) (if (isDark) 0.34f else 0.24f) else (if (isDark) 0.24f else 0.16f))
                         .compositeOver(cardFill)
-                    val cardBorder = action.tintColor
-                        .copy(alpha = 0.58f)
-                        .compositeOver(cardFill)
+                    val cardBorder = if (isDragHovered) {
+                        action.tintColor
+                    } else {
+                        action.tintColor
+                            .copy(alpha = 0.58f)
+                            .compositeOver(cardFill)
+                    }
 
                     Row(
                         modifier = Modifier
+                            .fabDragTarget(dragController, action.testTag)
                             .graphicsLayer {
                                 val s = pressScale * (0.72f + 0.28f * stagger)
                                 scaleX = s
                                 scaleY = s
                                 translationY = (1f - stagger) * 32.dp.toPx()
-                                alpha = (stagger * 1.4f).coerceIn(0f, 1f)
+                                alpha = (stagger * 1.4f).coerceIn(0f, 1f) * dimAlpha
                             }
                             .minimumInteractiveComponentSize()
                             .testTag(action.testTag)
@@ -423,7 +536,7 @@ internal fun VerticalGlassStackMenu(
                                 customFill = cardFill
                             )
                             .border(
-                                width = 1.1.dp,
+                                width = if (isDragHovered) 2.2.dp else 1.1.dp,
                                 color = cardBorder,
                                 shape = RoundedCornerShape(24.dp)
                             )
@@ -472,6 +585,8 @@ internal fun VerticalGlassStackMenu(
                 accentColor = accentColor,
                 addNoteLabel = addNoteLabel,
                 cancelLabel = cancelLabel,
+                actions = actions,
+                dragController = dragController,
                 onExpand = onExpand,
                 onCollapse = onCollapse
             )
@@ -493,6 +608,7 @@ internal fun OrbitalRadialDialMenu(
     cancelLabel: String,
     addNoteLabel: String,
     actions: List<FabActionItem>,
+    dragController: FabDragSelectionController,
     onExpand: () -> Unit,
     onCollapse: () -> Unit,
     modifier: Modifier = Modifier
@@ -644,6 +760,8 @@ internal fun OrbitalRadialDialMenu(
                             val orbSize = 50.dp
                             val orbHalfPx = with(density) { (orbSize / 2f).toPx() }
 
+                            val activeHoveredTag = dragController.hoveredActionTag
+                            val isAnyHovered = dragController.isDragSessionActive && activeHoveredTag != null
                             val arcAnglesDeg = listOf(12.0, 36.0, 62.0, 84.0)
                             actions.forEachIndexed { index, action ->
                                 val stagger = ((expandProgress - index * 0.05f) / (1f - index * 0.05f)).coerceIn(0f, 1f)
@@ -664,6 +782,9 @@ internal fun OrbitalRadialDialMenu(
                                     orbSize = orbSize,
                                     slotWidth = slotW,
                                     progress = stagger,
+                                    isDragHovered = activeHoveredTag == action.testTag,
+                                    isDimmed = isAnyHovered && activeHoveredTag != action.testTag,
+                                    dragController = dragController,
                                     modifier = Modifier.offset {
                                         IntOffset(
                                             x = (curX - slotHalfWpx).roundToInt(),
@@ -696,6 +817,7 @@ internal fun OrbitalRadialDialMenu(
                                     }
                                     .size(closeSize)
                                     .minimumInteractiveComponentSize()
+                                    .fabCancelTarget(dragController, active = isExpanded)
                                     .graphicsLayer {
                                         scaleX = closeScale * (0.65f + 0.35f * expandProgress)
                                         scaleY = closeScale * (0.65f + 0.35f * expandProgress)
@@ -729,22 +851,36 @@ internal fun OrbitalRadialDialMenu(
                 }
 
                 // Collapsed Plus Button
-                if (!isExpanded || expandProgress < 0.35f) {
+                if (!isExpanded || expandProgress < 0.35f || dragController.isDragSessionActive) {
                     val collapsedAlpha = (1f - expandProgress * 2.8f).coerceIn(0f, 1f)
                     val cornerAlign = if (isArabic) Alignment.BottomStart else Alignment.BottomEnd
-                    FloatingPlusButtonCore(
-                        isExpanded = isExpanded,
-                        collapsedAlpha = collapsedAlpha,
-                        expandProgress = expandProgress,
-                        isDark = isDark,
-                        accentColor = accentColor,
-                        addNoteLabel = addNoteLabel,
-                        onExpand = onExpand,
+                    Box(
                         modifier = Modifier
                             .align(cornerAlign)
                             .windowInsetsPadding(WindowInsets.navigationBars)
                             .padding(horizontal = 18.dp, vertical = 20.dp)
-                    )
+                            .then(
+                                if (!isExpanded) Modifier.testTag("morphing_action_dock") else Modifier
+                            )
+                            .fabPressAndDragAnchor(
+                                controller = dragController,
+                                isExpanded = isExpanded,
+                                expandProgress = expandProgress,
+                                actions = actions,
+                                onExpand = onExpand,
+                                onCollapse = onCollapse
+                            )
+                    ) {
+                        FloatingPlusButtonCore(
+                            isExpanded = isExpanded,
+                            collapsedAlpha = collapsedAlpha,
+                            expandProgress = expandProgress,
+                            isDark = isDark,
+                            accentColor = accentColor,
+                            addNoteLabel = addNoteLabel,
+                            onExpand = onExpand
+                        )
+                    }
                 }
             }
         }
@@ -758,18 +894,41 @@ private fun DialSegmentButton(
     orbSize: androidx.compose.ui.unit.Dp,
     slotWidth: androidx.compose.ui.unit.Dp,
     progress: Float,
+    isDragHovered: Boolean,
+    isDimmed: Boolean,
+    dragController: FabDragSelectionController,
     modifier: Modifier = Modifier
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
-        targetValue = if (pressed) 0.88f else 1f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        targetValue = when {
+            isDragHovered -> 1.22f
+            pressed -> 0.88f
+            else -> 1f
+        },
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = 420f),
         label = "dial_orb_press"
     )
+    val dimAlpha by animateFloatAsState(
+        targetValue = if (isDimmed) 0.70f else 1f,
+        animationSpec = tween(120),
+        label = "dial_orb_dim"
+    )
     val preset = LocalAppThemePreset.current
-    val orbSurface = if (isDark) preset.surface.copy(alpha = 1f) else Color.White
-    val orbBorder = action.tintColor.copy(alpha = 0.80f).compositeOver(orbSurface)
+    val baseOrbSurface = if (isDark) preset.surface.copy(alpha = 1f) else Color.White
+    val orbSurface = if (isDragHovered) {
+        action.tintColor
+            .copy(alpha = if (isDark) 0.28f else 0.16f)
+            .compositeOver(baseOrbSurface)
+    } else {
+        baseOrbSurface
+    }
+    val orbBorder = if (isDragHovered) {
+        action.tintColor
+    } else {
+        action.tintColor.copy(alpha = 0.80f).compositeOver(baseOrbSurface)
+    }
     val labelColor = if (isDark) Color.White else Color(0xFF0F172A)
     val shadowColor = if (isDark) Color.Black.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.9f)
 
@@ -780,7 +939,7 @@ private fun DialSegmentButton(
                 val s = pressScale * (0.5f + 0.5f * progress)
                 scaleX = s
                 scaleY = s
-                alpha = (progress * 1.4f).coerceIn(0f, 1f)
+                alpha = (progress * 1.4f).coerceIn(0f, 1f) * dimAlpha
             },
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -788,10 +947,11 @@ private fun DialSegmentButton(
             modifier = Modifier
                 .size(orbSize)
                 .minimumInteractiveComponentSize()
+                .fabDragTarget(dragController, action.testTag)
                 .testTag(action.testTag)
                 .clip(CircleShape)
                 .background(orbSurface)
-                .border(1.4.dp, orbBorder, CircleShape)
+                .border(if (isDragHovered) 2.4.dp else 1.4.dp, orbBorder, CircleShape)
                 .clickable(
                     interactionSource = interaction,
                     indication = ripple(bounded = true, color = action.tintColor),
@@ -833,6 +993,7 @@ internal fun DiamondMosaicBentoMenu(
     cancelLabel: String,
     addNoteLabel: String,
     actions: List<FabActionItem>,
+    dragController: FabDragSelectionController,
     onExpand: () -> Unit,
     onCollapse: () -> Unit,
     modifier: Modifier = Modifier
@@ -874,6 +1035,8 @@ internal fun DiamondMosaicBentoMenu(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             if (expandProgress > 0.02f) {
+                val activeHoveredTag = dragController.hoveredActionTag
+                val isAnyHovered = dragController.isDragSessionActive && activeHoveredTag != null
                 val topRow = listOfNotNull(actions.getOrNull(0), actions.getOrNull(1))
                 val bottomRow = listOfNotNull(actions.getOrNull(2), actions.getOrNull(3))
 
@@ -890,7 +1053,10 @@ internal fun DiamondMosaicBentoMenu(
                                     action = action,
                                     isDark = isDark,
                                     surfaceColor = preset.surface,
-                                    progress = stagger
+                                    progress = stagger,
+                                    isDragHovered = activeHoveredTag == action.testTag,
+                                    isDimmed = isAnyHovered && activeHoveredTag != action.testTag,
+                                    dragController = dragController
                                 )
                             }
                         }
@@ -905,6 +1071,8 @@ internal fun DiamondMosaicBentoMenu(
                 accentColor = accentColor,
                 addNoteLabel = addNoteLabel,
                 cancelLabel = cancelLabel,
+                actions = actions,
+                dragController = dragController,
                 onExpand = onExpand,
                 onCollapse = onCollapse
             )
@@ -917,31 +1085,53 @@ private fun MosaicTileButton(
     action: FabActionItem,
     isDark: Boolean,
     surfaceColor: Color,
-    progress: Float
+    progress: Float,
+    isDragHovered: Boolean,
+    isDimmed: Boolean,
+    dragController: FabDragSelectionController
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
-        targetValue = if (pressed) 0.92f else 1f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        targetValue = when {
+            isDragHovered -> 1.11f
+            pressed -> 0.92f
+            else -> 1f
+        },
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = 420f),
         label = "mosaic_tile_press"
     )
-    val tileFill = if (isDark) surfaceColor.copy(alpha = 1f) else Color.White
-    val iconBoxFill = action.tintColor.copy(alpha = if (isDark) 0.24f else 0.14f).compositeOver(tileFill)
-    val borderStart = action.tintColor.copy(alpha = 0.78f).compositeOver(tileFill)
-    val borderEnd = action.tintColor.copy(alpha = 0.28f).compositeOver(tileFill)
+    val dimAlpha by animateFloatAsState(
+        targetValue = if (isDimmed) 0.70f else 1f,
+        animationSpec = tween(120),
+        label = "mosaic_tile_dim"
+    )
+    val baseTileFill = if (isDark) surfaceColor.copy(alpha = 1f) else Color.White
+    val tileFill = if (isDragHovered) {
+        action.tintColor
+            .copy(alpha = if (isDark) 0.24f else 0.14f)
+            .compositeOver(baseTileFill)
+    } else {
+        baseTileFill
+    }
+    val iconBoxFill = action.tintColor
+        .copy(alpha = if (isDragHovered) (if (isDark) 0.36f else 0.24f) else (if (isDark) 0.24f else 0.14f))
+        .compositeOver(tileFill)
+    val borderStart = if (isDragHovered) action.tintColor else action.tintColor.copy(alpha = 0.78f).compositeOver(tileFill)
+    val borderEnd = if (isDragHovered) action.tintColor else action.tintColor.copy(alpha = 0.28f).compositeOver(tileFill)
 
     Column(
         modifier = Modifier
             .width(88.dp)
             .height(74.dp)
             .minimumInteractiveComponentSize()
+            .fabDragTarget(dragController, action.testTag)
             .graphicsLayer {
                 val s = pressScale * (0.58f + 0.42f * progress)
                 scaleX = s
                 scaleY = s
                 translationY = (1f - progress) * 24.dp.toPx()
-                alpha = (progress * 1.4f).coerceIn(0f, 1f)
+                alpha = (progress * 1.4f).coerceIn(0f, 1f) * dimAlpha
             }
             .testTag(action.testTag)
             .background(tileFill, RoundedCornerShape(22.dp))
@@ -953,7 +1143,7 @@ private fun MosaicTileButton(
                 customFill = tileFill
             )
             .border(
-                width = 1.2.dp,
+                width = if (isDragHovered) 2.2.dp else 1.2.dp,
                 brush = Brush.linearGradient(listOf(borderStart, borderEnd)),
                 shape = RoundedCornerShape(22.dp)
             )
@@ -1003,6 +1193,8 @@ private fun CornerMorphFabAnchor(
     accentColor: Color,
     addNoteLabel: String,
     cancelLabel: String,
+    actions: List<FabActionItem>,
+    dragController: FabDragSelectionController,
     onExpand: () -> Unit,
     onCollapse: () -> Unit
 ) {
@@ -1025,6 +1217,15 @@ private fun CornerMorphFabAnchor(
         modifier = Modifier
             .size(62.dp)
             .minimumInteractiveComponentSize()
+            .fabCancelTarget(dragController, active = isExpanded)
+            .fabPressAndDragAnchor(
+                controller = dragController,
+                isExpanded = isExpanded,
+                expandProgress = expandProgress,
+                actions = actions,
+                onExpand = onExpand,
+                onCollapse = onCollapse
+            )
             .graphicsLayer {
                 scaleX = pressScale
                 scaleY = pressScale
@@ -1091,9 +1292,6 @@ internal fun FloatingPlusButtonCore(
                 rotationZ = expandProgress * 45f
                 alpha = collapsedAlpha
             }
-            .then(
-                if (!isExpanded) Modifier.testTag("morphing_action_dock") else Modifier
-            )
             .liquidGlass(
                 isDark = isDark,
                 tint = GlassTint.CYAN,

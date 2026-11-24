@@ -182,6 +182,8 @@ fun FluffyBottomBar(
         )
     }
 
+    val dragController = rememberFabDragSelectionController()
+
     when (fabMenuStyle) {
         FabMenuStyle.ORIGINAL -> OriginalCapsuleMenu(
             isExpanded = isExpanded,
@@ -191,6 +193,7 @@ fun FluffyBottomBar(
             cancelLabel = cancelLabel,
             addNoteLabel = addNoteLabel,
             actions = actions,
+            dragController = dragController,
             onExpand = { isExpanded = true },
             onCollapse = { isExpanded = false },
             modifier = modifier
@@ -204,6 +207,7 @@ fun FluffyBottomBar(
             cancelLabel = cancelLabel,
             addNoteLabel = addNoteLabel,
             actions = actions,
+            dragController = dragController,
             onExpand = { isExpanded = true },
             onCollapse = { isExpanded = false },
             modifier = modifier
@@ -218,6 +222,7 @@ fun FluffyBottomBar(
             cancelLabel = cancelLabel,
             addNoteLabel = addNoteLabel,
             actions = actions,
+            dragController = dragController,
             onExpand = { isExpanded = true },
             onCollapse = { isExpanded = false },
             modifier = modifier
@@ -231,6 +236,7 @@ fun FluffyBottomBar(
             cancelLabel = cancelLabel,
             addNoteLabel = addNoteLabel,
             actions = actions,
+            dragController = dragController,
             onExpand = { isExpanded = true },
             onCollapse = { isExpanded = false },
             modifier = modifier
@@ -246,6 +252,7 @@ fun FluffyBottomBar(
             cancelLabel = cancelLabel,
             addNoteLabel = addNoteLabel,
             actions = actions,
+            dragController = dragController,
             onExpand = { isExpanded = true },
             onCollapse = { isExpanded = false },
             modifier = modifier
@@ -264,6 +271,7 @@ private fun ConstellationCornerMenu(
     cancelLabel: String,
     addNoteLabel: String,
     actions: List<FabActionItem>,
+    dragController: FabDragSelectionController,
     onExpand: () -> Unit,
     onCollapse: () -> Unit,
     modifier: Modifier = Modifier
@@ -467,6 +475,9 @@ private fun ConstellationCornerMenu(
                             val hubPxX = if (isArabic) hubCenterSidePx else boxWpx - hubCenterSidePx
                             val hubPxY = boxHpx - hubCenterBottomPx
 
+                            val activeHoveredTag = dragController.hoveredActionTag
+                            val isAnyHovered = dragController.isDragSessionActive && activeHoveredTag != null
+
                             actions.forEachIndexed { idx, action ->
                                 val stagger = ((expandProgress - idx * 0.055f) / (1f - idx * 0.055f)).coerceIn(0f, 1f)
                                 val targetCenterX = if (isArabic) {
@@ -485,6 +496,9 @@ private fun ConstellationCornerMenu(
                                     orbSize = orbSizeDp,
                                     slotWidth = slotWidthDp,
                                     progress = stagger,
+                                    isDragHovered = activeHoveredTag == action.testTag,
+                                    isDimmed = isAnyHovered && activeHoveredTag != action.testTag,
+                                    dragController = dragController,
                                     modifier = Modifier.offset {
                                         IntOffset(
                                             x = (curX - slotHalfWpx).roundToInt(),
@@ -506,6 +520,7 @@ private fun ConstellationCornerMenu(
                                     }
                                     .size(hubSizeDp)
                                     .minimumInteractiveComponentSize()
+                                    .fabCancelTarget(dragController, active = isExpanded)
                                     .graphicsLayer {
                                         scaleX = closeScale * (0.70f + 0.30f * expandProgress)
                                         scaleY = closeScale * (0.70f + 0.30f * expandProgress)
@@ -538,22 +553,36 @@ private fun ConstellationCornerMenu(
                     }
                 }
 
-                if (!isExpanded || expandProgress < 0.35f) {
+                if (!isExpanded || expandProgress < 0.35f || dragController.isDragSessionActive) {
                     val collapsedAlpha = (1f - expandProgress * 2.8f).coerceIn(0f, 1f)
                     val cornerAlign = if (isArabic) Alignment.BottomStart else Alignment.BottomEnd
-                    FloatingPlusButtonCore(
-                        isExpanded = isExpanded,
-                        collapsedAlpha = collapsedAlpha,
-                        expandProgress = expandProgress,
-                        isDark = isDark,
-                        accentColor = accentColor,
-                        addNoteLabel = addNoteLabel,
-                        onExpand = onExpand,
+                    Box(
                         modifier = Modifier
                             .align(cornerAlign)
                             .windowInsetsPadding(WindowInsets.navigationBars)
                             .padding(horizontal = 18.dp, vertical = 20.dp)
-                    )
+                            .then(
+                                if (!isExpanded) Modifier.testTag("morphing_action_dock") else Modifier
+                            )
+                            .fabPressAndDragAnchor(
+                                controller = dragController,
+                                isExpanded = isExpanded,
+                                expandProgress = expandProgress,
+                                actions = actions,
+                                onExpand = onExpand,
+                                onCollapse = onCollapse
+                            )
+                    ) {
+                        FloatingPlusButtonCore(
+                            isExpanded = isExpanded,
+                            collapsedAlpha = collapsedAlpha,
+                            expandProgress = expandProgress,
+                            isDark = isDark,
+                            accentColor = accentColor,
+                            addNoteLabel = addNoteLabel,
+                            onExpand = onExpand
+                        )
+                    }
                 }
             }
         }
@@ -567,18 +596,36 @@ private fun ConstellationDropletOrb(
     orbSize: Dp,
     slotWidth: Dp,
     progress: Float,
+    isDragHovered: Boolean,
+    isDimmed: Boolean,
+    dragController: FabDragSelectionController,
     modifier: Modifier = Modifier
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
-        targetValue = if (isPressed) 0.88f else 1f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        targetValue = when {
+            isDragHovered -> 1.22f
+            isPressed -> 0.88f
+            else -> 1f
+        },
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = 420f),
         label = "constellation_orb_press"
+    )
+    val dimAlpha by animateFloatAsState(
+        targetValue = if (isDimmed) 0.70f else 1f,
+        animationSpec = tween(120),
+        label = "constellation_orb_dim"
     )
     val preset = LocalAppThemePreset.current
     val baseOpaqueSurface = if (isDark) preset.surface.copy(alpha = 1f) else Color.White
-    val orbFill = action.tintColor.copy(alpha = if (isDark) 0.14f else 0.08f).compositeOver(baseOpaqueSurface)
+    val orbFill = action.tintColor
+        .copy(alpha = when {
+            isDragHovered -> if (isDark) 0.32f else 0.20f
+            isDark -> 0.14f
+            else -> 0.08f
+        })
+        .compositeOver(baseOpaqueSurface)
     val labelColor = if (isDark) Color.White else Color(0xFF0F172A)
     val labelShadowColor = if (isDark) Color.Black.copy(alpha = 0.78f) else Color.White.copy(alpha = 0.90f)
 
@@ -589,7 +636,7 @@ private fun ConstellationDropletOrb(
                 val s = pressScale * (0.45f + 0.55f * progress)
                 scaleX = s
                 scaleY = s
-                alpha = (progress * 1.4f).coerceIn(0f, 1f)
+                alpha = (progress * 1.4f).coerceIn(0f, 1f) * dimAlpha
             },
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -597,9 +644,17 @@ private fun ConstellationDropletOrb(
             modifier = Modifier
                 .size(orbSize)
                 .minimumInteractiveComponentSize()
+                .fabDragTarget(dragController, action.testTag)
                 .testTag(action.testTag)
                 .clip(CircleShape)
                 .background(orbFill)
+                .then(
+                    if (isDragHovered) {
+                        Modifier.border(2.2.dp, action.tintColor, CircleShape)
+                    } else {
+                        Modifier
+                    }
+                )
                 .clickable(
                     interactionSource = interactionSource,
                     indication = ripple(bounded = true, color = action.tintColor),
