@@ -60,6 +60,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -181,9 +182,11 @@ internal fun OriginalCapsuleMenu(
                 .windowInsetsPadding(WindowInsets.navigationBars)
                 .padding(horizontal = 18.dp, vertical = 20.dp)
         ) {
+            val preset = LocalAppThemePreset.current
+            val expandedSurface = if (isDark) preset.surface.copy(alpha = 1f) else Color.White
             val capsuleWidth = 62.dp + (264.dp * expandProgress)
             val capsuleColor = if (isExpanded) {
-                if (isDark) Color(0xFF0F172A).copy(alpha = 0.76f) else Color.White.copy(alpha = 0.86f)
+                expandedSurface
             } else {
                 accentColor.copy(alpha = if (isDark) 0.44f else 0.88f)
             }
@@ -205,6 +208,9 @@ internal fun OriginalCapsuleMenu(
                         }
                     }
                     .testTag("morphing_action_dock")
+                    .then(
+                        if (isExpanded) Modifier.background(expandedSurface, RoundedCornerShape(32.dp)) else Modifier
+                    )
                     .liquidGlass(
                         isDark = isDark,
                         tint = if (isExpanded) GlassTint.FROST else GlassTint.CYAN,
@@ -287,6 +293,11 @@ private fun HorizontalCapsuleOrbButton(
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
         label = "capsule_orb_scale"
     )
+    val preset = LocalAppThemePreset.current
+    val baseOpaqueSurface = if (isDark) preset.surface.copy(alpha = 1f) else Color.White
+    val orbFill = tintColor.copy(alpha = if (isDark) 0.22f else 0.14f).compositeOver(baseOpaqueSurface)
+    val orbBorder = tintColor.copy(alpha = 0.55f).compositeOver(baseOpaqueSurface)
+
     Box(
         modifier = Modifier
             .size(48.dp)
@@ -297,8 +308,8 @@ private fun HorizontalCapsuleOrbButton(
             }
             .testTag(testTag)
             .clip(CircleShape)
-            .background(tintColor.copy(alpha = if (isDark) 0.18f else 0.14f))
-            .border(1.dp, tintColor.copy(alpha = 0.42f), CircleShape)
+            .background(orbFill)
+            .border(1.dp, orbBorder, CircleShape)
             .clickable(
                 interactionSource = interaction,
                 indication = ripple(bounded = true, color = tintColor),
@@ -381,10 +392,16 @@ internal fun VerticalGlassStackMenu(
                         label = "stack_pill_press"
                     )
                     val cardFill = if (isDark) {
-                        preset.surface.copy(alpha = 0.84f)
+                        preset.surface.copy(alpha = 1f)
                     } else {
-                        Color.White.copy(alpha = 0.90f)
+                        Color.White
                     }
+                    val iconBadgeFill = action.tintColor
+                        .copy(alpha = if (isDark) 0.24f else 0.16f)
+                        .compositeOver(cardFill)
+                    val cardBorder = action.tintColor
+                        .copy(alpha = 0.58f)
+                        .compositeOver(cardFill)
 
                     Row(
                         modifier = Modifier
@@ -393,10 +410,11 @@ internal fun VerticalGlassStackMenu(
                                 scaleX = s
                                 scaleY = s
                                 translationY = (1f - stagger) * 32.dp.toPx()
-                                alpha = stagger
+                                alpha = (stagger * 1.4f).coerceIn(0f, 1f)
                             }
                             .minimumInteractiveComponentSize()
                             .testTag(action.testTag)
+                            .background(cardFill, RoundedCornerShape(24.dp))
                             .liquidGlass(
                                 isDark = isDark,
                                 tint = GlassTint.FROST,
@@ -406,7 +424,7 @@ internal fun VerticalGlassStackMenu(
                             )
                             .border(
                                 width = 1.1.dp,
-                                color = action.tintColor.copy(alpha = 0.48f),
+                                color = cardBorder,
                                 shape = RoundedCornerShape(24.dp)
                             )
                             .clip(RoundedCornerShape(24.dp))
@@ -433,7 +451,7 @@ internal fun VerticalGlassStackMenu(
                             modifier = Modifier
                                 .size(34.dp)
                                 .clip(CircleShape)
-                                .background(action.tintColor.copy(alpha = if (isDark) 0.22f else 0.16f)),
+                                .background(iconBadgeFill),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
@@ -666,6 +684,8 @@ internal fun OrbitalRadialDialMenu(
                             val closeSize = 54.dp
                             val closeHalfPx = with(density) { (closeSize / 2f).toPx() }
 
+                            val preset = LocalAppThemePreset.current
+                            val closeSurface = if (isDark) preset.surface.copy(alpha = 1f) else Color.White
                             Box(
                                 modifier = Modifier
                                     .offset {
@@ -680,14 +700,16 @@ internal fun OrbitalRadialDialMenu(
                                         scaleX = closeScale * (0.65f + 0.35f * expandProgress)
                                         scaleY = closeScale * (0.65f + 0.35f * expandProgress)
                                         rotationZ = (1f - expandProgress) * -45f
-                                        alpha = expandProgress
+                                        alpha = (expandProgress * 1.4f).coerceIn(0f, 1f)
                                     }
                                     .testTag("action_collapse_dock_btn")
                                     .clip(CircleShape)
-                                    .background(
-                                        (if (isDark) Color(0xFF0F172A) else Color.White).copy(alpha = 0.85f)
+                                    .background(closeSurface)
+                                    .border(
+                                        1.3.dp,
+                                        accentColor.copy(alpha = 0.72f).compositeOver(closeSurface),
+                                        CircleShape
                                     )
-                                    .border(1.3.dp, accentColor.copy(alpha = 0.65f), CircleShape)
                                     .clickable(
                                         interactionSource = closeInteraction,
                                         indication = ripple(bounded = true, color = accentColor),
@@ -745,6 +767,9 @@ private fun DialSegmentButton(
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
         label = "dial_orb_press"
     )
+    val preset = LocalAppThemePreset.current
+    val orbSurface = if (isDark) preset.surface.copy(alpha = 1f) else Color.White
+    val orbBorder = action.tintColor.copy(alpha = 0.80f).compositeOver(orbSurface)
     val labelColor = if (isDark) Color.White else Color(0xFF0F172A)
     val shadowColor = if (isDark) Color.Black.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.9f)
 
@@ -755,7 +780,7 @@ private fun DialSegmentButton(
                 val s = pressScale * (0.5f + 0.5f * progress)
                 scaleX = s
                 scaleY = s
-                alpha = progress
+                alpha = (progress * 1.4f).coerceIn(0f, 1f)
             },
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -765,10 +790,8 @@ private fun DialSegmentButton(
                 .minimumInteractiveComponentSize()
                 .testTag(action.testTag)
                 .clip(CircleShape)
-                .background(
-                    (if (isDark) Color(0xFF0F172A) else Color.White).copy(alpha = if (isDark) 0.78f else 0.90f)
-                )
-                .border(1.4.dp, action.tintColor.copy(alpha = 0.72f), CircleShape)
+                .background(orbSurface)
+                .border(1.4.dp, orbBorder, CircleShape)
                 .clickable(
                     interactionSource = interaction,
                     indication = ripple(bounded = true, color = action.tintColor),
@@ -903,7 +926,10 @@ private fun MosaicTileButton(
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
         label = "mosaic_tile_press"
     )
-    val tileFill = if (isDark) surfaceColor.copy(alpha = 0.86f) else Color.White.copy(alpha = 0.92f)
+    val tileFill = if (isDark) surfaceColor.copy(alpha = 1f) else Color.White
+    val iconBoxFill = action.tintColor.copy(alpha = if (isDark) 0.24f else 0.14f).compositeOver(tileFill)
+    val borderStart = action.tintColor.copy(alpha = 0.78f).compositeOver(tileFill)
+    val borderEnd = action.tintColor.copy(alpha = 0.28f).compositeOver(tileFill)
 
     Column(
         modifier = Modifier
@@ -915,9 +941,10 @@ private fun MosaicTileButton(
                 scaleX = s
                 scaleY = s
                 translationY = (1f - progress) * 24.dp.toPx()
-                alpha = progress
+                alpha = (progress * 1.4f).coerceIn(0f, 1f)
             }
             .testTag(action.testTag)
+            .background(tileFill, RoundedCornerShape(22.dp))
             .liquidGlass(
                 isDark = isDark,
                 tint = GlassTint.FROST,
@@ -927,12 +954,7 @@ private fun MosaicTileButton(
             )
             .border(
                 width = 1.2.dp,
-                brush = Brush.linearGradient(
-                    listOf(
-                        action.tintColor.copy(alpha = 0.72f),
-                        action.tintColor.copy(alpha = 0.22f)
-                    )
-                ),
+                brush = Brush.linearGradient(listOf(borderStart, borderEnd)),
                 shape = RoundedCornerShape(22.dp)
             )
             .clip(RoundedCornerShape(22.dp))
@@ -949,7 +971,7 @@ private fun MosaicTileButton(
             modifier = Modifier
                 .size(34.dp)
                 .clip(RoundedCornerShape(12.dp))
-                .background(action.tintColor.copy(alpha = if (isDark) 0.22f else 0.14f)),
+                .background(iconBoxFill),
             contentAlignment = Alignment.Center
         ) {
             Icon(
@@ -991,8 +1013,10 @@ private fun CornerMorphFabAnchor(
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
         label = "corner_anchor_scale"
     )
+    val preset = LocalAppThemePreset.current
+    val expandedFill = if (isDark) preset.surface.copy(alpha = 1f) else Color.White
     val fillColor = if (isExpanded) {
-        (if (isDark) Color(0xFF0F172A) else Color.White).copy(alpha = 0.88f)
+        expandedFill
     } else {
         accentColor.copy(alpha = if (isDark) 0.44f else 0.88f)
     }
@@ -1006,6 +1030,9 @@ private fun CornerMorphFabAnchor(
                 scaleY = pressScale
                 rotationZ = expandProgress * 45f
             }
+            .then(
+                if (isExpanded) Modifier.background(expandedFill, CircleShape) else Modifier
+            )
             .liquidGlass(
                 isDark = isDark,
                 tint = if (isExpanded) GlassTint.FROST else GlassTint.CYAN,

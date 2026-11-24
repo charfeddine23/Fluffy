@@ -448,31 +448,28 @@ class NoteDraftAndRichTextTest {
         )
         assertEquals("*hello* ok", imeAutocorrectPlain.fieldValue.text)
 
-        // 6. Native italic for Latin and oblique-synthesis annotation for Arabic under SansSerif (EditorFontFamily)
+        // 6. Oblique-synthesis annotations + EditorFontFamily + FontSynthesis.All emitted for both Latin and Arabic
         val transformed = RichTextCodec.transformForEditor(
             raw = "*italic* و *مائل*",
             accentColor = Color(0xFF8B5CF6),
             metaColor = Color(0xFF94A3B8),
             isDark = true
         )
-        assertEquals(1, transformed.text.spanStyles.count {
-            it.item.fontFamily == com.example.ui.theme.EditorFontFamily &&
-                it.item.fontStyle == androidx.compose.ui.text.font.FontStyle.Italic &&
-                it.item.fontSynthesis == androidx.compose.ui.text.font.FontSynthesis.All &&
-                transformed.text.text.substring(it.start, it.end) == "italic"
-        })
-        val arabicOblique = transformed.text.getStringAnnotations(
+        val obliqueAnns = transformed.text.getStringAnnotations(
             RichTextCodec.OBLIQUE_SPAN_TAG,
             0,
             transformed.text.length
         )
-        assertEquals(1, arabicOblique.size)
-        assertEquals("مائل", transformed.text.text.substring(arabicOblique.first().start, arabicOblique.first().end))
-        assertTrue(transformed.text.spanStyles.any {
-            it.start == arabicOblique.first().start &&
-                it.end == arabicOblique.first().end &&
-                it.item.fontFamily == com.example.ui.theme.EditorFontFamily &&
-                it.item.fontSynthesis == androidx.compose.ui.text.font.FontSynthesis.All
+        assertEquals(2, obliqueAnns.size)
+        assertEquals("italic", transformed.text.text.substring(obliqueAnns[0].start, obliqueAnns[0].end))
+        assertEquals("مائل", transformed.text.text.substring(obliqueAnns[1].start, obliqueAnns[1].end))
+        assertTrue(obliqueAnns.all { ann ->
+            transformed.text.spanStyles.any {
+                it.start == ann.start &&
+                    it.end == ann.end &&
+                    it.item.fontFamily == com.example.ui.theme.EditorFontFamily &&
+                    it.item.fontSynthesis == androidx.compose.ui.text.font.FontSynthesis.All
+            }
         })
 
         // 7. Partial bold + text italic wrapping avoids `***` collision

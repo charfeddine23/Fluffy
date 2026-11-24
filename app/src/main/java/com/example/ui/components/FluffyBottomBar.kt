@@ -15,6 +15,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -59,6 +60,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
@@ -492,6 +494,8 @@ private fun ConstellationCornerMenu(
                                 )
                             }
 
+                            val activePreset = LocalAppThemePreset.current
+                            val closeSurface = if (isDark) activePreset.surface.copy(alpha = 1f) else Color.White
                             Box(
                                 modifier = Modifier
                                     .offset {
@@ -506,10 +510,16 @@ private fun ConstellationCornerMenu(
                                         scaleX = closeScale * (0.70f + 0.30f * expandProgress)
                                         scaleY = closeScale * (0.70f + 0.30f * expandProgress)
                                         rotationZ = (1f - expandProgress) * -45f
-                                        alpha = expandProgress
+                                        alpha = (expandProgress * 1.4f).coerceIn(0f, 1f)
                                     }
                                     .testTag("action_collapse_dock_btn")
                                     .clip(CircleShape)
+                                    .background(closeSurface)
+                                    .border(
+                                        1.3.dp,
+                                        accentColor.copy(alpha = 0.72f).compositeOver(closeSurface),
+                                        CircleShape
+                                    )
                                     .clickable(
                                         interactionSource = closeInteraction,
                                         indication = ripple(bounded = true, color = accentColor),
@@ -566,6 +576,9 @@ private fun ConstellationDropletOrb(
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
         label = "constellation_orb_press"
     )
+    val preset = LocalAppThemePreset.current
+    val baseOpaqueSurface = if (isDark) preset.surface.copy(alpha = 1f) else Color.White
+    val orbFill = action.tintColor.copy(alpha = if (isDark) 0.14f else 0.08f).compositeOver(baseOpaqueSurface)
     val labelColor = if (isDark) Color.White else Color(0xFF0F172A)
     val labelShadowColor = if (isDark) Color.Black.copy(alpha = 0.78f) else Color.White.copy(alpha = 0.90f)
 
@@ -576,7 +589,7 @@ private fun ConstellationDropletOrb(
                 val s = pressScale * (0.45f + 0.55f * progress)
                 scaleX = s
                 scaleY = s
-                alpha = progress
+                alpha = (progress * 1.4f).coerceIn(0f, 1f)
             },
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -586,6 +599,7 @@ private fun ConstellationDropletOrb(
                 .minimumInteractiveComponentSize()
                 .testTag(action.testTag)
                 .clip(CircleShape)
+                .background(orbFill)
                 .clickable(
                     interactionSource = interactionSource,
                     indication = ripple(bounded = true, color = action.tintColor),

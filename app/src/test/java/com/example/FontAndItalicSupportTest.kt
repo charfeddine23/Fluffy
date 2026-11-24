@@ -43,7 +43,7 @@ class FontAndItalicSupportTest {
     }
 
     @Test
-    fun `splitObliqueRuns synthesizes slant for Arabic under SansSerif and full text under Cairo and Monospace`() {
+    fun `splitObliqueRuns synthesizes slant for both English and Arabic across SansSerif Cairo and Monospace`() {
         val sansSerif = AppFontCatalog.resolve("sans_serif")
         val arabicRuns = AppFontCatalog.splitObliqueRuns("مرحبا بكم", sansSerif)
         assertEquals(1, arabicRuns.size)
@@ -51,12 +51,11 @@ class FontAndItalicSupportTest {
 
         val latinRuns = AppFontCatalog.splitObliqueRuns("Hello World", sansSerif)
         assertEquals(1, latinRuns.size)
-        assertFalse(latinRuns.first().needsObliqueSynthesis)
+        assertTrue(latinRuns.first().needsObliqueSynthesis)
 
         val mixedRuns = AppFontCatalog.splitObliqueRuns("Hello مرحبا بكم", sansSerif)
-        assertEquals(2, mixedRuns.size)
-        assertFalse(mixedRuns[0].needsObliqueSynthesis)
-        assertTrue(mixedRuns[1].needsObliqueSynthesis)
+        assertEquals(1, mixedRuns.size)
+        assertTrue(mixedRuns.first().needsObliqueSynthesis)
 
         val cairo = AppFontCatalog.resolve("cairo")
         val cairoLatinRuns = AppFontCatalog.splitObliqueRuns("Hello World", cairo)
@@ -70,9 +69,9 @@ class FontAndItalicSupportTest {
     }
 
     @Test
-    fun `transformForEditor and parseRichBlocks emit oblique annotations for Arabic italic and quotes with intact OffsetMapping`() {
+    fun `transformForEditor and parseRichBlocks emit oblique annotations for English and Arabic italic and quotes with intact OffsetMapping`() {
         val sansSerif = AppFontCatalog.resolve("sans_serif")
-        val raw = "نص *مائل عربي* و *English*\n> اقتباس مائل"
+        val raw = "نص *مائل عربي* و *English*\n> English Quote & اقتباس مائل"
         val transformed = RichTextCodec.transformForEditor(
             raw = raw,
             accentColor = Color.Cyan,
@@ -84,16 +83,9 @@ class FontAndItalicSupportTest {
         val annotated = transformed.text
         val obliqueAnns = annotated.getStringAnnotations(RichTextCodec.OBLIQUE_SPAN_TAG, 0, annotated.length)
         assertTrue(obliqueAnns.any { annotated.text.substring(it.start, it.end).contains("مائل عربي") })
+        assertTrue(obliqueAnns.any { annotated.text.substring(it.start, it.end).contains("English") })
+        assertTrue(obliqueAnns.any { annotated.text.substring(it.start, it.end).contains("English Quote") })
         assertTrue(obliqueAnns.any { annotated.text.substring(it.start, it.end).contains("اقتباس مائل") })
-        assertFalse(obliqueAnns.any { annotated.text.substring(it.start, it.end).contains("English") })
-
-        val englishStart = annotated.text.indexOf("English")
-        val englishEnd = englishStart + "English".length
-        assertTrue(
-            annotated.spanStyles.any {
-                it.start <= englishStart && it.end >= englishEnd && it.item.fontStyle == FontStyle.Italic
-            }
-        )
 
         for (i in 0..raw.length) {
             val transIdx = transformed.offsetMapping.originalToTransformed(i)

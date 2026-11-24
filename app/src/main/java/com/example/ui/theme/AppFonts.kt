@@ -39,7 +39,7 @@ object AppFontCatalog {
         subtitleEn = "Clean modern system sans-serif (Default)",
         category = FontCategory.SYSTEM,
         fontFamily = FontFamily.SansSerif,
-        hasNativeLatinItalic = true,
+        hasNativeLatinItalic = false,
         hasNativeArabicItalic = false
     )
 
@@ -52,7 +52,7 @@ object AppFontCatalog {
             subtitleEn = "Native Android system typeface",
             category = FontCategory.SYSTEM,
             fontFamily = FontFamily.Default,
-            hasNativeLatinItalic = true,
+            hasNativeLatinItalic = false,
             hasNativeArabicItalic = false
         ),
         AppFontOption(
@@ -62,7 +62,7 @@ object AppFontCatalog {
             subtitleEn = "Classic editorial system serif",
             category = FontCategory.SYSTEM,
             fontFamily = FontFamily.Serif,
-            hasNativeLatinItalic = true,
+            hasNativeLatinItalic = false,
             hasNativeArabicItalic = false
         ),
         AppFontOption(

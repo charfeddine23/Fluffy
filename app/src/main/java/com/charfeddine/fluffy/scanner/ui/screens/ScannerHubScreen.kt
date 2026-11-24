@@ -6,14 +6,23 @@ import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +30,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -66,7 +76,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -74,6 +83,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -142,17 +152,6 @@ fun ScannerHubScreen(
     val isGridView by scannerViewModel.isGridView.collectAsState()
     val unlockedIds by scannerViewModel.unlockedProtectedIds.collectAsState()
 
-    BackHandler {
-        when {
-            showTrash -> scannerViewModel.showTrashView.value = false
-            currentFolderId != null -> {
-                val parent = allFolders.firstOrNull { it.id == currentFolderId }?.parentFolderId
-                scannerViewModel.currentFolderId.value = parent
-            }
-            else -> onExitEcosystem()
-        }
-    }
-
     var showCreateFolderDialog by remember { mutableStateOf(false) }
     var showSortMenu by remember { mutableStateOf(false) }
     var showTagMenu by remember { mutableStateOf(false) }
@@ -161,6 +160,21 @@ fun ScannerHubScreen(
     var showAddMoreSourceChoices by remember { mutableStateOf(false) }
     var docToRename by remember { mutableStateOf<ScannedDocumentEntity?>(null) }
     var pendingAppendGalleryDocId by remember { mutableStateOf<String?>(null) }
+
+    BackHandler {
+        when {
+            contextMenuDoc != null -> {
+                showAddMoreSourceChoices = false
+                contextMenuDoc = null
+            }
+            showTrash -> scannerViewModel.showTrashView.value = false
+            currentFolderId != null -> {
+                val parent = allFolders.firstOrNull { it.id == currentFolderId }?.parentFolderId
+                scannerViewModel.currentFolderId.value = parent
+            }
+            else -> onExitEcosystem()
+        }
+    }
 
     val fileImportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
@@ -233,6 +247,10 @@ fun ScannerHubScreen(
                         IconButton(
                             onClick = {
                                 when {
+                                    contextMenuDoc != null -> {
+                                        showAddMoreSourceChoices = false
+                                        contextMenuDoc = null
+                                    }
                                     showTrash -> scannerViewModel.showTrashView.value = false
                                     currentFolderId != null -> {
                                         val parent = allFolders.firstOrNull { it.id == currentFolderId }?.parentFolderId
@@ -300,7 +318,11 @@ fun ScannerHubScreen(
                         }
 
                         IconButton(
-                            onClick = { scannerViewModel.showTrashView.value = !showTrash },
+                            onClick = {
+                                showAddMoreSourceChoices = false
+                                contextMenuDoc = null
+                                scannerViewModel.showTrashView.value = !showTrash
+                            },
                             modifier = Modifier
                                 .size(48.dp)
                                 .testTag("hub_trash_toggle_btn")
@@ -428,49 +450,123 @@ fun ScannerHubScreen(
                         }
                     }
                 } else {
-                    // 2. Clean Search Bar (full width pill)
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { scannerViewModel.searchQuery.value = it },
-                        placeholder = {
-                            Text(
-                                text = if (isArabic) "ابحث في المستندات أو نصوص OCR..." else "Search documents or OCR text...",
-                                fontSize = 13.sp,
-                                color = ScannerGlassPalette.TextSecondary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                    // 2. Clean Search Bar <-> In-Place Contextual Action Bar (exact same slot & height)
+                    AnimatedContent(
+                        targetState = contextMenuDoc,
+                        transitionSpec = {
+                            (fadeIn(tween(200)) + slideInVertically(tween(200)) { -it / 8 }) togetherWith
+                                (fadeOut(tween(150)) + slideOutVertically(tween(150)) { -it / 8 })
                         },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.Search,
-                                contentDescription = null,
-                                tint = ScannerGlassPalette.CyanGlow
-                            )
-                        },
-                        trailingIcon = {
-                            if (searchQuery.isNotEmpty()) {
-                                IconButton(onClick = { scannerViewModel.searchQuery.value = "" }) {
-                                    Icon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = if (isArabic) "مسح البحث" else "Clear search",
-                                        tint = ScannerGlassPalette.TextSecondary
-                                    )
+                        contentKey = { it != null },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = "scanner_search_or_contextual_bar"
+                    ) { activeDoc ->
+                        if (activeDoc != null) {
+                            val isDocUnlocked = !activeDoc.isLocked || activeDoc.id in unlockedIds
+                            fun withDocAccess(action: () -> Unit) {
+                                if (!isDocUnlocked) {
+                                    onRequestProtectedAccess(activeDoc.id) {
+                                        scannerViewModel.markProtectedUnlocked(activeDoc.id)
+                                        action()
+                                    }
+                                } else {
+                                    action()
                                 }
                             }
-                        },
-                        singleLine = true,
-                        shape = RoundedCornerShape(22.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = ScannerGlassPalette.CyanGlow.copy(alpha = 0.7f),
-                            unfocusedBorderColor = ScannerGlassPalette.SubtleStroke,
-                            focusedContainerColor = ScannerGlassPalette.FrostedCardDark,
-                            unfocusedContainerColor = ScannerGlassPalette.FrostedCardDark,
-                            focusedTextColor = ScannerGlassPalette.TextPrimary,
-                            unfocusedTextColor = ScannerGlassPalette.TextPrimary
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    )
+
+                            ScannerContextualTopActionBar(
+                                doc = activeDoc,
+                                isArabic = isArabic,
+                                showAddMoreChoices = showAddMoreSourceChoices,
+                                onDismiss = {
+                                    showAddMoreSourceChoices = false
+                                    contextMenuDoc = null
+                                },
+                                onTogglePin = {
+                                    scannerViewModel.togglePinned(activeDoc, isArabic)
+                                    showAddMoreSourceChoices = false
+                                    contextMenuDoc = null
+                                },
+                                onRename = {
+                                    withDocAccess {
+                                        showAddMoreSourceChoices = false
+                                        contextMenuDoc = null
+                                        docToRename = activeDoc
+                                    }
+                                },
+                                onToggleAddMore = {
+                                    showAddMoreSourceChoices = !showAddMoreSourceChoices
+                                },
+                                onAddMoreCamera = {
+                                    withDocAccess {
+                                        showAddMoreSourceChoices = false
+                                        contextMenuDoc = null
+                                        onAddMoreCamera(activeDoc.id)
+                                    }
+                                },
+                                onAddMoreFiles = {
+                                    withDocAccess {
+                                        showAddMoreSourceChoices = false
+                                        contextMenuDoc = null
+                                        pendingAppendGalleryDocId = activeDoc.id
+                                        fileImportLauncher.launch(arrayOf("image/*", "application/pdf"))
+                                    }
+                                },
+                                onDelete = {
+                                    withDocAccess {
+                                        scannerViewModel.moveToTrash(activeDoc.id, isArabic)
+                                        showAddMoreSourceChoices = false
+                                        contextMenuDoc = null
+                                    }
+                                }
+                            )
+                        } else {
+                            OutlinedTextField(
+                                value = searchQuery,
+                                onValueChange = { scannerViewModel.searchQuery.value = it },
+                                placeholder = {
+                                    Text(
+                                        text = if (isArabic) "ابحث في المستندات أو نصوص OCR..." else "Search documents or OCR text...",
+                                        fontSize = 13.sp,
+                                        color = ScannerGlassPalette.TextSecondary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Search,
+                                        contentDescription = null,
+                                        tint = ScannerGlassPalette.CyanGlow
+                                    )
+                                },
+                                trailingIcon = {
+                                    if (searchQuery.isNotEmpty()) {
+                                        IconButton(onClick = { scannerViewModel.searchQuery.value = "" }) {
+                                            Icon(
+                                                imageVector = Icons.Default.Close,
+                                                contentDescription = if (isArabic) "مسح البحث" else "Clear search",
+                                                tint = ScannerGlassPalette.TextSecondary
+                                            )
+                                        }
+                                    }
+                                },
+                                singleLine = true,
+                                shape = RoundedCornerShape(22.dp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = ScannerGlassPalette.CyanGlow.copy(alpha = 0.7f),
+                                    unfocusedBorderColor = ScannerGlassPalette.SubtleStroke,
+                                    focusedContainerColor = ScannerGlassPalette.FrostedCardDark,
+                                    unfocusedContainerColor = ScannerGlassPalette.FrostedCardDark,
+                                    focusedTextColor = ScannerGlassPalette.TextPrimary,
+                                    unfocusedTextColor = ScannerGlassPalette.TextPrimary
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("scanner_search_bar")
+                            )
+                        }
+                    }
 
                     Spacer(modifier = Modifier.height(8.dp))
 
@@ -855,8 +951,11 @@ fun ScannerHubScreen(
                                             doc = doc,
                                             isArabic = isArabic,
                                             isUnlocked = !doc.isLocked || doc.id in unlockedIds,
+                                            isSelected = contextMenuDoc?.id == doc.id,
                                             modifier = Modifier.weight(1f),
                                             onClick = {
+                                                showAddMoreSourceChoices = false
+                                                contextMenuDoc = null
                                                 if (doc.isLocked && doc.id !in unlockedIds) {
                                                     onRequestProtectedAccess(doc.id) {
                                                         scannerViewModel.markProtectedUnlocked(doc.id)
@@ -884,7 +983,10 @@ fun ScannerHubScreen(
                                     doc = doc,
                                     isArabic = isArabic,
                                     isUnlocked = !doc.isLocked || doc.id in unlockedIds,
+                                    isSelected = contextMenuDoc?.id == doc.id,
                                     onClick = {
+                                        showAddMoreSourceChoices = false
+                                        contextMenuDoc = null
                                         if (doc.isLocked && doc.id !in unlockedIds) {
                                             onRequestProtectedAccess(doc.id) {
                                                 scannerViewModel.markProtectedUnlocked(doc.id)
@@ -1019,211 +1121,7 @@ fun ScannerHubScreen(
         onDismiss = { showPdfToolsSheet = false }
     )
 
-    // 0.5s Long-Press Luxurious Dark Liquid Glass Context Menu
-    contextMenuDoc?.let { menuDoc ->
-        val isDocUnlocked = !menuDoc.isLocked || menuDoc.id in unlockedIds
-        fun withDocAccess(action: () -> Unit) {
-            if (!isDocUnlocked) {
-                onRequestProtectedAccess(menuDoc.id) {
-                    scannerViewModel.markProtectedUnlocked(menuDoc.id)
-                    action()
-                }
-            } else {
-                action()
-            }
-        }
-
-        Dialog(
-            onDismissRequest = {
-                showAddMoreSourceChoices = false
-                contextMenuDoc = null
-            }
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("doc_context_menu_dialog")
-                    .iosLiquidGlass(RoundedCornerShape(28.dp), glowAccent = true, fillAlpha = 0.94f)
-                    .padding(18.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                // Header card
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(52.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(ScannerGlassPalette.ThumbnailFrame)
-                            .border(0.8.dp, ScannerGlassPalette.SubtleStroke, RoundedCornerShape(14.dp)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (!isDocUnlocked) {
-                            Icon(Icons.Default.Lock, contentDescription = null, tint = ScannerGlassPalette.EmeraldGlow)
-                        } else if (menuDoc.coverThumbnailPath.isNotBlank() && File(menuDoc.coverThumbnailPath).exists()) {
-                            Image(
-                                painter = rememberAsyncImagePainter(File(menuDoc.coverThumbnailPath)),
-                                contentDescription = menuDoc.title,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        } else {
-                            ScannerLaserIcon(modifier = Modifier.size(28.dp))
-                        }
-                    }
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = menuDoc.title,
-                            color = ScannerGlassPalette.TextPrimary,
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 15.5.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = if (isArabic) {
-                                "${menuDoc.pageCount} صفحات • ${formatScannerBytes(menuDoc.totalSizeBytes, true)}"
-                            } else {
-                                "${menuDoc.pageCount} pages • ${formatScannerBytes(menuDoc.totalSizeBytes, false)}"
-                            },
-                            color = ScannerGlassPalette.TextSecondary,
-                            fontSize = 12.sp
-                        )
-                    }
-
-                    if (menuDoc.isPinned) {
-                        Box(
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .background(ScannerGlassPalette.CyanGlow.copy(alpha = 0.16f))
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.PushPin,
-                                contentDescription = null,
-                                tint = ScannerGlassPalette.CyanGlow,
-                                modifier = Modifier.size(14.dp)
-                            )
-                        }
-                    }
-                }
-
-                HorizontalDivider(color = ScannerGlassPalette.SubtleDivider)
-
-                // 1. Pin / Unpin
-                ContextMenuActionRow(
-                    icon = Icons.Default.PushPin,
-                    label = if (menuDoc.isPinned) {
-                        if (isArabic) "إلغاء التثبيت" else "Unpin"
-                    } else {
-                        if (isArabic) "تثبيت في الأعلى" else "Pin"
-                    },
-                    accent = ScannerGlassPalette.CyanGlow,
-                    testTag = "context_menu_pin_btn",
-                    onClick = {
-                        scannerViewModel.togglePinned(menuDoc, isArabic)
-                        showAddMoreSourceChoices = false
-                        contextMenuDoc = null
-                    }
-                )
-
-                // 2. Rename
-                ContextMenuActionRow(
-                    icon = Icons.Default.Edit,
-                    label = if (isArabic) "إعادة التسمية" else "Rename",
-                    accent = ScannerGlassPalette.VioletGlow,
-                    testTag = "context_menu_rename_btn",
-                    onClick = {
-                        withDocAccess {
-                            showAddMoreSourceChoices = false
-                            contextMenuDoc = null
-                            docToRename = menuDoc
-                        }
-                    }
-                )
-
-                // 3. Add More (Camera or Gallery append)
-                ContextMenuActionRow(
-                    icon = Icons.Default.AddCircleOutline,
-                    label = if (isArabic) "إضافة صفحات المزيد" else "Add More",
-                    accent = ScannerGlassPalette.EmeraldGlow,
-                    testTag = "context_menu_add_more_btn",
-                    onClick = { showAddMoreSourceChoices = !showAddMoreSourceChoices }
-                )
-
-                if (showAddMoreSourceChoices) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .weight(1f)
-                                .minimumInteractiveComponentSize()
-                                .iosLiquidGlass(RoundedCornerShape(14.dp), glowAccent = true, fillAlpha = 0.80f)
-                                .clickable {
-                                    withDocAccess {
-                                        showAddMoreSourceChoices = false
-                                        contextMenuDoc = null
-                                        onAddMoreCamera(menuDoc.id)
-                                    }
-                                }
-                                .padding(horizontal = 10.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            Icon(Icons.Default.CameraAlt, contentDescription = null, tint = ScannerGlassPalette.CyanGlow, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(if (isArabic) "الكاميرا" else "Camera", color = ScannerGlassPalette.TextPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
-                        }
-                        Row(
-                            modifier = Modifier
-                                .weight(1f)
-                                .minimumInteractiveComponentSize()
-                                .iosLiquidGlass(RoundedCornerShape(14.dp), fillAlpha = 0.72f)
-                                .clickable {
-                                    withDocAccess {
-                                        showAddMoreSourceChoices = false
-                                        contextMenuDoc = null
-                                        pendingAppendGalleryDocId = menuDoc.id
-                                        fileImportLauncher.launch(arrayOf("image/*", "application/pdf"))
-                                    }
-                                }
-                                .padding(horizontal = 10.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            Icon(Icons.Default.FolderOpen, contentDescription = null, tint = ScannerGlassPalette.VioletGlow, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(if (isArabic) "ملفات الهاتف" else "Files", color = ScannerGlassPalette.TextPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-
-                // 4. Delete
-                ContextMenuActionRow(
-                    icon = Icons.Default.DeleteOutline,
-                    label = if (isArabic) "حذف" else "Delete",
-                    accent = ScannerGlassPalette.RoseGlow,
-                    testTag = "context_menu_delete_btn",
-                    onClick = {
-                        withDocAccess {
-                            scannerViewModel.moveToTrash(menuDoc.id, isArabic)
-                            showAddMoreSourceChoices = false
-                            contextMenuDoc = null
-                        }
-                    }
-                )
-            }
-        }
-    }
-
-    // Rename Document Dialog triggered from 0.5s Context Menu
+    // Rename Document Dialog triggered from Contextual Top Bar
     docToRename?.let { targetDoc ->
         var draftTitle by remember(targetDoc.id) { mutableStateOf(targetDoc.title) }
         Dialog(onDismissRequest = { docToRename = null }) {
@@ -1274,43 +1172,231 @@ fun ScannerHubScreen(
 }
 
 @Composable
-private fun ContextMenuActionRow(
-    icon: ImageVector,
-    label: String,
-    accent: Color,
-    testTag: String,
-    onClick: () -> Unit
+private fun ScannerContextualTopActionBar(
+    doc: ScannedDocumentEntity,
+    isArabic: Boolean,
+    showAddMoreChoices: Boolean,
+    onDismiss: () -> Unit,
+    onTogglePin: () -> Unit,
+    onRename: () -> Unit,
+    onToggleAddMore: () -> Unit,
+    onAddMoreCamera: () -> Unit,
+    onAddMoreFiles: () -> Unit,
+    onDelete: () -> Unit
 ) {
-    Row(
+    val deleteRed = ScannerGlassPalette.RoseGlow
+
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .minimumInteractiveComponentSize()
-            .testTag(testTag)
-            .iosLiquidGlass(RoundedCornerShape(16.dp), glowAccent = false, fillAlpha = 0.72f)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
+            .testTag("scanner_contextual_top_bar"),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Box(
+        // Exact 56.dp height pill matching OutlinedTextField search bar slot
+        Row(
             modifier = Modifier
-                .size(34.dp)
-                .clip(CircleShape)
-                .background(accent.copy(alpha = 0.16f)),
-            contentAlignment = Alignment.Center
+                .fillMaxWidth()
+                .height(56.dp)
+                .scannerGlassSurface(RoundedCornerShape(22.dp), glowBorder = true)
+                .padding(horizontal = 6.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = label,
-                tint = accent,
-                modifier = Modifier.size(18.dp)
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .minimumInteractiveComponentSize()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(ScannerGlassPalette.TextPrimary.copy(alpha = 0.08f))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = ripple(bounded = true),
+                        onClickLabel = if (isArabic) "إلغاء التحديد" else "Cancel selection",
+                        onClick = onDismiss
+                    )
+                    .testTag("context_menu_close_btn"),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = if (isArabic) "إلغاء التحديد" else "Cancel selection",
+                    tint = ScannerGlassPalette.TextPrimary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+
+            ScannerContextualActionPill(
+                icon = Icons.Default.PushPin,
+                label = if (doc.isPinned) {
+                    if (isArabic) "إلغاء" else "Unpin"
+                } else {
+                    if (isArabic) "تثبيت" else "Pin"
+                },
+                contentDescription = if (doc.isPinned) {
+                    if (isArabic) "إلغاء التثبيت" else "Unpin"
+                } else {
+                    if (isArabic) "تثبيت في الأعلى" else "Pin to top"
+                },
+                tint = ScannerGlassPalette.CyanGlow,
+                labelColor = ScannerGlassPalette.TextPrimary,
+                fillColor = Color.Transparent,
+                testTag = "context_menu_pin_btn",
+                onClick = onTogglePin,
+                modifier = Modifier.weight(1f)
+            )
+
+            ScannerContextualActionPill(
+                icon = Icons.Default.Edit,
+                label = if (isArabic) "تعديل" else "Rename",
+                contentDescription = if (isArabic) "إعادة التسمية" else "Rename",
+                tint = ScannerGlassPalette.VioletGlow,
+                labelColor = ScannerGlassPalette.TextPrimary,
+                fillColor = Color.Transparent,
+                testTag = "context_menu_rename_btn",
+                onClick = onRename,
+                modifier = Modifier.weight(1f)
+            )
+
+            ScannerContextualActionPill(
+                icon = Icons.Default.AddCircleOutline,
+                label = if (isArabic) "إضافة" else "Add",
+                contentDescription = if (isArabic) "إضافة صفحات المزيد" else "Add More",
+                tint = ScannerGlassPalette.EmeraldGlow,
+                labelColor = ScannerGlassPalette.TextPrimary,
+                fillColor = if (showAddMoreChoices) ScannerGlassPalette.EmeraldGlow.copy(alpha = 0.18f) else Color.Transparent,
+                testTag = "context_menu_add_more_btn",
+                onClick = onToggleAddMore,
+                modifier = Modifier.weight(1f)
+            )
+
+            ScannerContextualActionPill(
+                icon = Icons.Default.DeleteOutline,
+                label = if (isArabic) "حذف" else "Delete",
+                contentDescription = if (isArabic) "حذف" else "Delete",
+                tint = deleteRed,
+                labelColor = deleteRed,
+                fillColor = deleteRed.copy(alpha = 0.16f),
+                testTag = "context_menu_delete_btn",
+                onClick = onDelete,
+                modifier = Modifier.weight(1f)
             )
         }
+
+        AnimatedVisibility(
+            visible = showAddMoreChoices,
+            enter = fadeIn(tween(180)) + slideInVertically(tween(180)) { -it / 4 },
+            exit = fadeOut(tween(140)) + slideOutVertically(tween(140)) { -it / 4 }
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(44.dp)
+                        .minimumInteractiveComponentSize()
+                        .scannerGlassSurface(RoundedCornerShape(16.dp), glowBorder = true)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = ripple(bounded = true, color = ScannerGlassPalette.CyanGlow),
+                            onClick = onAddMoreCamera
+                        )
+                        .padding(horizontal = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CameraAlt,
+                        contentDescription = null,
+                        tint = ScannerGlassPalette.CyanGlow,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (isArabic) "الكاميرا" else "Camera",
+                        color = ScannerGlassPalette.TextPrimary,
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(44.dp)
+                        .minimumInteractiveComponentSize()
+                        .scannerGlassSurface(RoundedCornerShape(16.dp))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = ripple(bounded = true, color = ScannerGlassPalette.VioletGlow),
+                            onClick = onAddMoreFiles
+                        )
+                        .padding(horizontal = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.FolderOpen,
+                        contentDescription = null,
+                        tint = ScannerGlassPalette.VioletGlow,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (isArabic) "ملفات الهاتف" else "Files",
+                        color = ScannerGlassPalette.TextPrimary,
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScannerContextualActionPill(
+    icon: ImageVector,
+    label: String,
+    contentDescription: String,
+    tint: Color,
+    labelColor: Color,
+    fillColor: Color,
+    testTag: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .height(44.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(fillColor)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = ripple(bounded = true, color = tint),
+                onClickLabel = contentDescription,
+                onClick = onClick
+            )
+            .padding(horizontal = 4.dp)
+            .testTag(testTag),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(15.dp)
+        )
+        Spacer(modifier = Modifier.width(3.dp))
         Text(
             text = label,
-            color = if (accent == ScannerGlassPalette.RoseGlow) ScannerGlassPalette.RoseGlow else ScannerGlassPalette.TextPrimary,
+            fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
-            fontSize = 14.sp
+            color = labelColor,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
@@ -1451,6 +1537,7 @@ private fun DocumentGridCard(
     doc: ScannedDocumentEntity,
     isArabic: Boolean,
     isUnlocked: Boolean,
+    isSelected: Boolean = false,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
     onLongPress: () -> Unit,
@@ -1473,7 +1560,7 @@ private fun DocumentGridCard(
                 scaleX = pressScale
                 scaleY = pressScale
             }
-            .scannerGlassSurface(RoundedCornerShape(20.dp), glowBorder = doc.isPinned)
+            .scannerGlassSurface(RoundedCornerShape(20.dp), glowBorder = doc.isPinned || isSelected)
             .pointerInput(doc.id) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -1616,6 +1703,7 @@ private fun DocumentListCard(
     doc: ScannedDocumentEntity,
     isArabic: Boolean,
     isUnlocked: Boolean,
+    isSelected: Boolean = false,
     onClick: () -> Unit,
     onLongPress: () -> Unit,
     onToggleStar: () -> Unit
@@ -1638,7 +1726,7 @@ private fun DocumentListCard(
                 scaleX = pressScale
                 scaleY = pressScale
             }
-            .scannerGlassSurface(RoundedCornerShape(18.dp), glowBorder = doc.isPinned)
+            .scannerGlassSurface(RoundedCornerShape(18.dp), glowBorder = doc.isPinned || isSelected)
             .pointerInput(doc.id) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
