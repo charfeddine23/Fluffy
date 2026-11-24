@@ -67,7 +67,6 @@ import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.RestoreFromTrash
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
@@ -117,7 +116,6 @@ import com.charfeddine.fluffy.scanner.data.model.ScannedDocumentEntity
 import com.charfeddine.fluffy.scanner.data.model.ScannerFolderEntity
 import com.charfeddine.fluffy.scanner.data.model.ScannerTagCatalog
 import com.charfeddine.fluffy.scanner.data.model.SortOption
-import com.charfeddine.fluffy.scanner.data.repository.ScannerLocalStoragePolicy
 import com.charfeddine.fluffy.scanner.domain.ScannerViewModel
 import com.charfeddine.fluffy.scanner.ui.components.PdfToolsSheet
 import com.charfeddine.fluffy.scanner.ui.theme.ScannerDarkLiquidBackdrop
@@ -568,41 +566,7 @@ fun ScannerHubScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    // Strict Local-Only Storage Law Notice
-                    if (!ScannerLocalStoragePolicy.ALLOW_CLOUD_SYNC) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .iosLiquidGlass(RoundedCornerShape(14.dp), fillAlpha = 0.56f)
-                                .padding(horizontal = 12.dp, vertical = 7.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Shield,
-                                contentDescription = null,
-                                tint = ScannerGlassPalette.EmeraldGlow,
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Text(
-                                text = if (isArabic) {
-                                    "تخزين محلي بالهاتف فقط • لا يُنقل لقاعدة البيانات"
-                                } else {
-                                    "Local Device Storage Only • Never Cloud Synced"
-                                },
-                                color = ScannerGlassPalette.TextSecondary,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(10.dp))
-                    } else {
-                        Spacer(modifier = Modifier.height(4.dp))
-                    }
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     // 3. Structured Scrollable Content
                     LazyColumn(
