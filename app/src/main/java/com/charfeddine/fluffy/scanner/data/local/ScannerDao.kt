@@ -45,8 +45,17 @@ interface ScannerDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertDocument(document: ScannedDocumentEntity)
 
+    @Query("SELECT * FROM scanned_documents WHERE isTrashed = 0")
+    suspend fun getActiveDocumentsOnce(): List<ScannedDocumentEntity>
+
+    @Query("SELECT MIN(sortOrder) FROM scanned_documents WHERE isTrashed = 0")
+    suspend fun getMinSortOrder(): Long?
+
     @Update
     suspend fun updateDocument(document: ScannedDocumentEntity)
+
+    @Update
+    suspend fun updateDocuments(documents: List<ScannedDocumentEntity>)
 
     @Query("UPDATE scanned_documents SET folderId = :targetFolderId, updatedAt = :now WHERE id = :documentId")
     suspend fun moveDocumentToFolder(documentId: String, targetFolderId: String?, now: Long = System.currentTimeMillis())

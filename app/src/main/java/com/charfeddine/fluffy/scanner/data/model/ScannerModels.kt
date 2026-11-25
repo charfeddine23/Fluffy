@@ -43,9 +43,14 @@ enum class CompressionQuality(val id: String, val labelEn: String, val labelAr: 
 
 enum class SortOption(val id: String, val labelEn: String, val labelAr: String) {
     DATE_DESC("date_desc", "Newest", "الأحدث"),
+    CUSTOM("custom", "Custom", "مخصص"),
     NAME_ASC("name_asc", "Name A-Z", "الاسم أ-ي"),
     SIZE_DESC("size_desc", "Largest Size", "الأكبر حجماً"),
-    PAGE_COUNT_DESC("pages_desc", "Most Pages", "الأكثر صفحات")
+    PAGE_COUNT_DESC("pages_desc", "Most Pages", "الأكثر صفحات");
+
+    companion object {
+        fun fromId(id: String?): SortOption = entries.firstOrNull { it.id == id } ?: DATE_DESC
+    }
 }
 
 enum class AnnotationTool {
@@ -346,7 +351,8 @@ data class ScannedDocumentEntity(
     val totalSizeBytes: Long = 0L,
     val coverThumbnailPath: String = "",
     val pdfPath: String = "",
-    val isSearchablePdf: Boolean = false
+    val isSearchablePdf: Boolean = false,
+    val sortOrder: Long = 0L
 )
 
 @Entity(tableName = "scanned_pages")

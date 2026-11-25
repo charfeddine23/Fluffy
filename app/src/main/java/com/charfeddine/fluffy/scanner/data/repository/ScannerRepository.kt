@@ -77,7 +77,13 @@ class ScannerRepository(
 
     suspend fun upsertDocument(doc: ScannedDocumentEntity) = dao.upsertDocument(doc)
 
+    suspend fun getActiveDocumentsOnce(): List<ScannedDocumentEntity> = dao.getActiveDocumentsOnce()
+
+    suspend fun nextTopSortOrder(): Long = (dao.getMinSortOrder() ?: 0L) - 1000L
+
     suspend fun updateDocument(doc: ScannedDocumentEntity) = dao.updateDocument(doc)
+
+    suspend fun updateDocuments(docs: List<ScannedDocumentEntity>) = dao.updateDocuments(docs)
 
     suspend fun moveDocumentToFolder(docId: String, targetFolderId: String?) =
         dao.moveDocumentToFolder(docId, targetFolderId)

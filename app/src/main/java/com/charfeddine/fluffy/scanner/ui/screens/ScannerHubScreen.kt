@@ -3,6 +3,7 @@ package com.charfeddine.fluffy.scanner.ui.screens
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -21,7 +22,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,7 +31,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -42,6 +42,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -50,12 +55,14 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddCircleOutline
 import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DocumentScanner
+import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Folder
@@ -84,6 +91,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -91,25 +100,34 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.zIndex
 import coil.compose.rememberAsyncImagePainter
 import com.charfeddine.fluffy.scanner.data.model.ScanMode
 import com.charfeddine.fluffy.scanner.data.model.ScannedDocumentEntity
@@ -125,7 +143,7 @@ import com.charfeddine.fluffy.scanner.ui.theme.formatScannerBytes
 import com.charfeddine.fluffy.scanner.ui.theme.iosLiquidGlass
 import com.charfeddine.fluffy.scanner.ui.theme.scannerGlassSurface
 import java.io.File
-import kotlin.math.hypot
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
@@ -154,16 +172,131 @@ fun ScannerHubScreen(
     var showSortMenu by remember { mutableStateOf(false) }
     var showTagMenu by remember { mutableStateOf(false) }
     var showPdfToolsSheet by remember { mutableStateOf(false) }
-    var contextMenuDoc by remember { mutableStateOf<ScannedDocumentEntity?>(null) }
+    var selectedDocIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    val selectedDocs = remember(selectedDocIds, visibleDocs) {
+        visibleDocs.filter { it.id in selectedDocIds }
+    }
+    val isSelectionMode = selectedDocs.isNotEmpty()
     var showAddMoreSourceChoices by remember { mutableStateOf(false) }
     var docToRename by remember { mutableStateOf<ScannedDocumentEntity?>(null) }
     var pendingAppendGalleryDocId by remember { mutableStateOf<String?>(null) }
 
+    val haptic = LocalHapticFeedback.current
+    val density = LocalDensity.current
+    val docGridState = rememberLazyGridState()
+    var displayedDocs by remember { mutableStateOf(visibleDocs) }
+    var draggedDocId by remember { mutableStateOf<String?>(null) }
+    var pressedDocId by remember { mutableStateOf<String?>(null) }
+    var currentPointerPos by remember { mutableStateOf(Offset.Zero) }
+    var grabOffsetInsideCard by remember { mutableStateOf(Offset.Zero) }
+    var pendingCommitOrderIds by remember { mutableStateOf<List<String>?>(null) }
+    var lastSwappedKey by remember { mutableStateOf<String?>(null) }
+    var lastSwapTimeMs by remember { mutableLongStateOf(0L) }
+    var lastSwapPointerPos by remember { mutableStateOf(Offset.Zero) }
+    val lastKnownTranslationXY = remember { floatArrayOf(0f, 0f) }
+    var containerCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val docPhysicalRects = remember { mutableMapOf<String, Rect>() }
+
+    val currentDisplayedDocs by rememberUpdatedState(displayedDocs)
+    val currentVisibleDocs by rememberUpdatedState(visibleDocs)
+    val currentIsGridView by rememberUpdatedState(isGridView)
+    val swapHysteresisPx = with(density) { 28.dp.toPx() }
+
+    LaunchedEffect(visibleDocs, draggedDocId, pendingCommitOrderIds) {
+        if (draggedDocId == null) {
+            val pending = pendingCommitOrderIds
+            if (pending == null || visibleDocs.map { it.id } == pending) {
+                displayedDocs = visibleDocs
+                pendingCommitOrderIds = null
+            }
+        }
+        val visibleIdSet = visibleDocs.map { it.id }.toSet()
+        val pruned = selectedDocIds.intersect(visibleIdSet)
+        if (pruned != selectedDocIds) {
+            selectedDocIds = pruned
+        }
+    }
+
+    LaunchedEffect(pendingCommitOrderIds) {
+        if (pendingCommitOrderIds != null) {
+            delay(600L)
+            if (draggedDocId == null) {
+                displayedDocs = currentVisibleDocs
+                pendingCommitOrderIds = null
+            }
+        }
+    }
+
+    fun visibleDocKeys(): Set<String> {
+        return docGridState.layoutInfo.visibleItemsInfo.mapNotNullTo(HashSet()) { it.key as? String }
+    }
+
+    fun trySwapDraggedDoc(pointerPos: Offset, activeDragId: String, gridMode: Boolean) {
+        val currentList = currentDisplayedDocs
+        val draggedDoc = currentList.firstOrNull { it.id == activeDragId } ?: return
+        val visibleKeys = visibleDocKeys()
+
+        val candidateKey: String? = docPhysicalRects.entries.firstOrNull { (id, rect) ->
+            if (id == activeDragId || id !in visibleKeys) return@firstOrNull false
+            if (gridMode) {
+                rect.contains(pointerPos)
+            } else {
+                pointerPos.y in rect.top..rect.bottom
+            }
+        }?.key
+
+        if (candidateKey == null) return
+        val candidateDoc = currentList.firstOrNull { it.id == candidateKey } ?: return
+        if (draggedDoc.isPinned != candidateDoc.isPinned) return
+
+        val now = SystemClock.uptimeMillis()
+        val elapsed = now - lastSwapTimeMs
+        val movedDist = (pointerPos - lastSwapPointerPos).getDistance()
+        val allowSwap = candidateKey != lastSwappedKey || (elapsed > 260L && movedDist > swapHysteresisPx)
+        if (!allowSwap) return
+
+        val fromIdx = currentList.indexOfFirst { it.id == activeDragId }
+        val toIdx = currentList.indexOfFirst { it.id == candidateKey }
+        if (fromIdx != -1 && toIdx != -1 && fromIdx != toIdx) {
+            val mutable = currentList.toMutableList()
+            val moved = mutable.removeAt(fromIdx)
+            mutable.add(toIdx, moved)
+            displayedDocs = mutable
+            lastSwappedKey = candidateKey
+            lastSwapTimeMs = now
+            lastSwapPointerPos = pointerPos
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        }
+    }
+
+    LaunchedEffect(draggedDocId) {
+        val activeDragId = draggedDocId ?: return@LaunchedEffect
+        val edgeZonePx = with(density) { 64.dp.toPx() }
+        val maxScrollStep = with(density) { 14.dp.toPx() }
+
+        while (draggedDocId == activeDragId) {
+            val viewportHeight = docGridState.layoutInfo.viewportSize.height.toFloat()
+            val y = currentPointerPos.y
+            val scrollDelta = when {
+                viewportHeight <= 0f -> 0f
+                y < edgeZonePx -> -((edgeZonePx - y) / edgeZonePx).coerceIn(0f, 1f) * maxScrollStep
+                y > viewportHeight - edgeZonePx -> ((y - (viewportHeight - edgeZonePx)) / edgeZonePx).coerceIn(0f, 1f) * maxScrollStep
+                else -> 0f
+            }
+
+            if (scrollDelta != 0f) {
+                docGridState.scrollBy(scrollDelta)
+                trySwapDraggedDoc(currentPointerPos, activeDragId, currentIsGridView)
+            }
+            withFrameNanos { }
+        }
+    }
+
     BackHandler {
         when {
-            contextMenuDoc != null -> {
+            selectedDocIds.isNotEmpty() -> {
                 showAddMoreSourceChoices = false
-                contextMenuDoc = null
+                selectedDocIds = emptySet()
             }
             showTrash -> scannerViewModel.showTrashView.value = false
             currentFolderId != null -> {
@@ -245,9 +378,9 @@ fun ScannerHubScreen(
                         IconButton(
                             onClick = {
                                 when {
-                                    contextMenuDoc != null -> {
+                                    selectedDocIds.isNotEmpty() -> {
                                         showAddMoreSourceChoices = false
-                                        contextMenuDoc = null
+                                        selectedDocIds = emptySet()
                                     }
                                     showTrash -> scannerViewModel.showTrashView.value = false
                                     currentFolderId != null -> {
@@ -318,7 +451,7 @@ fun ScannerHubScreen(
                         IconButton(
                             onClick = {
                                 showAddMoreSourceChoices = false
-                                contextMenuDoc = null
+                                selectedDocIds = emptySet()
                                 scannerViewModel.showTrashView.value = !showTrash
                             },
                             modifier = Modifier
@@ -448,18 +581,19 @@ fun ScannerHubScreen(
                         }
                     }
                 } else {
-                    // 2. Clean Search Bar <-> In-Place Contextual Action Bar (exact same slot & height)
+                    // 2. Clean Search Bar <-> In-Place Contextual / Batch Selection Bar (exact same slot & height)
                     AnimatedContent(
-                        targetState = contextMenuDoc,
+                        targetState = selectedDocs,
                         transitionSpec = {
                             (fadeIn(tween(200)) + slideInVertically(tween(200)) { -it / 8 }) togetherWith
                                 (fadeOut(tween(150)) + slideOutVertically(tween(150)) { -it / 8 })
                         },
-                        contentKey = { it != null },
+                        contentKey = { list -> if (list.isEmpty()) 0 else if (list.size == 1) 1 else 2 },
                         modifier = Modifier.fillMaxWidth(),
                         label = "scanner_search_or_contextual_bar"
-                    ) { activeDoc ->
-                        if (activeDoc != null) {
+                    ) { activeDocs ->
+                        if (activeDocs.size == 1) {
+                            val activeDoc = activeDocs.first()
                             val isDocUnlocked = !activeDoc.isLocked || activeDoc.id in unlockedIds
                             fun withDocAccess(action: () -> Unit) {
                                 if (!isDocUnlocked) {
@@ -478,17 +612,17 @@ fun ScannerHubScreen(
                                 showAddMoreChoices = showAddMoreSourceChoices,
                                 onDismiss = {
                                     showAddMoreSourceChoices = false
-                                    contextMenuDoc = null
+                                    selectedDocIds = emptySet()
                                 },
                                 onTogglePin = {
                                     scannerViewModel.togglePinned(activeDoc, isArabic)
                                     showAddMoreSourceChoices = false
-                                    contextMenuDoc = null
+                                    selectedDocIds = emptySet()
                                 },
                                 onRename = {
                                     withDocAccess {
                                         showAddMoreSourceChoices = false
-                                        contextMenuDoc = null
+                                        selectedDocIds = emptySet()
                                         docToRename = activeDoc
                                     }
                                 },
@@ -498,14 +632,14 @@ fun ScannerHubScreen(
                                 onAddMoreCamera = {
                                     withDocAccess {
                                         showAddMoreSourceChoices = false
-                                        contextMenuDoc = null
+                                        selectedDocIds = emptySet()
                                         onAddMoreCamera(activeDoc.id)
                                     }
                                 },
                                 onAddMoreFiles = {
                                     withDocAccess {
                                         showAddMoreSourceChoices = false
-                                        contextMenuDoc = null
+                                        selectedDocIds = emptySet()
                                         pendingAppendGalleryDocId = activeDoc.id
                                         fileImportLauncher.launch(arrayOf("image/*", "application/pdf"))
                                     }
@@ -514,7 +648,41 @@ fun ScannerHubScreen(
                                     withDocAccess {
                                         scannerViewModel.moveToTrash(activeDoc.id, isArabic)
                                         showAddMoreSourceChoices = false
-                                        contextMenuDoc = null
+                                        selectedDocIds = emptySet()
+                                    }
+                                }
+                            )
+                        } else if (activeDocs.size > 1) {
+                            val allVisibleSelected = displayedDocs.isNotEmpty() &&
+                                displayedDocs.all { it.id in selectedDocIds }
+                            ScannerBatchSelectionTopBar(
+                                selectedCount = activeDocs.size,
+                                allSelected = allVisibleSelected,
+                                isArabic = isArabic,
+                                onDismiss = {
+                                    showAddMoreSourceChoices = false
+                                    selectedDocIds = emptySet()
+                                },
+                                onToggleSelectAll = {
+                                    selectedDocIds = if (allVisibleSelected) {
+                                        emptySet()
+                                    } else {
+                                        displayedDocs.mapTo(HashSet()) { it.id }
+                                    }
+                                },
+                                onBatchDelete = {
+                                    val lockedPending = activeDocs.firstOrNull { it.isLocked && it.id !in unlockedIds }
+                                    if (lockedPending != null) {
+                                        onRequestProtectedAccess(lockedPending.id) {
+                                            scannerViewModel.markProtectedUnlocked(lockedPending.id)
+                                            scannerViewModel.moveDocumentsToTrash(activeDocs.map { it.id }, isArabic)
+                                            showAddMoreSourceChoices = false
+                                            selectedDocIds = emptySet()
+                                        }
+                                    } else {
+                                        scannerViewModel.moveDocumentsToTrash(activeDocs.map { it.id }, isArabic)
+                                        showAddMoreSourceChoices = false
+                                        selectedDocIds = emptySet()
                                     }
                                 }
                             )
@@ -568,240 +736,319 @@ fun ScannerHubScreen(
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // 3. Structured Scrollable Content
-                    LazyColumn(
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                        contentPadding = PaddingValues(bottom = 112.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    // 3. Structured Scrollable Content (supports hold-for-actions + keep-holding-to-drag-reorder)
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .onGloballyPositioned { coords ->
+                                containerCoords = coords
+                            }
+                            .pointerInput(Unit) {
+                                val touchSlop = viewConfiguration.touchSlop
+
+                                fun findHitDocAndOrigin(pos: Offset): Pair<String, Offset>? {
+                                    val visibleKeys = visibleDocKeys()
+                                    for ((id, rect) in docPhysicalRects) {
+                                        if (id in visibleKeys && rect.contains(pos)) {
+                                            return id to rect.topLeft
+                                        }
+                                    }
+                                    return null
+                                }
+
+                                awaitEachGesture {
+                                    val initialEvent = awaitPointerEvent(PointerEventPass.Initial)
+                                    val firstDown = initialEvent.changes.firstOrNull { it.changedToDownIgnoreConsumed() }
+                                        ?: return@awaitEachGesture
+                                    if (initialEvent.changes.count { it.pressed } != 1) return@awaitEachGesture
+
+                                    val pointerId = firstDown.id
+                                    val downPos = firstDown.position
+                                    val initialHit = findHitDocAndOrigin(downPos) ?: return@awaitEachGesture
+
+                                    pressedDocId = initialHit.first
+                                    var latestPos = downPos
+                                    var holdActivated = false
+                                    val startTime = SystemClock.uptimeMillis()
+
+                                    try {
+                                        while (true) {
+                                            val remaining = 500L - (SystemClock.uptimeMillis() - startTime)
+                                            if (remaining <= 0L) {
+                                                holdActivated = true
+                                                break
+                                            }
+                                            val nextEvent = withTimeoutOrNull(remaining) {
+                                                awaitPointerEvent(PointerEventPass.Initial)
+                                            }
+                                            if (nextEvent == null) {
+                                                holdActivated = true
+                                                break
+                                            }
+                                            val activeCount = nextEvent.changes.count { it.pressed }
+                                            val change = nextEvent.changes.firstOrNull { it.id == pointerId }
+                                            if (change == null || !change.pressed || activeCount != 1) {
+                                                return@awaitEachGesture
+                                            }
+                                            latestPos = change.position
+                                            if ((latestPos - downPos).getDistance() > touchSlop) {
+                                                return@awaitEachGesture
+                                            }
+                                        }
+
+                                        if (!holdActivated) return@awaitEachGesture
+                                        pressedDocId = null
+
+                                        val hit = findHitDocAndOrigin(latestPos) ?: initialHit
+                                        val (hitDocId, cardOrigin) = hit
+                                        val listSnapshot = currentDisplayedDocs
+                                        val hitDoc = listSnapshot.firstOrNull { it.id == hitDocId } ?: return@awaitEachGesture
+                                        val canReorderInGroup = listSnapshot.count { it.isPinned == hitDoc.isPinned } > 1
+
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        showAddMoreSourceChoices = false
+                                        selectedDocIds = if (selectedDocIds.isEmpty()) {
+                                            setOf(hitDoc.id)
+                                        } else if (hitDoc.id !in selectedDocIds) {
+                                            selectedDocIds + hitDoc.id
+                                        } else {
+                                            selectedDocIds
+                                        }
+
+                                        val grabAnchorPos = latestPos
+                                        val dragStartSlop = maxOf(touchSlop * 1.35f, with(density) { 12.dp.toPx() })
+                                        var startedDragging = false
+
+                                        // Keep-holding loop:
+                                        // - Lifting without dragging keeps contextual / selection bar open
+                                        // - Moving finger without lifting enters Drag & Reorder
+                                        while (true) {
+                                            val ev = awaitPointerEvent(PointerEventPass.Initial)
+                                            val ch = ev.changes.firstOrNull { it.id == pointerId }
+                                            ev.changes.forEach { it.consume() }
+                                            if (ch == null || !ch.pressed || ev.changes.none { it.pressed }) {
+                                                break
+                                            }
+                                            latestPos = ch.position
+                                            if (canReorderInGroup && (latestPos - grabAnchorPos).getDistance() > dragStartSlop) {
+                                                startedDragging = true
+                                                break
+                                            }
+                                        }
+
+                                        if (!startedDragging) return@awaitEachGesture
+
+                                        selectedDocIds = emptySet()
+                                        draggedDocId = hitDocId
+                                        grabOffsetInsideCard = grabAnchorPos - cardOrigin
+                                        currentPointerPos = latestPos
+                                        lastSwappedKey = null
+                                        lastSwapTimeMs = 0L
+                                        lastSwapPointerPos = latestPos
+                                        lastKnownTranslationXY[0] = latestPos.x - grabAnchorPos.x
+                                        lastKnownTranslationXY[1] = latestPos.y - grabAnchorPos.y
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        trySwapDraggedDoc(latestPos, hitDocId, currentIsGridView)
+
+                                        while (true) {
+                                            val dragEvent = awaitPointerEvent(PointerEventPass.Initial)
+                                            val change = dragEvent.changes.firstOrNull { it.id == pointerId }
+                                            dragEvent.changes.forEach { it.consume() }
+                                            if (change == null || !change.pressed || dragEvent.changes.none { it.pressed }) {
+                                                break
+                                            }
+                                            latestPos = change.position
+                                            currentPointerPos = latestPos
+                                            trySwapDraggedDoc(latestPos, hitDocId, currentIsGridView)
+                                        }
+
+                                        val committed = currentDisplayedDocs.toList()
+                                        pendingCommitOrderIds = committed.map { it.id }
+                                        draggedDocId = null
+                                        lastKnownTranslationXY[0] = 0f
+                                        lastKnownTranslationXY[1] = 0f
+                                        scannerViewModel.reorderDocuments(committed)
+                                    } finally {
+                                        pressedDocId = null
+                                        if (draggedDocId != null) {
+                                            draggedDocId = null
+                                            lastKnownTranslationXY[0] = 0f
+                                            lastKnownTranslationXY[1] = 0f
+                                        }
+                                    }
+                                }
+                            }
                     ) {
-                        // Quick Actions Bento Row (shown cleanly at top when not searching)
-                        if (searchQuery.isBlank() && currentFolderId == null) {
-                            item {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        LazyVerticalGrid(
+                            state = docGridState,
+                            columns = GridCells.Fixed(2),
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(bottom = 112.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            // Quick Actions Bento Row (shown cleanly at top when not searching)
+                            if (searchQuery.isBlank() && currentFolderId == null) {
+                                item(
+                                    key = "quick_actions",
+                                    span = { GridItemSpan(maxLineSpan) }
                                 ) {
-                                    HubQuickActionTile(
-                                        icon = Icons.Default.Badge,
-                                        label = if (isArabic) "ماسح ID" else "ID Scanner",
-                                        accentColor = ScannerGlassPalette.CyanGlow,
-                                        highlighted = false,
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .testTag("hub_open_camera_scanner_btn"),
-                                        onClick = onLaunchAppIdScanner
-                                    )
-                                    HubQuickActionTile(
-                                        icon = Icons.Default.Description,
-                                        label = "Open PDF",
-                                        accentColor = ScannerGlassPalette.VioletGlow,
-                                        highlighted = false,
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .testTag("hub_import_gallery_btn"),
-                                        onClick = {
-                                            pendingAppendGalleryDocId = null
-                                            val pdfIntent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                                                addCategory(Intent.CATEGORY_OPENABLE)
-                                                type = "application/pdf"
-                                                putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/pdf"))
-                                                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
-                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                            }
-                                            runCatching {
-                                                openPdfLauncher.launch(pdfIntent)
-                                            }.onFailure {
-                                                fileImportLauncher.launch(arrayOf("application/pdf"))
-                                            }
-                                        }
-                                    )
-                                    HubQuickActionTile(
-                                        icon = Icons.Default.PictureAsPdf,
-                                        label = if (isArabic) "أدوات PDF" else "PDF Tools",
-                                        accentColor = ScannerGlassPalette.EmeraldGlow,
-                                        highlighted = false,
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .testTag("hub_pdf_tools_btn"),
-                                        onClick = { showPdfToolsSheet = true }
-                                    )
-                                }
-                            }
-                        }
-
-                        // Compact Segmented Filter Bar (All / Starred / Tag Dropdown)
-                        item {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                FilterChipPill(
-                                    label = if (isArabic) "الكل" else "All",
-                                    selected = !onlyStarred && selectedTag == null,
-                                    accentColor = ScannerGlassPalette.CyanGlow,
-                                    onClick = {
-                                        scannerViewModel.onlyStarredFilter.value = false
-                                        scannerViewModel.selectedTagFilter.value = null
-                                    }
-                                )
-
-                                FilterChipPill(
-                                    label = if (isArabic) "المميزة" else "Starred",
-                                    icon = if (onlyStarred) Icons.Default.Star else Icons.Default.StarBorder,
-                                    selected = onlyStarred,
-                                    accentColor = ScannerGlassPalette.AmberGlow,
-                                    onClick = { scannerViewModel.onlyStarredFilter.value = !onlyStarred }
-                                )
-
-                                Box {
-                                    val activePreset = ScannerTagCatalog.presets.firstOrNull { it.name == selectedTag }
-                                    val tagAccent = activePreset?.let { Color(it.colorArgb.toInt()) } ?: ScannerGlassPalette.VioletGlow
-                                    Row(
-                                        modifier = Modifier
-                                            .minimumInteractiveComponentSize()
-                                            .clip(CircleShape)
-                                            .scannerGlassSurface(CircleShape, glowBorder = selectedTag != null)
-                                            .clickable { showTagMenu = true }
-                                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                    ) {
-                                        if (activePreset != null) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(8.dp)
-                                                    .clip(CircleShape)
-                                                    .background(tagAccent)
-                                            )
-                                        }
-                                        Text(
-                                            text = selectedTag ?: if (isArabic) "الوسوم" else "Tags",
-                                            color = if (selectedTag != null) tagAccent else ScannerGlassPalette.TextSecondary,
-                                            fontSize = 12.5.sp,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
-                                        Icon(
-                                            imageVector = Icons.Default.ExpandMore,
-                                            contentDescription = null,
-                                            tint = ScannerGlassPalette.TextSecondary,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
-
-                                    DropdownMenu(
-                                        expanded = showTagMenu,
-                                        onDismissRequest = { showTagMenu = false },
-                                        containerColor = ScannerGlassPalette.MidnightNavy
-                                    ) {
-                                        DropdownMenuItem(
-                                            text = {
-                                                Text(
-                                                    text = if (isArabic) "كل الوسوم" else "All Tags",
-                                                    color = if (selectedTag == null) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.TextPrimary,
-                                                    fontWeight = if (selectedTag == null) FontWeight.Bold else FontWeight.Normal
-                                                )
-                                            },
-                                            onClick = {
-                                                scannerViewModel.selectedTagFilter.value = null
-                                                showTagMenu = false
-                                            }
-                                        )
-                                        ScannerTagCatalog.presets.forEach { preset ->
-                                            val dotColor = Color(preset.colorArgb.toInt())
-                                            val isSelected = selectedTag == preset.name
-                                            DropdownMenuItem(
-                                                leadingIcon = {
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .size(10.dp)
-                                                            .clip(CircleShape)
-                                                            .background(dotColor)
-                                                    )
-                                                },
-                                                text = {
-                                                    Text(
-                                                        text = preset.name,
-                                                        color = if (isSelected) dotColor else ScannerGlassPalette.TextPrimary,
-                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                                                    )
-                                                },
-                                                onClick = {
-                                                    scannerViewModel.selectedTagFilter.value = preset.name
-                                                    showTagMenu = false
-                                                }
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Folders Section (Clean Header + Horizontal Cards)
-                        if (searchQuery.isBlank() && selectedTag == null && !onlyStarred) {
-                            item {
-                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                                     ) {
-                                        Text(
-                                            text = if (isArabic) "المجلدات" else "Folders",
-                                            color = ScannerGlassPalette.TextPrimary,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 15.sp
+                                        HubQuickActionTile(
+                                            icon = Icons.Default.Badge,
+                                            label = if (isArabic) "ماسح ID" else "ID Scanner",
+                                            accentColor = ScannerGlassPalette.CyanGlow,
+                                            highlighted = false,
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .testTag("hub_open_camera_scanner_btn"),
+                                            onClick = onLaunchAppIdScanner
                                         )
+                                        HubQuickActionTile(
+                                            icon = Icons.Default.Description,
+                                            label = "Open PDF",
+                                            accentColor = ScannerGlassPalette.VioletGlow,
+                                            highlighted = false,
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .testTag("hub_import_gallery_btn"),
+                                            onClick = {
+                                                pendingAppendGalleryDocId = null
+                                                val pdfIntent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                                                    addCategory(Intent.CATEGORY_OPENABLE)
+                                                    type = "application/pdf"
+                                                    putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/pdf"))
+                                                    putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                }
+                                                runCatching {
+                                                    openPdfLauncher.launch(pdfIntent)
+                                                }.onFailure {
+                                                    fileImportLauncher.launch(arrayOf("application/pdf"))
+                                                }
+                                            }
+                                        )
+                                        HubQuickActionTile(
+                                            icon = Icons.Default.PictureAsPdf,
+                                            label = if (isArabic) "أدوات PDF" else "PDF Tools",
+                                            accentColor = ScannerGlassPalette.EmeraldGlow,
+                                            highlighted = false,
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .testTag("hub_pdf_tools_btn"),
+                                            onClick = { showPdfToolsSheet = true }
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Compact Segmented Filter Bar (All / Starred / Tag Dropdown)
+                            item(
+                                key = "filter_bar",
+                                span = { GridItemSpan(maxLineSpan) }
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    FilterChipPill(
+                                        label = if (isArabic) "الكل" else "All",
+                                        selected = !onlyStarred && selectedTag == null,
+                                        accentColor = ScannerGlassPalette.CyanGlow,
+                                        onClick = {
+                                            scannerViewModel.onlyStarredFilter.value = false
+                                            scannerViewModel.selectedTagFilter.value = null
+                                        }
+                                    )
+
+                                    FilterChipPill(
+                                        label = if (isArabic) "المميزة" else "Starred",
+                                        icon = if (onlyStarred) Icons.Default.Star else Icons.Default.StarBorder,
+                                        selected = onlyStarred,
+                                        accentColor = ScannerGlassPalette.AmberGlow,
+                                        onClick = { scannerViewModel.onlyStarredFilter.value = !onlyStarred }
+                                    )
+
+                                    Box {
+                                        val activePreset = ScannerTagCatalog.presets.firstOrNull { it.name == selectedTag }
+                                        val tagAccent = activePreset?.let { Color(it.colorArgb.toInt()) } ?: ScannerGlassPalette.VioletGlow
                                         Row(
                                             modifier = Modifier
+                                                .minimumInteractiveComponentSize()
                                                 .clip(CircleShape)
-                                                .clickable { showCreateFolderDialog = true }
-                                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                                                .scannerGlassSurface(CircleShape, glowBorder = selectedTag != null)
+                                                .clickable { showTagMenu = true }
+                                                .padding(horizontal = 12.dp, vertical = 8.dp),
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(5.dp)
                                         ) {
-                                            Icon(
-                                                imageVector = Icons.Default.CreateNewFolder,
-                                                contentDescription = null,
-                                                tint = ScannerGlassPalette.CyanGlow,
-                                                modifier = Modifier.size(16.dp)
-                                            )
+                                            if (activePreset != null) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(8.dp)
+                                                        .clip(CircleShape)
+                                                        .background(tagAccent)
+                                                )
+                                            }
                                             Text(
-                                                text = if (isArabic) "مجلد جديد" else "New Folder",
-                                                color = ScannerGlassPalette.CyanGlow,
+                                                text = selectedTag ?: if (isArabic) "الوسوم" else "Tags",
+                                                color = if (selectedTag != null) tagAccent else ScannerGlassPalette.TextSecondary,
                                                 fontSize = 12.5.sp,
                                                 fontWeight = FontWeight.SemiBold
                                             )
+                                            Icon(
+                                                imageVector = Icons.Default.ExpandMore,
+                                                contentDescription = null,
+                                                tint = ScannerGlassPalette.TextSecondary,
+                                                modifier = Modifier.size(16.dp)
+                                            )
                                         }
-                                    }
 
-                                    if (childFolders.isNotEmpty()) {
-                                        LazyRow(
-                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                            modifier = Modifier.fillMaxWidth()
+                                        DropdownMenu(
+                                            expanded = showTagMenu,
+                                            onDismissRequest = { showTagMenu = false },
+                                            containerColor = ScannerGlassPalette.MidnightNavy
                                         ) {
-                                            items(childFolders, key = { it.id }) { folder ->
-                                                FolderCard(
-                                                    folder = folder,
-                                                    onClick = {
-                                                        if (folder.isLocked && folder.id !in unlockedIds) {
-                                                            onRequestProtectedAccess(folder.id) {
-                                                                scannerViewModel.markProtectedUnlocked(folder.id)
-                                                                scannerViewModel.currentFolderId.value = folder.id
-                                                            }
-                                                        } else {
-                                                            scannerViewModel.currentFolderId.value = folder.id
-                                                        }
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Text(
+                                                        text = if (isArabic) "كل الوسوم" else "All Tags",
+                                                        color = if (selectedTag == null) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.TextPrimary,
+                                                        fontWeight = if (selectedTag == null) FontWeight.Bold else FontWeight.Normal
+                                                    )
+                                                },
+                                                onClick = {
+                                                    scannerViewModel.selectedTagFilter.value = null
+                                                    showTagMenu = false
+                                                }
+                                            )
+                                            ScannerTagCatalog.presets.forEach { preset ->
+                                                val dotColor = Color(preset.colorArgb.toInt())
+                                                val isSelected = selectedTag == preset.name
+                                                DropdownMenuItem(
+                                                    leadingIcon = {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .size(10.dp)
+                                                                .clip(CircleShape)
+                                                                .background(dotColor)
+                                                        )
                                                     },
-                                                    onToggleLock = {
-                                                        if (folder.isLocked && folder.id !in unlockedIds) {
-                                                            onRequestProtectedAccess(folder.id) {
-                                                                scannerViewModel.markProtectedUnlocked(folder.id)
-                                                                scannerViewModel.toggleFolderLock(folder, false, isArabic)
-                                                            }
-                                                        } else {
-                                                            scannerViewModel.toggleFolderLock(folder, !folder.isLocked, isArabic)
-                                                        }
+                                                    text = {
+                                                        Text(
+                                                            text = preset.name,
+                                                            color = if (isSelected) dotColor else ScannerGlassPalette.TextPrimary,
+                                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                                        )
+                                                    },
+                                                    onClick = {
+                                                        scannerViewModel.selectedTagFilter.value = preset.name
+                                                        showTagMenu = false
                                                     }
                                                 )
                                             }
@@ -809,149 +1056,253 @@ fun ScannerHubScreen(
                                     }
                                 }
                             }
-                        }
 
-                        // Documents Section Header + Sort Picker
-                        item {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = if (isArabic) "المستندات (${visibleDocs.size})" else "Documents (${visibleDocs.size})",
-                                    color = ScannerGlassPalette.TextPrimary,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 15.sp
-                                )
-
-                                Box {
-                                    Row(
-                                        modifier = Modifier
-                                            .clip(CircleShape)
-                                            .scannerGlassSurface(CircleShape)
-                                            .clickable { showSortMenu = true }
-                                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Sort,
-                                            contentDescription = "Sort",
-                                            tint = ScannerGlassPalette.VioletGlow,
-                                            modifier = Modifier.size(15.dp)
-                                        )
-                                        Text(
-                                            text = if (isArabic) sortOption.labelAr else sortOption.labelEn,
-                                            color = ScannerGlassPalette.TextSecondary,
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Medium
-                                        )
-                                    }
-                                    DropdownMenu(
-                                        expanded = showSortMenu,
-                                        onDismissRequest = { showSortMenu = false },
-                                        containerColor = ScannerGlassPalette.MidnightNavy
-                                    ) {
-                                        SortOption.entries.forEach { opt ->
-                                            DropdownMenuItem(
-                                                text = {
-                                                    Text(
-                                                        text = if (isArabic) opt.labelAr else opt.labelEn,
-                                                        color = if (sortOption == opt) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.TextPrimary,
-                                                        fontWeight = if (sortOption == opt) FontWeight.Bold else FontWeight.Normal
-                                                    )
-                                                },
-                                                onClick = {
-                                                    scannerViewModel.sortOption.value = opt
-                                                    showSortMenu = false
-                                                }
+                            // Folders Section (Clean Header + Horizontal Cards)
+                            if (searchQuery.isBlank() && selectedTag == null && !onlyStarred) {
+                                item(
+                                    key = "folders_section",
+                                    span = { GridItemSpan(maxLineSpan) }
+                                ) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = if (isArabic) "المجلدات" else "Folders",
+                                                color = ScannerGlassPalette.TextPrimary,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 15.sp
                                             )
+                                            Row(
+                                                modifier = Modifier
+                                                    .clip(CircleShape)
+                                                    .clickable { showCreateFolderDialog = true }
+                                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.CreateNewFolder,
+                                                    contentDescription = null,
+                                                    tint = ScannerGlassPalette.CyanGlow,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Text(
+                                                    text = if (isArabic) "مجلد جديد" else "New Folder",
+                                                    color = ScannerGlassPalette.CyanGlow,
+                                                    fontSize = 12.5.sp,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            }
+                                        }
+
+                                        if (childFolders.isNotEmpty()) {
+                                            LazyRow(
+                                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                items(childFolders, key = { it.id }) { folder ->
+                                                    FolderCard(
+                                                        folder = folder,
+                                                        onClick = {
+                                                            if (folder.isLocked && folder.id !in unlockedIds) {
+                                                                onRequestProtectedAccess(folder.id) {
+                                                                    scannerViewModel.markProtectedUnlocked(folder.id)
+                                                                    scannerViewModel.currentFolderId.value = folder.id
+                                                                }
+                                                            } else {
+                                                                scannerViewModel.currentFolderId.value = folder.id
+                                                            }
+                                                        },
+                                                        onToggleLock = {
+                                                            if (folder.isLocked && folder.id !in unlockedIds) {
+                                                                onRequestProtectedAccess(folder.id) {
+                                                                    scannerViewModel.markProtectedUnlocked(folder.id)
+                                                                    scannerViewModel.toggleFolderLock(folder, false, isArabic)
+                                                                }
+                                                            } else {
+                                                                scannerViewModel.toggleFolderLock(folder, !folder.isLocked, isArabic)
+                                                            }
+                                                        }
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                 }
                             }
-                        }
 
-                        // Documents Body: Empty State, Clean 2-Col Rows, or List Cards
-                        if (visibleDocs.isEmpty()) {
-                            item {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .scannerGlassSurface(RoundedCornerShape(24.dp))
-                                        .padding(horizontal = 24.dp, vertical = 32.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    ScannerLaserIcon(modifier = Modifier.size(56.dp))
-                                    Text(
-                                        text = if (isArabic) "لا توجد مستندات بعد" else "No Documents Yet",
-                                        color = ScannerGlassPalette.TextPrimary,
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        text = if (isArabic) {
-                                            "صوّر المستندات والبطاقات والكتب أو استوردها من المعرض للبدء."
-                                        } else {
-                                            "Scan receipts, ID cards, contracts, or import photos from your gallery."
-                                        },
-                                        color = ScannerGlassPalette.TextSecondary,
-                                        fontSize = 12.5.sp,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                            }
-                        } else if (isGridView) {
-                            val rows = visibleDocs.chunked(2)
-                            items(rows, key = { chunk -> chunk.first().id }) { pair ->
+                            // Documents Section Header + Sort Picker
+                            item(
+                                key = "docs_header",
+                                span = { GridItemSpan(maxLineSpan) }
+                            ) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    pair.forEach { doc ->
-                                        DocumentGridCard(
-                                            doc = doc,
-                                            isArabic = isArabic,
-                                            isUnlocked = !doc.isLocked || doc.id in unlockedIds,
-                                            isSelected = contextMenuDoc?.id == doc.id,
-                                            modifier = Modifier.weight(1f),
-                                            onClick = {
-                                                showAddMoreSourceChoices = false
-                                                contextMenuDoc = null
-                                                if (doc.isLocked && doc.id !in unlockedIds) {
-                                                    onRequestProtectedAccess(doc.id) {
-                                                        scannerViewModel.markProtectedUnlocked(doc.id)
-                                                        scannerViewModel.openDocumentDetail(doc.id)
+                                    Text(
+                                        text = if (isArabic) "المستندات (${displayedDocs.size})" else "Documents (${displayedDocs.size})",
+                                        color = ScannerGlassPalette.TextPrimary,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp
+                                    )
+
+                                    Box {
+                                        Row(
+                                            modifier = Modifier
+                                                .clip(CircleShape)
+                                                .scannerGlassSurface(CircleShape)
+                                                .clickable { showSortMenu = true }
+                                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Sort,
+                                                contentDescription = "Sort",
+                                                tint = ScannerGlassPalette.VioletGlow,
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                            Text(
+                                                text = if (isArabic) sortOption.labelAr else sortOption.labelEn,
+                                                color = ScannerGlassPalette.TextSecondary,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
+                                        DropdownMenu(
+                                            expanded = showSortMenu,
+                                            onDismissRequest = { showSortMenu = false },
+                                            containerColor = ScannerGlassPalette.MidnightNavy
+                                        ) {
+                                            SortOption.entries.forEach { opt ->
+                                                DropdownMenuItem(
+                                                    text = {
+                                                        Text(
+                                                            text = if (isArabic) opt.labelAr else opt.labelEn,
+                                                            color = if (sortOption == opt) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.TextPrimary,
+                                                            fontWeight = if (sortOption == opt) FontWeight.Bold else FontWeight.Normal
+                                                        )
+                                                    },
+                                                    onClick = {
+                                                        scannerViewModel.setSortOption(opt)
+                                                        showSortMenu = false
                                                     }
-                                                } else {
-                                                    scannerViewModel.openDocumentDetail(doc.id)
-                                                }
-                                            },
-                                            onLongPress = {
-                                                showAddMoreSourceChoices = false
-                                                contextMenuDoc = doc
-                                            },
-                                            onToggleStar = { scannerViewModel.toggleStarred(doc) }
-                                        )
-                                    }
-                                    if (pair.size == 1) {
-                                        Spacer(modifier = Modifier.weight(1f))
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
-                        } else {
-                            items(visibleDocs, key = { it.id }) { doc ->
-                                DocumentListCard(
-                                    doc = doc,
-                                    isArabic = isArabic,
-                                    isUnlocked = !doc.isLocked || doc.id in unlockedIds,
-                                    isSelected = contextMenuDoc?.id == doc.id,
-                                    onClick = {
+
+                            // Documents Body: Empty State, Clean 2-Col Grid, or List Cards
+                            if (displayedDocs.isEmpty()) {
+                                item(
+                                    key = "empty_docs",
+                                    span = { GridItemSpan(maxLineSpan) }
+                                ) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .scannerGlassSurface(RoundedCornerShape(24.dp))
+                                            .padding(horizontal = 24.dp, vertical = 32.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        ScannerLaserIcon(modifier = Modifier.size(56.dp))
+                                        Text(
+                                            text = if (isArabic) "لا توجد مستندات بعد" else "No Documents Yet",
+                                            color = ScannerGlassPalette.TextPrimary,
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = if (isArabic) {
+                                                "صوّر المستندات والبطاقات والكتب أو استوردها من المعرض للبدء."
+                                            } else {
+                                                "Scan receipts, ID cards, contracts, or import photos from your gallery."
+                                            },
+                                            color = ScannerGlassPalette.TextSecondary,
+                                            fontSize = 12.5.sp,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                }
+                            } else {
+                                gridItems(
+                                    items = displayedDocs,
+                                    key = { it.id },
+                                    span = if (isGridView) null else { _ -> GridItemSpan(maxLineSpan) }
+                                ) { doc ->
+                                    val isDragging = draggedDocId == doc.id
+                                    val isCardPressed = pressedDocId == doc.id && !isDragging
+                                    val dragScale by animateFloatAsState(
+                                        targetValue = if (isDragging) 1.04f else 1f,
+                                        label = "doc_drag_scale"
+                                    )
+                                    val slotRectState = remember { mutableStateOf<Rect?>(null) }
+                                    DisposableEffect(doc.id) {
+                                        onDispose {
+                                            docPhysicalRects.remove(doc.id)
+                                        }
+                                    }
+
+                                    val outerSlotModifier = (if (isDragging) {
+                                        Modifier.zIndex(10f)
+                                    } else {
+                                        Modifier.animateItem()
+                                    }).onGloballyPositioned { coords ->
+                                        val container = containerCoords
+                                        if (container != null && container.isAttached && coords.isAttached) {
+                                            val topLeft = container.localPositionOf(coords, Offset.Zero)
+                                            val rect = Rect(topLeft, coords.size.toSize())
+                                            docPhysicalRects[doc.id] = rect
+                                            if (isDragging && slotRectState.value != rect) {
+                                                slotRectState.value = rect
+                                            }
+                                        }
+                                    }
+
+                                    val cardDragModifier = if (isDragging) {
+                                        Modifier.graphicsLayer {
+                                            val origin = slotRectState.value?.topLeft
+                                                ?: docPhysicalRects[doc.id]?.topLeft
+                                            val tx: Float
+                                            val ty: Float
+                                            if (origin != null) {
+                                                val computed = currentPointerPos - origin - grabOffsetInsideCard
+                                                lastKnownTranslationXY[0] = computed.x
+                                                lastKnownTranslationXY[1] = computed.y
+                                                tx = computed.x
+                                                ty = computed.y
+                                            } else {
+                                                tx = lastKnownTranslationXY[0]
+                                                ty = lastKnownTranslationXY[1]
+                                            }
+                                            translationX = tx
+                                            translationY = ty
+                                            scaleX = dragScale
+                                            scaleY = dragScale
+                                            shape = RoundedCornerShape(if (isGridView) 20.dp else 18.dp)
+                                            shadowElevation = 24.dp.toPx()
+                                        }
+                                    } else {
+                                        Modifier
+                                    }
+
+                                    val handleDocClick = {
                                         showAddMoreSourceChoices = false
-                                        contextMenuDoc = null
-                                        if (doc.isLocked && doc.id !in unlockedIds) {
+                                        if (selectedDocIds.isNotEmpty()) {
+                                            selectedDocIds = if (doc.id in selectedDocIds) {
+                                                selectedDocIds - doc.id
+                                            } else {
+                                                selectedDocIds + doc.id
+                                            }
+                                        } else if (doc.isLocked && doc.id !in unlockedIds) {
                                             onRequestProtectedAccess(doc.id) {
                                                 scannerViewModel.markProtectedUnlocked(doc.id)
                                                 scannerViewModel.openDocumentDetail(doc.id)
@@ -959,13 +1310,39 @@ fun ScannerHubScreen(
                                         } else {
                                             scannerViewModel.openDocumentDetail(doc.id)
                                         }
-                                    },
-                                    onLongPress = {
-                                        showAddMoreSourceChoices = false
-                                        contextMenuDoc = doc
-                                    },
-                                    onToggleStar = { scannerViewModel.toggleStarred(doc) }
-                                )
+                                    }
+
+                                    val cardSelected = doc.id in selectedDocIds
+                                    Box(modifier = outerSlotModifier) {
+                                        if (isGridView) {
+                                            DocumentGridCard(
+                                                doc = doc,
+                                                isArabic = isArabic,
+                                                isUnlocked = !doc.isLocked || doc.id in unlockedIds,
+                                                isSelectionMode = isSelectionMode,
+                                                isSelected = cardSelected,
+                                                isDragging = isDragging,
+                                                isPressed = isCardPressed,
+                                                modifier = cardDragModifier.fillMaxWidth(),
+                                                onClick = handleDocClick,
+                                                onToggleStar = { scannerViewModel.toggleStarred(doc) }
+                                            )
+                                        } else {
+                                            DocumentListCard(
+                                                doc = doc,
+                                                isArabic = isArabic,
+                                                isUnlocked = !doc.isLocked || doc.id in unlockedIds,
+                                                isSelectionMode = isSelectionMode,
+                                                isSelected = cardSelected,
+                                                isDragging = isDragging,
+                                                isPressed = isCardPressed,
+                                                modifier = cardDragModifier,
+                                                onClick = handleDocClick,
+                                                onToggleStar = { scannerViewModel.toggleStarred(doc) }
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1319,6 +1696,98 @@ private fun ScannerContextualTopActionBar(
 }
 
 @Composable
+private fun ScannerBatchSelectionTopBar(
+    selectedCount: Int,
+    allSelected: Boolean,
+    isArabic: Boolean,
+    onDismiss: () -> Unit,
+    onToggleSelectAll: () -> Unit,
+    onBatchDelete: () -> Unit
+) {
+    val deleteRed = ScannerGlassPalette.RoseGlow
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp)
+            .testTag("scanner_batch_selection_top_bar")
+            .scannerGlassSurface(RoundedCornerShape(22.dp), glowBorder = true)
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .minimumInteractiveComponentSize()
+                .clip(RoundedCornerShape(16.dp))
+                .background(ScannerGlassPalette.TextPrimary.copy(alpha = 0.08f))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = ripple(bounded = true),
+                    onClickLabel = if (isArabic) "إلغاء التحديد" else "Cancel selection",
+                    onClick = onDismiss
+                )
+                .testTag("context_menu_close_btn"),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = if (isArabic) "إلغاء التحديد" else "Cancel selection",
+                tint = ScannerGlassPalette.TextPrimary,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+
+        Text(
+            text = if (isArabic) "$selectedCount محدد" else "$selectedCount selected",
+            color = ScannerGlassPalette.CyanGlow,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 4.dp)
+                .testTag("context_menu_selected_count")
+        )
+
+        ScannerContextualActionPill(
+            icon = Icons.Default.DoneAll,
+            label = if (allSelected) {
+                if (isArabic) "إلغاء الكل" else "None"
+            } else {
+                if (isArabic) "الكل" else "All"
+            },
+            contentDescription = if (allSelected) {
+                if (isArabic) "إلغاء تحديد الكل" else "Deselect all"
+            } else {
+                if (isArabic) "تحديد الكل" else "Select all"
+            },
+            tint = ScannerGlassPalette.CyanGlow,
+            labelColor = ScannerGlassPalette.TextPrimary,
+            fillColor = ScannerGlassPalette.CyanGlow.copy(alpha = 0.14f),
+            testTag = "context_menu_select_all_btn",
+            onClick = onToggleSelectAll,
+            modifier = Modifier.padding(horizontal = 2.dp)
+        )
+
+        ScannerContextualActionPill(
+            icon = Icons.Default.DeleteOutline,
+            label = if (isArabic) "حذف ($selectedCount)" else "Delete ($selectedCount)",
+            contentDescription = if (isArabic) "حذف المحدد" else "Delete selected",
+            tint = deleteRed,
+            labelColor = deleteRed,
+            fillColor = deleteRed.copy(alpha = 0.18f),
+            testTag = "context_menu_batch_delete_btn",
+            onClick = onBatchDelete,
+            modifier = Modifier.padding(end = 2.dp)
+        )
+    }
+}
+
+@Composable
 private fun ScannerContextualActionPill(
     icon: ImageVector,
     label: String,
@@ -1501,19 +1970,16 @@ private fun DocumentGridCard(
     doc: ScannedDocumentEntity,
     isArabic: Boolean,
     isUnlocked: Boolean,
+    isSelectionMode: Boolean = false,
     isSelected: Boolean = false,
+    isDragging: Boolean = false,
+    isPressed: Boolean = false,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
-    onLongPress: () -> Unit,
     onToggleStar: () -> Unit
 ) {
-    val haptics = LocalHapticFeedback.current
-    val viewConfig = LocalViewConfiguration.current
-    val currentOnClick by rememberUpdatedState(onClick)
-    val currentOnLongPress by rememberUpdatedState(onLongPress)
-    var isPressed by remember { mutableStateOf(false) }
     val pressScale by animateFloatAsState(
-        targetValue = if (isPressed) 0.96f else 1f,
+        targetValue = if (isPressed && !isDragging) 0.96f else 1f,
         animationSpec = spring(dampingRatio = 0.72f, stiffness = 500f),
         label = "grid_card_press_scale"
     )
@@ -1524,58 +1990,14 @@ private fun DocumentGridCard(
                 scaleX = pressScale
                 scaleY = pressScale
             }
-            .scannerGlassSurface(RoundedCornerShape(20.dp), glowBorder = doc.isPinned || isSelected)
-            .pointerInput(doc.id) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    isPressed = true
-                    var movedOrConsumed = false
-                    var longPressTriggered = false
-                    try {
-                        val upBeforeTimeout = withTimeoutOrNull(500L) {
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                val change = event.changes.firstOrNull { it.id == down.id }
-                                    ?: event.changes.firstOrNull()
-                                if (change == null || !change.pressed) {
-                                    return@withTimeoutOrNull change
-                                }
-                                if (change.isConsumed) {
-                                    movedOrConsumed = true
-                                    return@withTimeoutOrNull null
-                                }
-                                val dist = hypot(
-                                    change.position.x - down.position.x,
-                                    change.position.y - down.position.y
-                                )
-                                if (dist > viewConfig.touchSlop) {
-                                    movedOrConsumed = true
-                                    return@withTimeoutOrNull null
-                                }
-                            }
-                            @Suppress("UNREACHABLE_CODE")
-                            null
-                        }
-                        if (!movedOrConsumed && upBeforeTimeout == null) {
-                            longPressTriggered = true
-                            isPressed = false
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            currentOnLongPress()
-                            do {
-                                val event = awaitPointerEvent()
-                                event.changes.forEach { it.consume() }
-                            } while (event.changes.any { it.pressed })
-                        } else if (!movedOrConsumed && upBeforeTimeout != null && !longPressTriggered) {
-                            isPressed = false
-                            if (!upBeforeTimeout.isConsumed) {
-                                currentOnClick()
-                            }
-                        }
-                    } finally {
-                        isPressed = false
-                    }
-                }
-            }
+            .testTag("doc_card_${doc.id}")
+            .scannerGlassSurface(RoundedCornerShape(20.dp), glowBorder = doc.isPinned || isSelected || isDragging)
+            .clip(RoundedCornerShape(20.dp))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = ripple(bounded = true),
+                onClick = onClick
+            )
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -1618,15 +2040,29 @@ private fun DocumentGridCard(
                 }
             }
 
-            Box(
+            Row(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(6.dp)
-                    .clip(CircleShape)
-                    .background(ScannerGlassPalette.FrostedElevated)
-                    .padding(horizontal = 8.dp, vertical = 2.dp)
+                    .padding(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
             ) {
-                Text("${doc.pageCount}p", color = ScannerGlassPalette.CyanGlow, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(ScannerGlassPalette.FrostedElevated)
+                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                ) {
+                    Text("${doc.pageCount}p", color = ScannerGlassPalette.CyanGlow, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+
+                if (isSelectionMode) {
+                    ScannerSelectionCircleBadge(
+                        isSelected = isSelected,
+                        isArabic = isArabic,
+                        modifier = Modifier.testTag("doc_select_badge_${doc.id}")
+                    )
+                }
             }
         }
 
@@ -1650,13 +2086,15 @@ private fun DocumentGridCard(
                     fontSize = 11.sp
                 )
             }
-            IconButton(onClick = onToggleStar, modifier = Modifier.size(32.dp)) {
-                Icon(
-                    imageVector = if (doc.isStarred) Icons.Default.Star else Icons.Default.StarBorder,
-                    contentDescription = "Star",
-                    tint = if (doc.isStarred) ScannerGlassPalette.AmberGlow else ScannerGlassPalette.TextSecondary,
-                    modifier = Modifier.size(18.dp)
-                )
+            if (!isSelectionMode) {
+                IconButton(onClick = onToggleStar, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        imageVector = if (doc.isStarred) Icons.Default.Star else Icons.Default.StarBorder,
+                        contentDescription = "Star",
+                        tint = if (doc.isStarred) ScannerGlassPalette.AmberGlow else ScannerGlassPalette.TextSecondary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
         }
     }
@@ -1667,81 +2105,35 @@ private fun DocumentListCard(
     doc: ScannedDocumentEntity,
     isArabic: Boolean,
     isUnlocked: Boolean,
+    isSelectionMode: Boolean = false,
     isSelected: Boolean = false,
+    isDragging: Boolean = false,
+    isPressed: Boolean = false,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
-    onLongPress: () -> Unit,
     onToggleStar: () -> Unit
 ) {
-    val haptics = LocalHapticFeedback.current
-    val viewConfig = LocalViewConfiguration.current
-    val currentOnClick by rememberUpdatedState(onClick)
-    val currentOnLongPress by rememberUpdatedState(onLongPress)
-    var isPressed by remember { mutableStateOf(false) }
     val pressScale by animateFloatAsState(
-        targetValue = if (isPressed) 0.97f else 1f,
+        targetValue = if (isPressed && !isDragging) 0.97f else 1f,
         animationSpec = spring(dampingRatio = 0.72f, stiffness = 500f),
         label = "list_card_press_scale"
     )
 
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .graphicsLayer {
                 scaleX = pressScale
                 scaleY = pressScale
             }
-            .scannerGlassSurface(RoundedCornerShape(18.dp), glowBorder = doc.isPinned || isSelected)
-            .pointerInput(doc.id) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    isPressed = true
-                    var movedOrConsumed = false
-                    var longPressTriggered = false
-                    try {
-                        val upBeforeTimeout = withTimeoutOrNull(500L) {
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                val change = event.changes.firstOrNull { it.id == down.id }
-                                    ?: event.changes.firstOrNull()
-                                if (change == null || !change.pressed) {
-                                    return@withTimeoutOrNull change
-                                }
-                                if (change.isConsumed) {
-                                    movedOrConsumed = true
-                                    return@withTimeoutOrNull null
-                                }
-                                val dist = hypot(
-                                    change.position.x - down.position.x,
-                                    change.position.y - down.position.y
-                                )
-                                if (dist > viewConfig.touchSlop) {
-                                    movedOrConsumed = true
-                                    return@withTimeoutOrNull null
-                                }
-                            }
-                            @Suppress("UNREACHABLE_CODE")
-                            null
-                        }
-                        if (!movedOrConsumed && upBeforeTimeout == null) {
-                            longPressTriggered = true
-                            isPressed = false
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            currentOnLongPress()
-                            do {
-                                val event = awaitPointerEvent()
-                                event.changes.forEach { it.consume() }
-                            } while (event.changes.any { it.pressed })
-                        } else if (!movedOrConsumed && upBeforeTimeout != null && !longPressTriggered) {
-                            isPressed = false
-                            if (!upBeforeTimeout.isConsumed) {
-                                currentOnClick()
-                            }
-                        }
-                    } finally {
-                        isPressed = false
-                    }
-                }
-            }
+            .testTag("doc_card_${doc.id}")
+            .scannerGlassSurface(RoundedCornerShape(18.dp), glowBorder = doc.isPinned || isSelected || isDragging)
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = ripple(bounded = true),
+                onClick = onClick
+            )
             .padding(10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -1806,11 +2198,57 @@ private fun DocumentListCard(
             }
         }
 
-        IconButton(onClick = onToggleStar) {
+        if (isSelectionMode) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .testTag("doc_select_badge_${doc.id}"),
+                contentAlignment = Alignment.Center
+            ) {
+                ScannerSelectionCircleBadge(
+                    isSelected = isSelected,
+                    isArabic = isArabic
+                )
+            }
+        } else {
+            IconButton(onClick = onToggleStar) {
+                Icon(
+                    imageVector = if (doc.isStarred) Icons.Default.Star else Icons.Default.StarBorder,
+                    contentDescription = "Star",
+                    tint = if (doc.isStarred) ScannerGlassPalette.AmberGlow else ScannerGlassPalette.TextSecondary
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScannerSelectionCircleBadge(
+    isSelected: Boolean,
+    isArabic: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .size(22.dp)
+            .clip(CircleShape)
+            .background(
+                if (isSelected) ScannerGlassPalette.CyanGlow
+                else ScannerGlassPalette.MidnightNavy.copy(alpha = 0.72f)
+            )
+            .border(
+                width = 1.5.dp,
+                color = if (isSelected) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.TextPrimary.copy(alpha = 0.7f),
+                shape = CircleShape
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        if (isSelected) {
             Icon(
-                imageVector = if (doc.isStarred) Icons.Default.Star else Icons.Default.StarBorder,
-                contentDescription = "Star",
-                tint = if (doc.isStarred) ScannerGlassPalette.AmberGlow else ScannerGlassPalette.TextSecondary
+                imageVector = Icons.Default.Check,
+                contentDescription = if (isArabic) "محدد" else "Selected",
+                tint = ScannerGlassPalette.OnAccent,
+                modifier = Modifier.size(14.dp)
             )
         }
     }

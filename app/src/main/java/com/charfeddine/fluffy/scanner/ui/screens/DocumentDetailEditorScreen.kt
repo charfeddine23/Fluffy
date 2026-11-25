@@ -9,6 +9,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -43,6 +44,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -52,6 +54,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -319,15 +322,21 @@ fun DocumentDetailEditorScreen(
         }
     }
 
+    val stageBottomBreathing by animateDpAsState(
+        targetValue = if (activeTool != AnnotationTool.NONE) 186.dp else 90.dp,
+        animationSpec = tween(220),
+        label = "detail_stage_bottom_breathing"
+    )
+
     ScannerDarkLiquidBackdrop {
         Box(modifier = Modifier.fillMaxSize()) {
-            // 1. Expansive Document Viewing & Editing Stage (Edge-to-Edge Breathing Room)
+            // 1. Expansive Document Viewing & Editing Stage (Balanced 14-16dp Breathing Room)
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .windowInsetsPadding(WindowInsets.statusBars)
                     .windowInsetsPadding(WindowInsets.navigationBars)
-                    .padding(top = 68.dp, bottom = 92.dp, start = 10.dp, end = 10.dp)
+                    .padding(top = 72.dp, bottom = stageBottomBreathing, start = 12.dp, end = 12.dp)
                     .clip(RoundedCornerShape(22.dp))
                     .background(ScannerGlassPalette.StageSurface)
                     .border(
@@ -340,7 +349,7 @@ fun DocumentDetailEditorScreen(
                         shape = RoundedCornerShape(22.dp)
                     )
                     .clipToBounds()
-                    .padding(6.dp),
+                    .padding(8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Box(
@@ -559,7 +568,7 @@ fun DocumentDetailEditorScreen(
                     .fillMaxWidth()
                     .align(Alignment.TopCenter)
                     .windowInsetsPadding(WindowInsets.statusBars)
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -578,7 +587,7 @@ fun DocumentDetailEditorScreen(
                     )
                 }
 
-                // Generous Center Title & Status Glass Pill (No cramped squishing!)
+                // Generous Center Title & Status Glass Pill (Clean gap before edit pencil)
                 Row(
                     modifier = Modifier
                         .weight(1f)
@@ -586,9 +595,9 @@ fun DocumentDetailEditorScreen(
                         .shadow(14.dp, CircleShape, ambientColor = Color.Black, spotColor = Color.Black)
                         .iosLiquidGlass(CircleShape, fillAlpha = 0.68f)
                         .clickable { showRenameDialog = true }
-                        .padding(horizontal = 16.dp),
+                        .padding(horizontal = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
@@ -606,7 +615,9 @@ fun DocumentDetailEditorScreen(
                             Text(
                                 text = if (isArabic) "${pages.size} صفحة" else "${pages.size} page${if (pages.size == 1) "" else "s"}",
                                 color = ScannerGlassPalette.TextSecondary,
-                                fontSize = 11.sp
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                softWrap = false
                             )
                             if (doc.isStarred) {
                                 Icon(
@@ -630,6 +641,7 @@ fun DocumentDetailEditorScreen(
                                     color = ScannerGlassPalette.EdgeOverlayCyan,
                                     fontSize = 10.5.sp,
                                     maxLines = 1,
+                                    softWrap = false,
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
@@ -638,8 +650,10 @@ fun DocumentDetailEditorScreen(
                     Icon(
                         imageVector = Icons.Default.Edit,
                         contentDescription = if (isArabic) "إعادة التسمية" else "Rename",
-                        tint = ScannerGlassPalette.TextSecondary.copy(alpha = 0.75f),
-                        modifier = Modifier.size(14.dp)
+                        tint = ScannerGlassPalette.TextSecondary.copy(alpha = 0.78f),
+                        modifier = Modifier
+                            .padding(end = 2.dp)
+                            .size(14.dp)
                     )
                 }
 
@@ -657,6 +671,7 @@ fun DocumentDetailEditorScreen(
                             onClick = { showExportSheet = true },
                             modifier = Modifier
                                 .size(44.dp)
+                                .minimumInteractiveComponentSize()
                                 .testTag("doc_export_btn")
                         ) {
                             Icon(
@@ -676,6 +691,7 @@ fun DocumentDetailEditorScreen(
                             onClick = { showMoreMenu = true },
                             modifier = Modifier
                                 .size(44.dp)
+                                .minimumInteractiveComponentSize()
                                 .testTag("doc_more_actions_btn")
                         ) {
                             Icon(
@@ -993,7 +1009,7 @@ fun DocumentDetailEditorScreen(
                 // Signature iOS 27 Floating Glass Pill Bar + Detached Circular `+` Action Orb
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     BoxWithConstraints(
@@ -1002,23 +1018,32 @@ fun DocumentDetailEditorScreen(
                             .height(64.dp)
                             .shadow(20.dp, CircleShape, ambientColor = Color.Black, spotColor = Color.Black)
                             .iosLiquidGlass(CircleShape, fillAlpha = 0.74f)
-                            .padding(horizontal = 4.dp, vertical = 5.dp),
+                            .padding(horizontal = 8.dp, vertical = 5.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        val fitAllEqual = maxWidth >= 288.dp
-                        val dockModifier = if (fitAllEqual) {
+                        val useEvenDistribution = maxWidth >= 430.dp
+                        val dockModifier = if (useEvenDistribution) {
                             Modifier.fillMaxWidth()
                         } else {
                             Modifier
                                 .fillMaxWidth()
                                 .horizontalScroll(rememberScrollState())
+                                .padding(horizontal = 4.dp)
                         }
                         Row(
                             modifier = dockModifier,
-                            horizontalArrangement = if (fitAllEqual) Arrangement.SpaceEvenly else Arrangement.spacedBy(2.dp),
+                            horizontalArrangement = if (useEvenDistribution) {
+                                Arrangement.SpaceEvenly
+                            } else {
+                                Arrangement.spacedBy(12.dp)
+                            },
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            val itemMod = if (fitAllEqual) Modifier.weight(1f) else Modifier.width(50.dp)
+                            val itemMod = if (useEvenDistribution) {
+                                Modifier.weight(1f)
+                            } else {
+                                Modifier.widthIn(min = 52.dp)
+                            }
                             LiquidDockItem(
                                 icon = Icons.Default.Crop,
                                 label = if (isArabic) "تعديل" else "Edit",
@@ -1354,6 +1379,7 @@ private fun LiquidDockItem(
 ) {
     Column(
         modifier = modifier
+            .defaultMinSize(minWidth = 52.dp)
             .height(52.dp)
             .minimumInteractiveComponentSize()
             .clip(CircleShape)
@@ -1375,7 +1401,7 @@ private fun LiquidDockItem(
                 }
             )
             .clickable(onClick = onClick)
-            .padding(horizontal = 4.dp),
+            .padding(horizontal = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -1383,7 +1409,7 @@ private fun LiquidDockItem(
             imageVector = icon,
             contentDescription = label,
             tint = if (active) ScannerGlassPalette.EdgeOverlayCyan else ScannerGlassPalette.TextPrimary.copy(alpha = 0.90f),
-            modifier = Modifier.size(20.dp)
+            modifier = Modifier.size(19.dp)
         )
         Spacer(modifier = Modifier.height(2.dp))
         Text(
@@ -1392,6 +1418,7 @@ private fun LiquidDockItem(
             fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
             color = if (active) ScannerGlassPalette.EdgeOverlayCyan else ScannerGlassPalette.TextSecondary,
             maxLines = 1,
+            softWrap = false,
             overflow = TextOverflow.Ellipsis
         )
     }

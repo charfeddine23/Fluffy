@@ -73,13 +73,17 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
     // Navigation inside the Scanner Ecosystem
     val currentRoute = MutableStateFlow<ScannerSubRoute>(ScannerSubRoute.Hub)
 
+    private val scannerPrefs = application.getSharedPreferences("fluffy_scanner_prefs", android.content.Context.MODE_PRIVATE)
+
     // Hub Filters, Sorting, Folder & View state
     val currentFolderId = MutableStateFlow<String?>(null)
     val searchQuery = MutableStateFlow("")
     val selectedTagFilter = MutableStateFlow<String?>(null)
     val onlyStarredFilter = MutableStateFlow(false)
     val showTrashView = MutableStateFlow(false)
-    val sortOption = MutableStateFlow(SortOption.DATE_DESC)
+    val sortOption = MutableStateFlow(
+        SortOption.fromId(scannerPrefs.getString("scanner_sort_option", SortOption.DATE_DESC.id))
+    )
     val isGridView = MutableStateFlow(true)
 
     // Biometric / PIN session unlock tracking
@@ -149,6 +153,10 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
 
         val baseSorted = when (sort) {
             SortOption.DATE_DESC -> filtered.sortedByDescending { it.updatedAt }
+            SortOption.CUSTOM -> filtered.sortedWith(
+                compareBy<ScannedDocumentEntity> { it.sortOrder }
+                    .thenByDescending { it.updatedAt }
+            )
             SortOption.NAME_ASC -> filtered.sortedBy { it.title.lowercase(Locale.getDefault()) }
             SortOption.SIZE_DESC -> filtered.sortedByDescending { it.totalSizeBytes }
             SortOption.PAGE_COUNT_DESC -> filtered.sortedByDescending { it.pageCount }
@@ -161,6 +169,11 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             repository.purgeExpiredTrash()
         }
+    }
+
+    fun setSortOption(option: SortOption) {
+        sortOption.value = option
+        scannerPrefs.edit().putString("scanner_sort_option", option.id).apply()
     }
 
     fun clearStatusMessage() {
@@ -830,6 +843,7 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
 
                         val totalSize = createdPages.sumOf { File(it.processedImagePath).length() } +
                             (pdfFile.takeIf { it.exists() }?.length() ?: 0L)
+                        val topOrder = repository.nextTopSortOrder()
                         val docEntity = ScannedDocumentEntity(
                             id = docId,
                             folderId = currentFolderId.value,
@@ -841,7 +855,8 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                             coverThumbnailPath = createdPages.firstOrNull()?.processedImagePath.orEmpty(),
                             pdfPath = pdfFile.absolutePath,
                             ocrFullText = createdPages.mapNotNull { it.ocrText.takeIf(String::isNotBlank) }.joinToString("\n\n"),
-                            isSearchablePdf = true
+                            isSearchablePdf = true,
+                            sortOrder = topOrder
                         )
                         repository.upsertDocument(docEntity)
                         if (createdPages.isNotEmpty()) {
@@ -1190,6 +1205,7 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
 
                         val totalSize = createdPages.sumOf { File(it.processedImagePath).length() } +
                             (pdfFile.takeIf { it.exists() }?.length() ?: 0L)
+                        val topOrder = repository.nextTopSortOrder()
                         val docEntity = ScannedDocumentEntity(
                             id = docId,
                             folderId = currentFolderId.value,
@@ -1201,7 +1217,8 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                             coverThumbnailPath = createdPages.firstOrNull()?.processedImagePath.orEmpty(),
                             pdfPath = pdfFile.absolutePath,
                             ocrFullText = createdPages.mapNotNull { it.ocrText.takeIf(String::isNotBlank) }.joinToString("\n\n"),
-                            isSearchablePdf = true
+                            isSearchablePdf = true,
+                            sortOrder = topOrder
                         )
                         repository.upsertDocument(docEntity)
                         repository.upsertPages(createdPages)
@@ -1390,6 +1407,58 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch { repository.moveDocumentToFolder(docId, folderId) }
     }
 
+    fun reorderDocuments(reorderedVisibleDocs: List<ScannedDocumentEntity>) {
+        if (reorderedVisibleDocs.size <= 1) return
+        val previousSort = sortOption.value
+        setSortOption(SortOption.CUSTOM)
+        viewModelScope.launch(Dispatchers.IO) {
+            val rawDocs = repository.getActiveDocumentsOnce()
+            if (rawDocs.isEmpty()) return@launch
+
+            val baseSortedAll = when (previousSort) {
+                SortOption.DATE_DESC -> rawDocs.sortedByDescending { it.updatedAt }
+                SortOption.CUSTOM -> rawDocs.sortedWith(
+                    compareBy<ScannedDocumentEntity> { it.sortOrder }
+                        .thenByDescending { it.updatedAt }
+                )
+                SortOption.NAME_ASC -> rawDocs.sortedBy { it.title.lowercase(Locale.getDefault()) }
+                SortOption.SIZE_DESC -> rawDocs.sortedByDescending { it.totalSizeBytes }
+                SortOption.PAGE_COUNT_DESC -> rawDocs.sortedByDescending { it.pageCount }
+            }.sortedByDescending { it.isPinned }
+
+            val visibleIds = reorderedVisibleDocs.map { it.id }.toHashSet()
+            val queue = ArrayDeque(reorderedVisibleDocs)
+            val mergedGlobal = mutableListOf<ScannedDocumentEntity>()
+
+            for (doc in baseSortedAll) {
+                if (doc.id in visibleIds && queue.isNotEmpty()) {
+                    mergedGlobal.add(queue.removeFirst())
+                } else {
+                    mergedGlobal.add(doc)
+                }
+            }
+            while (queue.isNotEmpty()) {
+                mergedGlobal.add(queue.removeFirst())
+            }
+
+            val partitionedGlobal = mergedGlobal.filter { it.isPinned } +
+                mergedGlobal.filter { !it.isPinned }
+
+            val hasDuplicateSortOrders = rawDocs.map { it.sortOrder }.distinct().size != rawDocs.size
+            val changedDocs = mutableListOf<ScannedDocumentEntity>()
+            partitionedGlobal.forEachIndexed { index, doc ->
+                val targetSortOrder = index * 1000L
+                if (hasDuplicateSortOrders || doc.sortOrder != targetSortOrder) {
+                    changedDocs.add(doc.copy(sortOrder = targetSortOrder))
+                }
+            }
+
+            if (changedDocs.isNotEmpty()) {
+                repository.updateDocuments(changedDocs)
+            }
+        }
+    }
+
     fun toggleDocumentLock(docId: String, lock: Boolean, isArabic: Boolean) {
         viewModelScope.launch {
             isBusy.value = true
@@ -1412,6 +1481,30 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                 currentRoute.value = ScannerSubRoute.Hub
             }
             statusMessage.value = if (isArabic) "تم النقل إلى سلة المهملات (تحذف تلقائياً بعد 30 يوماً)" else "Moved to Trash (30-day retention)"
+        }
+    }
+
+    fun moveDocumentsToTrash(docIds: Collection<String>, isArabic: Boolean) {
+        val uniqueIds = docIds.distinct()
+        if (uniqueIds.isEmpty()) return
+        if (uniqueIds.size == 1) {
+            moveToTrash(uniqueIds.first(), isArabic)
+            return
+        }
+        modifiedDocIdsForAutoSave.value = modifiedDocIdsForAutoSave.value - uniqueIds.toSet()
+        viewModelScope.launch {
+            uniqueIds.forEach { docId ->
+                repository.moveToTrash(docId)
+            }
+            val activeRoute = currentRoute.value
+            if (activeRoute is ScannerSubRoute.DocumentDetail && activeRoute.documentId in uniqueIds) {
+                currentRoute.value = ScannerSubRoute.Hub
+            }
+            statusMessage.value = if (isArabic) {
+                "تم نقل ${uniqueIds.size} مستندات إلى سلة المهملات (تحذف تلقائياً بعد 30 يوماً)"
+            } else {
+                "Moved ${uniqueIds.size} documents to Trash (30-day retention)"
+            }
         }
     }
 
@@ -1530,6 +1623,7 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                         val pdfFile = File(repository.docsRootDir, "doc_$newDocId.pdf")
                         PdfEngine.buildPdfFromBitmaps(pdfFile, listOf(PdfRenderedPageInput(bmp)))
                         bmp.recycle()
+                        val topOrder = repository.nextTopSortOrder()
                         val newDoc = ScannedDocumentEntity(
                             id = newDocId,
                             folderId = sourceDoc.folderId,
@@ -1539,7 +1633,8 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                             coverThumbnailPath = destImg.absolutePath,
                             pdfPath = pdfFile.absolutePath,
                             ocrFullText = page.ocrText,
-                            isSearchablePdf = true
+                            isSearchablePdf = true,
+                            sortOrder = topOrder
                         )
                         val newPage = page.copy(
                             id = UUID.randomUUID().toString(),
