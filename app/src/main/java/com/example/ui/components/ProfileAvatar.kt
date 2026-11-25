@@ -71,8 +71,7 @@ fun ProfileAvatar(
 
     val customImageFile = remember(avatarChoice) {
         if (avatarChoice.startsWith("custom:")) {
-            val file = File(avatarChoice.removePrefix("custom:"))
-            if (file.exists() && file.length() > 0L) file else null
+            avatarChoice.removePrefix("custom:").takeIf { it.isNotBlank() }?.let(::File)
         } else {
             null
         }

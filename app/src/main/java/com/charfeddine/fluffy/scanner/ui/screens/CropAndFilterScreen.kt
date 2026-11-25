@@ -1357,13 +1357,15 @@ fun CropAndFilterScreen(
 
                         Button(
                             onClick = {
-                                if (isEditExistingMode) {
+                                val docId = editDocumentId
+                                val pageId = editPageId
+                                if (isEditExistingMode && docId != null && pageId != null) {
                                     scannerViewModel.saveEditedPageFrame(
-                                        docId = editDocumentId!!,
-                                        pageId = editPageId!!,
+                                        docId = docId,
+                                        pageId = pageId,
                                         isArabic = isArabic
                                     )
-                                } else {
+                                } else if (!isEditExistingMode) {
                                     scannerViewModel.commitBatchToDocument(docTitle, appendToDocId, isArabic)
                                 }
                             },

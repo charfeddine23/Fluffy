@@ -220,28 +220,59 @@ object NotePagesCodec {
         return sb.toString()
     }
 
+    /**
+     * Fast zero-allocation UTF-8 byte counter so keystroke byte-budget checks in Compose
+     * never allocate heap ByteArrays or trigger GC pauses on large multi-page notes.
+     */
+    fun utf8ByteLength(seq: CharSequence): Long {
+        var count = 0L
+        var i = 0
+        val len = seq.length
+        while (i < len) {
+            val c = seq[i]
+            when {
+                c.code < 0x80 -> count += 1L
+                c.code < 0x800 -> count += 2L
+                Character.isHighSurrogate(c) && i + 1 < len && Character.isLowSurrogate(seq[i + 1]) -> {
+                    count += 4L
+                    i++
+                }
+                else -> count += 3L
+            }
+            i++
+        }
+        return count
+    }
+
     fun estimateNoteBytes(
         title: String,
         pages: List<String>,
         checklist: List<ChecklistItem>
     ): Long {
-        val page1Bytes = (pages.firstOrNull() ?: "").toByteArray(Charsets.UTF_8).size.toLong()
-        val extraPagesJson = encodeExtraPages(pages)
-        val extraPagesBytes = if (extraPagesJson.isEmpty()) 0L else extraPagesJson.toByteArray(Charsets.UTF_8).size.toLong()
-        val titleBytes = title.toByteArray(Charsets.UTF_8).size.toLong()
-        val activeChecklist = checklist.filter { it.text.isNotEmpty() }
-        val checklistBytes = if (activeChecklist.isEmpty()) 0L else {
-            ChecklistItem.listToJson(activeChecklist).toByteArray(Charsets.UTF_8).size.toLong()
+        val page1Bytes = utf8ByteLength(pages.firstOrNull() ?: "")
+        val extraPagesBytes = if (pages.size <= 1) 0L else {
+            val limit = minOf(pages.size, MAX_NOTE_PAGES)
+            var sum = 2L // []
+            for (i in 1 until limit) {
+                sum += utf8ByteLength(pages[i]) + 3L // quotes + comma overhead
+            }
+            sum
+        }
+        val titleBytes = utf8ByteLength(title)
+        var checklistBytes = 0L
+        for (item in checklist) {
+            if (item.text.isNotEmpty()) {
+                checklistBytes += utf8ByteLength(item.text) + 28L
+            }
         }
         return titleBytes + page1Bytes + extraPagesBytes + checklistBytes
     }
 
     fun estimateNoteBytes(note: NoteEntity): Long {
-        val titleBytes = note.title.toByteArray(Charsets.UTF_8).size.toLong()
-        val contentBytes = note.content.toByteArray(Charsets.UTF_8).size.toLong()
-        val pagesBytes = note.pagesJson.toByteArray(Charsets.UTF_8).size.toLong()
-        val checklistBytes = note.checklistJson.toByteArray(Charsets.UTF_8).size.toLong()
-        return titleBytes + contentBytes + pagesBytes + checklistBytes
+        return utf8ByteLength(note.title) +
+            utf8ByteLength(note.content) +
+            utf8ByteLength(note.pagesJson) +
+            utf8ByteLength(note.checklistJson)
     }
 
     /**

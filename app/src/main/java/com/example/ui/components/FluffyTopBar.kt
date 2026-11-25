@@ -21,6 +21,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -34,6 +35,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -51,6 +53,7 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PersonOutline
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
@@ -72,7 +75,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -130,6 +135,7 @@ fun FluffyTopBar(
     selectedNote: NoteEntity? = null,
     onClearSelection: () -> Unit = {},
     onToggleSelectedPin: (NoteEntity) -> Unit = {},
+    onReminderSelected: (NoteEntity) -> Unit = {},
     onMoveSelectedToVault: (NoteEntity) -> Unit = {},
     onArchiveSelected: (NoteEntity) -> Unit = {},
     onDeleteSelected: (NoteEntity) -> Unit = {},
@@ -164,6 +170,10 @@ fun FluffyTopBar(
                 onTogglePin = {
                     onClearSelection()
                     onToggleSelectedPin(activeSelected)
+                },
+                onReminder = {
+                    onClearSelection()
+                    onReminderSelected(activeSelected)
                 },
                 onMoveToVault = {
                     onClearSelection()
@@ -529,6 +539,7 @@ private fun ContextualTopActionBar(
     accentColor: Color,
     onDismiss: () -> Unit,
     onTogglePin: () -> Unit,
+    onReminder: () -> Unit,
     onMoveToVault: () -> Unit,
     onArchive: () -> Unit,
     onDelete: () -> Unit
@@ -638,7 +649,7 @@ private fun ContextualTopActionBar(
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // Floating Carbon Blur Glass Contextual Action Strip (exact same 48.dp height as search bar)
+        // Floating Carbon Blur Glass Contextual Action Strip (horizontal scroll ensures zero crowding on any screen width)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -649,7 +660,8 @@ private fun ContextualTopActionBar(
                     shape = RoundedCornerShape(24.dp),
                     borderWidth = 1.2.dp
                 )
-                .padding(horizontal = 6.dp, vertical = 4.dp),
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 6.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
@@ -666,7 +678,19 @@ private fun ContextualTopActionBar(
                 fillColor = Color.Transparent,
                 testTag = "note_popup_pin",
                 onClick = onTogglePin,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.defaultMinSize(minWidth = 64.dp)
+            )
+
+            ContextualTopActionPill(
+                icon = Icons.Default.NotificationsActive,
+                label = tr("تذكير", "Rappel", "Remind", "Asmekti"),
+                contentDescription = tr("ضبط تذكير", "Définir un rappel", "Set Reminder", "Sers asmekti"),
+                tint = Color(0xFFF59E0B),
+                labelColor = textColor,
+                fillColor = if (note.reminderAt > 0L) Color(0xFFF59E0B).copy(alpha = if (isDark) 0.18f else 0.12f) else Color.Transparent,
+                testTag = "note_popup_reminder",
+                onClick = onReminder,
+                modifier = Modifier.defaultMinSize(minWidth = 68.dp)
             )
 
             ContextualTopActionPill(
@@ -678,7 +702,7 @@ private fun ContextualTopActionBar(
                 fillColor = Color.Transparent,
                 testTag = "note_popup_vault",
                 onClick = onMoveToVault,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.defaultMinSize(minWidth = 64.dp)
             )
 
             ContextualTopActionPill(
@@ -694,7 +718,7 @@ private fun ContextualTopActionBar(
                 fillColor = Color.Transparent,
                 testTag = "note_popup_archive",
                 onClick = onArchive,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.defaultMinSize(minWidth = 68.dp)
             )
 
             ContextualTopActionPill(
@@ -706,7 +730,7 @@ private fun ContextualTopActionBar(
                 fillColor = deleteRed.copy(alpha = if (isDark) 0.18f else 0.11f),
                 testTag = "note_popup_delete",
                 onClick = onDelete,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.defaultMinSize(minWidth = 64.dp)
             )
         }
     }
@@ -726,7 +750,7 @@ private fun ContextualTopActionPill(
 ) {
     Row(
         modifier = modifier
-            .height(40.dp)
+            .height(44.dp)
             .clip(RoundedCornerShape(18.dp))
             .background(fillColor)
             .clickable(
@@ -847,9 +871,24 @@ private fun LuxuryUpdateArrowAction(
     }
     val contentDesc = if (isArabic) "تحديث جديد متاح" else "New update available"
 
-    val angleRad = Math.toRadians(shimmerAngle.toDouble())
-    val dirX = cos(angleRad).toFloat()
-    val dirY = sin(angleRad).toFloat()
+    val bgBrush = remember(primary, secondary, tertiary, effectiveDark) {
+        Brush.linearGradient(
+            colors = listOf(
+                primary.copy(alpha = if (effectiveDark) 0.28f else 0.20f),
+                secondary.copy(alpha = if (effectiveDark) 0.24f else 0.16f),
+                tertiary.copy(alpha = if (effectiveDark) 0.20f else 0.14f)
+            )
+        )
+    }
+    val trayBrush = remember(primary, secondary, tertiary) {
+        Brush.horizontalGradient(listOf(primary, secondary, tertiary))
+    }
+    val sweepBrush = remember(primary, secondary, tertiary) {
+        Brush.sweepGradient(listOf(primary, secondary, tertiary, primary))
+    }
+    val trackColor = activePreset.onBackground.copy(alpha = 0.18f)
+    val trayPath = remember { Path() }
+    val headPath = remember { Path() }
 
     Box(
         modifier = Modifier
@@ -874,29 +913,28 @@ private fun LuxuryUpdateArrowAction(
                 )
                 .height(38.dp)
                 .clip(pillShape)
-                .background(
-                    brush = Brush.linearGradient(
-                        colors = listOf(
-                            primary.copy(alpha = if (effectiveDark) 0.28f else 0.20f),
-                            secondary.copy(alpha = if (effectiveDark) 0.24f else 0.16f),
-                            tertiary.copy(alpha = if (effectiveDark) 0.20f else 0.14f)
-                        )
-                    )
-                )
-                .border(
-                    width = 1.4.dp,
-                    brush = Brush.linearGradient(
-                        colors = listOf(
-                            primary.copy(alpha = 0.92f),
-                            Color.White.copy(alpha = haloPulse),
-                            secondary.copy(alpha = 0.92f),
-                            tertiary.copy(alpha = 0.85f)
+                .background(brush = bgBrush)
+                .drawBehind {
+                    val angleRad = Math.toRadians(shimmerAngle.toDouble())
+                    val dirX = cos(angleRad).toFloat()
+                    val dirY = sin(angleRad).toFloat()
+                    val strokePx = 1.4.dp.toPx()
+                    val radiusPx = 19.dp.toPx()
+                    drawRoundRect(
+                        brush = Brush.linearGradient(
+                            colors = listOf(
+                                primary.copy(alpha = 0.92f),
+                                Color.White.copy(alpha = haloPulse),
+                                secondary.copy(alpha = 0.92f),
+                                tertiary.copy(alpha = 0.85f)
+                            ),
+                            start = Offset(40f + 40f * dirX, 19f + 19f * dirY),
+                            end = Offset(40f - 40f * dirX, 19f - 19f * dirY)
                         ),
-                        start = Offset(40f + 40f * dirX, 19f + 19f * dirY),
-                        end = Offset(40f - 40f * dirX, 19f - 19f * dirY)
-                    ),
-                    shape = pillShape
-                )
+                        cornerRadius = CornerRadius(radiusPx, radiusPx),
+                        style = Stroke(width = strokePx)
+                    )
+                }
                 .padding(horizontal = 10.dp),
             contentAlignment = Alignment.Center
         ) {
@@ -930,7 +968,7 @@ private fun LuxuryUpdateArrowAction(
 
                         if (isDownloading) {
                             drawArc(
-                                color = activePreset.onBackground.copy(alpha = 0.18f),
+                                color = trackColor,
                                 startAngle = -90f,
                                 sweepAngle = 360f,
                                 useCenter = false,
@@ -939,7 +977,7 @@ private fun LuxuryUpdateArrowAction(
                                 style = Stroke(width = 1.8.dp.toPx(), cap = StrokeCap.Round)
                             )
                             drawArc(
-                                brush = Brush.sweepGradient(listOf(primary, secondary, tertiary, primary)),
+                                brush = sweepBrush,
                                 startAngle = -90f,
                                 sweepAngle = 360f * downloadProgress.coerceIn(0.05f, 1f),
                                 useCenter = false,
@@ -948,14 +986,12 @@ private fun LuxuryUpdateArrowAction(
                                 style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
                             )
                         } else {
-                            // Sleek bottom cradle arc under the arrow
-                            val trayPath = Path().apply {
-                                moveTo(cx - r * 0.54f, cy + r * 0.38f)
-                                quadraticTo(cx, cy + r * 0.72f, cx + r * 0.54f, cy + r * 0.38f)
-                            }
+                            trayPath.reset()
+                            trayPath.moveTo(cx - r * 0.54f, cy + r * 0.38f)
+                            trayPath.quadraticTo(cx, cy + r * 0.72f, cx + r * 0.54f, cy + r * 0.38f)
                             drawPath(
                                 path = trayPath,
-                                brush = Brush.horizontalGradient(listOf(primary, secondary, tertiary)),
+                                brush = trayBrush,
                                 style = Stroke(
                                     width = 1.9.dp.toPx(),
                                     cap = StrokeCap.Round,
@@ -985,11 +1021,10 @@ private fun LuxuryUpdateArrowAction(
                             cap = StrokeCap.Round
                         )
 
-                        val headPath = Path().apply {
-                            moveTo(cx - wingDx, wingY)
-                            lineTo(cx, tipY)
-                            lineTo(cx + wingDx, wingY)
-                        }
+                        headPath.reset()
+                        headPath.moveTo(cx - wingDx, wingY)
+                        headPath.lineTo(cx, tipY)
+                        headPath.lineTo(cx + wingDx, wingY)
                         drawPath(
                             path = headPath,
                             brush = arrowGradient,

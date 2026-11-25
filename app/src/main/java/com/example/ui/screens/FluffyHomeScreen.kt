@@ -81,6 +81,7 @@ import com.example.ui.components.FluffyTopBar
 import com.example.ui.components.GalleryNoteCard
 import com.example.ui.components.MagazineNoteCard
 import com.example.ui.components.NoteCard
+import com.example.ui.components.NoteReminderDialog
 import com.example.ui.components.SettingsDrawer
 import com.example.ui.components.StatsBottomSheet
 import com.example.ui.components.VoiceRecorderDialog
@@ -144,6 +145,7 @@ fun FluffyHomeScreen(
     var displayedNotes by remember { mutableStateOf(notes) }
     var draggedNoteId by remember { mutableStateOf<Long?>(null) }
     var selectedActionNote by remember { mutableStateOf<NoteEntity?>(null) }
+    var reminderTargetNote by remember { mutableStateOf<NoteEntity?>(null) }
     var currentPointerPos by remember { mutableStateOf(Offset.Zero) }
     var grabOffsetInsideCard by remember { mutableStateOf(Offset.Zero) }
     var pendingCommitOrderIds by remember { mutableStateOf<List<Long>?>(null) }
@@ -345,12 +347,12 @@ fun FluffyHomeScreen(
 
                         while (true) {
                             val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val pressed = event.changes.filter { it.pressed }
+                            if (pressed.isEmpty()) break
                             if (draggedNoteId != null) {
                                 twoFingerStartedInCenter = false
                                 continue
                             }
-                            val pressed = event.changes.filter { it.pressed }
-                            if (pressed.isEmpty()) break
 
                             if (!twoFingerStartedInCenter && pressed.size == 2) {
                                 val p1 = pressed[0]
@@ -435,6 +437,10 @@ fun FluffyHomeScreen(
                     onToggleSelectedPin = { target ->
                         selectedActionNote = null
                         viewModel.togglePin(target)
+                    },
+                    onReminderSelected = { target ->
+                        selectedActionNote = null
+                        reminderTargetNote = target
                     },
                     onMoveSelectedToVault = { target ->
                         selectedActionNote = null
@@ -695,7 +701,9 @@ fun FluffyHomeScreen(
                                         if (container != null && container.isAttached && coords.isAttached) {
                                             val topLeft = container.localPositionOf(coords, Offset.Zero)
                                             val rect = Rect(topLeft, coords.size.toSize())
-                                            gridPhysicalRects[note.id] = rect
+                                            if (gridPhysicalRects[note.id] != rect) {
+                                                gridPhysicalRects[note.id] = rect
+                                            }
                                             if (isDragging && slotRectState.value != rect) {
                                                 slotRectState.value = rect
                                             }
@@ -794,7 +802,9 @@ fun FluffyHomeScreen(
                                             if (container != null && container.isAttached && coords.isAttached) {
                                                 val topLeft = container.localPositionOf(coords, Offset.Zero)
                                                 val rect = Rect(topLeft, coords.size.toSize())
-                                                listPhysicalRects[note.id] = rect
+                                                if (listPhysicalRects[note.id] != rect) {
+                                                    listPhysicalRects[note.id] = rect
+                                                }
                                                 if (isDragging && slotRectState.value != rect) {
                                                     slotRectState.value = rect
                                                 }
@@ -896,7 +906,9 @@ fun FluffyHomeScreen(
                                             if (container != null && container.isAttached && coords.isAttached) {
                                                 val topLeft = container.localPositionOf(coords, Offset.Zero)
                                                 val rect = Rect(topLeft, coords.size.toSize())
-                                                galleryPhysicalRects[note.id] = rect
+                                                if (galleryPhysicalRects[note.id] != rect) {
+                                                    galleryPhysicalRects[note.id] = rect
+                                                }
                                                 if (isDragging && slotRectState.value != rect) {
                                                     slotRectState.value = rect
                                                 }
@@ -993,7 +1005,9 @@ fun FluffyHomeScreen(
                                             if (container != null && container.isAttached && coords.isAttached) {
                                                 val topLeft = container.localPositionOf(coords, Offset.Zero)
                                                 val rect = Rect(topLeft, coords.size.toSize())
-                                                listPhysicalRects[note.id] = rect
+                                                if (listPhysicalRects[note.id] != rect) {
+                                                    listPhysicalRects[note.id] = rect
+                                                }
                                                 if (isDragging && slotRectState.value != rect) {
                                                     slotRectState.value = rect
                                                 }
@@ -1196,6 +1210,33 @@ fun FluffyHomeScreen(
                         audioByteSize = byteSize
                     )
                 }
+            )
+        }
+
+        // Draft Reminder Picker Dialog
+        reminderTargetNote?.let { target ->
+            val permDeniedMsg = tr(
+                "تم حفظ التذكير — فعّل الإشعارات من إعدادات الهاتف لتصلك التنبيهات",
+                "Rappel enregistré — activez les notifications pour recevoir l'alerte",
+                "Reminder saved — enable notifications in settings to receive alerts",
+                "Asmekti yettwasekles — rmed ilɣuten i wakken ad k-d-awḍen"
+            )
+            NoteReminderDialog(
+                currentReminderAt = target.reminderAt,
+                isDark = isDark,
+                isArabic = isArabic,
+                onConfirmReminder = { millis ->
+                    viewModel.setNoteReminder(target, millis)
+                    reminderTargetNote = null
+                },
+                onClearReminder = {
+                    viewModel.setNoteReminder(target, 0L)
+                    reminderTargetNote = null
+                },
+                onPermissionDenied = {
+                    viewModel.showSnackbar(permDeniedMsg)
+                },
+                onDismiss = { reminderTargetNote = null }
             )
         }
     }

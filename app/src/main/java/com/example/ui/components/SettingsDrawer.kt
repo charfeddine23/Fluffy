@@ -3141,9 +3141,10 @@ private fun VaultPasskeySetupDialog(
                         .testTag("vault_passkey_confirm_input")
                 )
 
-                if (!errorMsg.isNullOrBlank()) {
+                val err = errorMsg
+                if (!err.isNullOrBlank()) {
                     Text(
-                        text = errorMsg!!,
+                        text = err,
                         fontSize = 12.sp,
                         color = Color(0xFFEF4444)
                     )

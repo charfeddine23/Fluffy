@@ -13,6 +13,14 @@ class NoteRepository(private val noteDao: NoteDao) {
 
     fun getNote(id: Long): Flow<NoteEntity?> = noteDao.getNoteById(id)
 
+    suspend fun getNoteByIdOnce(id: Long): NoteEntity? = noteDao.getNoteByIdOnce(id)
+
+    suspend fun getActiveReminderNotesOnce(minTimestamp: Long = 0L): List<NoteEntity> =
+        noteDao.getActiveReminderNotesOnce(minTimestamp)
+
+    suspend fun updateNoteReminder(noteId: Long, reminderAt: Long, updatedAt: Long = System.currentTimeMillis()) =
+        noteDao.updateNoteReminder(noteId, reminderAt, updatedAt)
+
     fun searchNotes(query: String): Flow<List<NoteEntity>> = noteDao.searchNotes(query)
 
     suspend fun getAllNotesOnce(): List<NoteEntity> = noteDao.getAllNotesOnce()

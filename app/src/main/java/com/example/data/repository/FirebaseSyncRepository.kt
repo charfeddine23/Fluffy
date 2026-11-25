@@ -258,6 +258,7 @@ object FirebaseSyncRepository {
             "isArchived" to note.isArchived,
             "isDeleted" to note.isDeleted,
             "deletedAt" to note.deletedAt,
+            "reminderAt" to note.reminderAt,
             "checklistJson" to note.checklistJson,
             "audioDurationSec" to cloudAudioDuration,
             "audioByteSize" to cloudAudioByteSize,
@@ -612,7 +613,8 @@ object FirebaseSyncRepository {
             syncId = sid,
             sortOrder = getLong("sortOrder") ?: 0L,
             isDeleted = getBoolean("isDeleted") ?: false,
-            deletedAt = getLong("deletedAt") ?: 0L
+            deletedAt = getLong("deletedAt") ?: 0L,
+            reminderAt = getLong("reminderAt") ?: 0L
         )
     }
 

@@ -121,7 +121,7 @@ object DocumentEdgeDetector {
         val gridW = if (rotAspect >= 1f) LIVE_ANALYZE_H else LIVE_ANALYZE_W
         val gridH = if (rotAspect >= 1f) LIVE_ANALYZE_W else LIVE_ANALYZE_H
 
-        val ws = liveWorkspaceLocal.get()!!
+        val ws = liveWorkspaceLocal.get() ?: LiveWorkspace(LIVE_ANALYZE_W * LIVE_ANALYZE_H)
         val buffer = plane.buffer
         buffer.rewind()
         val limit = buffer.limit()

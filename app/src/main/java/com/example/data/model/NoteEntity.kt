@@ -27,5 +27,6 @@ data class NoteEntity(
     val syncId: String = UUID.randomUUID().toString(),
     val sortOrder: Long = 0L,
     val isDeleted: Boolean = false,
-    val deletedAt: Long = 0L
+    val deletedAt: Long = 0L,
+    val reminderAt: Long = 0L
 )

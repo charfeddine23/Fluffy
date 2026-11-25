@@ -350,10 +350,11 @@ fun VoiceRecorderDialog(
                     }
                 }
 
-                if (!recorderError.isNullOrBlank()) {
+                val recError = recorderError
+                if (!recError.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = recorderError!!,
+                        text = recError,
                         fontSize = 11.5.sp,
                         color = Color(0xFFF43F5E),
                         textAlign = TextAlign.Center

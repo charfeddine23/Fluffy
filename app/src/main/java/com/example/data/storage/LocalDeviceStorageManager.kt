@@ -75,28 +75,34 @@ object LocalDeviceStorageManager {
     // Up to 12 MB per attached Vault file embedded verbatim in cloud/JSON backup
     private const val MAX_INLINE_BACKUP_FILE_BYTES = 12L * 1024L * 1024L
 
+    private val fileWriteLock = Any()
+
     private fun rootDir(context: Context): File =
         File(context.applicationContext.filesDir, ROOT_DIR).apply { if (!exists()) mkdirs() }
 
     private fun subDir(context: Context, relative: String): File =
         File(rootDir(context), relative).apply { if (!exists()) mkdirs() }
 
-    private fun atomicWriteUtf8(target: File, content: String) {
-        val parent = target.parentFile ?: return
-        if (!parent.exists()) parent.mkdirs()
-        val tmp = File(parent, "${target.name}.tmp")
-        FileOutputStream(tmp).use { out ->
-            out.write(content.toByteArray(Charsets.UTF_8))
-            out.flush()
-            try {
-                out.fd.sync()
-            } catch (_: Exception) {
+    private fun atomicWriteUtf8(target: File, content: String, syncFd: Boolean = true) {
+        synchronized(fileWriteLock) {
+            val parent = target.parentFile ?: return
+            if (!parent.exists()) parent.mkdirs()
+            val tmp = File(parent, "${target.name}.tmp")
+            FileOutputStream(tmp).use { out ->
+                out.write(content.toByteArray(Charsets.UTF_8))
+                out.flush()
+                if (syncFd) {
+                    try {
+                        out.fd.sync()
+                    } catch (_: Exception) {
+                    }
+                }
             }
-        }
-        if (target.exists()) target.delete()
-        if (!tmp.renameTo(target)) {
-            tmp.copyTo(target, overwrite = true)
-            tmp.delete()
+            if (target.exists()) target.delete()
+            if (!tmp.renameTo(target)) {
+                tmp.copyTo(target, overwrite = true)
+                tmp.delete()
+            }
         }
     }
 
@@ -105,14 +111,14 @@ object LocalDeviceStorageManager {
      */
     private fun writeOnceUtf8(target: File, content: String) {
         if (target.exists()) return
-        atomicWriteUtf8(target, content)
+        atomicWriteUtf8(target, content, syncFd = true)
     }
 
     fun saveSettingsSnapshot(context: Context, settings: FluffySettingsSnapshot) {
         runCatching {
-            val json = settingsToJson(settings).toString(2)
+            val json = settingsToJson(settings).toString()
             val file = File(subDir(context, SETTINGS_DIR), SETTINGS_SNAPSHOT_FILE)
-            atomicWriteUtf8(file, json)
+            atomicWriteUtf8(file, json, syncFd = false)
         }
     }
 
@@ -134,7 +140,7 @@ object LocalDeviceStorageManager {
                 put("notes", array)
             }
             val file = File(subDir(context, NOTES_DIR), NOTES_SNAPSHOT_FILE)
-            atomicWriteUtf8(file, wrapper.toString(2))
+            atomicWriteUtf8(file, wrapper.toString(), syncFd = false)
         }
     }
 
@@ -1127,6 +1133,7 @@ object LocalDeviceStorageManager {
         put("isArchived", n.isArchived)
         put("isDeleted", n.isDeleted)
         put("deletedAt", n.deletedAt)
+        put("reminderAt", n.reminderAt)
         put("checklistJson", n.checklistJson)
         put("audioDurationSec", n.audioDurationSec)
         put("audioFilePath", n.audioFilePath)
@@ -1156,7 +1163,8 @@ object LocalDeviceStorageManager {
         syncId = obj.optString("syncId", "").ifBlank { UUID.randomUUID().toString() },
         sortOrder = obj.optLong("sortOrder", 0L),
         isDeleted = obj.optBoolean("isDeleted", false),
-        deletedAt = obj.optLong("deletedAt", 0L)
+        deletedAt = obj.optLong("deletedAt", 0L),
+        reminderAt = obj.optLong("reminderAt", 0L)
     )
 
     private fun vaultItemToJson(v: VaultItemEntity, includeRawFile: Boolean): JSONObject = JSONObject().apply {

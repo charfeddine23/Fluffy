@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -28,6 +29,7 @@ import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Unarchive
@@ -59,6 +61,7 @@ import com.example.data.model.NoteBackgroundCatalog
 import com.example.data.model.NoteEntity
 import com.example.data.model.NotePagesCodec
 import com.example.data.storage.AudioCloudPolicy
+import com.example.reminders.NoteReminderScheduler
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.theme.tr
 import java.text.SimpleDateFormat
@@ -224,8 +227,9 @@ fun NoteCard(
 
                     // Voice Note badge
                     if (note.audioDurationSec > 0 || note.audioFilePath.isNotBlank()) {
-                        val effectiveSize = AudioCloudPolicy.effectiveAudioByteSize(note.audioByteSize, note.audioFilePath)
-                        val isLocalOnlyAudio = AudioCloudPolicy.isAudioOverCloudLimit(effectiveSize)
+                        val isLocalOnlyAudio = remember(note.audioByteSize) {
+                            AudioCloudPolicy.isAudioOverCloudLimit(note.audioByteSize)
+                        }
                         val badgeColor = if (isLocalOnlyAudio) Color(0xFFF59E0B) else Color(0xFFEC4899)
                         Box(
                             modifier = Modifier
@@ -369,6 +373,16 @@ fun NoteCard(
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            if (note.reminderAt > 0L) {
+                NoteReminderChipBadge(
+                    reminderAt = note.reminderAt,
+                    isDarkSurface = surfaceColors.effectiveDark,
+                    isArabic = isArabic,
+                    noteId = note.id,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
             }
 
             // Card Footer: Timestamp + Quick Action Icons
@@ -630,6 +644,16 @@ fun GalleryNoteCard(
                     )
                 }
 
+                if (note.reminderAt > 0L) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    NoteReminderChipBadge(
+                        reminderAt = note.reminderAt,
+                        isDarkSurface = surfaceColors.effectiveDark,
+                        isArabic = isArabic,
+                        noteId = note.id
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Row(
@@ -815,6 +839,15 @@ fun MagazineNoteCard(
                             overflow = TextOverflow.Ellipsis
                         )
                     }
+                    if (note.reminderAt > 0L) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        NoteReminderChipBadge(
+                            reminderAt = note.reminderAt,
+                            isDarkSurface = surfaceColors.effectiveDark,
+                            isArabic = isArabic,
+                            noteId = note.id
+                        )
+                    }
                     Spacer(modifier = Modifier.height(12.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -974,6 +1007,16 @@ fun MagazineNoteCard(
                         )
                     }
 
+                    if (note.reminderAt > 0L) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        NoteReminderChipBadge(
+                            reminderAt = note.reminderAt,
+                            isDarkSurface = surfaceColors.effectiveDark,
+                            isArabic = isArabic,
+                            noteId = note.id
+                        )
+                    }
+
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Row(
@@ -1030,6 +1073,46 @@ private fun CompactCardIcon(
             contentDescription = contentDescription,
             tint = tint,
             modifier = Modifier.size(15.dp)
+        )
+    }
+}
+
+@Composable
+fun NoteReminderChipBadge(
+    reminderAt: Long,
+    isDarkSurface: Boolean,
+    isArabic: Boolean,
+    noteId: Long,
+    modifier: Modifier = Modifier
+) {
+    val isOverdue = reminderAt <= System.currentTimeMillis()
+    val badgeColor = if (isOverdue) Color(0xFFF43F5E) else Color(0xFFF59E0B)
+    val label = remember(reminderAt, isArabic) {
+        NoteReminderScheduler.formatReminderBadgeText(reminderAt, isArabic)
+    }
+    Row(
+        modifier = modifier
+            .clip(CircleShape)
+            .background(badgeColor.copy(alpha = if (isDarkSurface) 0.22f else 0.13f))
+            .border(1.dp, badgeColor.copy(alpha = 0.42f), CircleShape)
+            .padding(horizontal = 8.dp, vertical = 3.dp)
+            .testTag("note_card_reminder_$noteId"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Default.NotificationsActive,
+            contentDescription = tr("تذكير", "Rappel", "Reminder", "Asmekti"),
+            tint = badgeColor,
+            modifier = Modifier.size(12.dp)
+        )
+        Text(
+            text = label,
+            fontSize = 10.5.sp,
+            fontWeight = FontWeight.Bold,
+            color = badgeColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }

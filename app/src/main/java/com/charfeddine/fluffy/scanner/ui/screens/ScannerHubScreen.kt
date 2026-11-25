@@ -128,6 +128,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.zIndex
+import coil.compose.SubcomposeAsyncImage
 import coil.compose.rememberAsyncImagePainter
 import com.charfeddine.fluffy.scanner.data.model.ScanMode
 import com.charfeddine.fluffy.scanner.data.model.ScannedDocumentEntity
@@ -2011,12 +2012,14 @@ private fun DocumentGridCard(
         ) {
             if (!isUnlocked) {
                 Icon(Icons.Default.Lock, contentDescription = "Locked", tint = ScannerGlassPalette.EmeraldGlow, modifier = Modifier.size(36.dp))
-            } else if (doc.coverThumbnailPath.isNotBlank() && File(doc.coverThumbnailPath).exists()) {
-                Image(
-                    painter = rememberAsyncImagePainter(File(doc.coverThumbnailPath)),
+            } else if (doc.coverThumbnailPath.isNotBlank()) {
+                SubcomposeAsyncImage(
+                    model = remember(doc.coverThumbnailPath) { File(doc.coverThumbnailPath) },
                     contentDescription = doc.title,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize(),
+                    loading = { ScannerLaserIcon(modifier = Modifier.size(40.dp)) },
+                    error = { ScannerLaserIcon(modifier = Modifier.size(40.dp)) }
                 )
             } else {
                 ScannerLaserIcon(modifier = Modifier.size(40.dp))
@@ -2147,12 +2150,14 @@ private fun DocumentListCard(
         ) {
             if (!isUnlocked) {
                 Icon(Icons.Default.Lock, contentDescription = "Locked", tint = ScannerGlassPalette.EmeraldGlow)
-            } else if (doc.coverThumbnailPath.isNotBlank() && File(doc.coverThumbnailPath).exists()) {
-                Image(
-                    painter = rememberAsyncImagePainter(File(doc.coverThumbnailPath)),
+            } else if (doc.coverThumbnailPath.isNotBlank()) {
+                SubcomposeAsyncImage(
+                    model = remember(doc.coverThumbnailPath) { File(doc.coverThumbnailPath) },
                     contentDescription = doc.title,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize(),
+                    loading = { ScannerLaserIcon(modifier = Modifier.size(28.dp)) },
+                    error = { ScannerLaserIcon(modifier = Modifier.size(28.dp)) }
                 )
             } else {
                 ScannerLaserIcon(modifier = Modifier.size(28.dp))

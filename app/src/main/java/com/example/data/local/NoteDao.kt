@@ -42,6 +42,15 @@ interface NoteDao {
     @Query("SELECT * FROM notes WHERE id = :id LIMIT 1")
     fun getNoteById(id: Long): Flow<NoteEntity?>
 
+    @Query("SELECT * FROM notes WHERE id = :id LIMIT 1")
+    suspend fun getNoteByIdOnce(id: Long): NoteEntity?
+
+    @Query("SELECT * FROM notes WHERE isDeleted = 0 AND reminderAt > :minTimestamp ORDER BY reminderAt ASC")
+    suspend fun getActiveReminderNotesOnce(minTimestamp: Long = 0L): List<NoteEntity>
+
+    @Query("UPDATE notes SET reminderAt = :reminderAt, updatedAt = :updatedAt WHERE id = :noteId")
+    suspend fun updateNoteReminder(noteId: Long, reminderAt: Long, updatedAt: Long = System.currentTimeMillis())
+
     @Query("SELECT * FROM notes WHERE syncId = :syncId LIMIT 1")
     suspend fun getNoteBySyncId(syncId: String): NoteEntity?
 

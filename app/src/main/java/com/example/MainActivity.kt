@@ -1,5 +1,6 @@
 package com.example
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.compose.setContent
@@ -52,9 +53,11 @@ import com.example.ui.theme.AppThemeRegistry
 import com.example.ui.theme.FluffyTheme
 import com.example.ui.theme.LocalAppLanguage
 import com.example.ui.theme.translateText
+import com.example.reminders.NoteReminderScheduler
 import com.example.update.AppUpdateManager
 import com.example.viewmodel.FluffyViewModel
 import com.charfeddine.fluffy.scanner.ui.components.ScannerRootHost
+import kotlinx.coroutines.flow.MutableStateFlow
 
 private sealed interface FluffyScreenState {
     data object Welcome : FluffyScreenState
@@ -71,10 +74,25 @@ private sealed interface FluffyScreenState {
 class MainActivity : FragmentActivity() {
 
     private lateinit var biometricAuthManager: BiometricAuthManager
+    private val pendingNotificationNoteId = MutableStateFlow<Long?>(null)
+
+    private fun extractReminderNoteId(intent: Intent?): Long? {
+        val raw = intent?.getLongExtra(NoteReminderScheduler.EXTRA_NOTE_ID, -1L) ?: -1L
+        return raw.takeIf { it > 0L }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        extractReminderNoteId(intent)?.let { noteId ->
+            pendingNotificationNoteId.value = noteId
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         biometricAuthManager = BiometricAuthManager(this)
+        pendingNotificationNoteId.value = extractReminderNoteId(intent)
         enableEdgeToEdge()
 
         setContent {
@@ -145,6 +163,16 @@ class MainActivity : FragmentActivity() {
                 }
             }
 
+            val pendingNoteToOpen by pendingNotificationNoteId.collectAsState()
+
+            LaunchedEffect(pendingNoteToOpen, isAppLocked, currentUser, isGuestMode) {
+                val targetId = pendingNoteToOpen ?: return@LaunchedEffect
+                if (!isAppLocked && (currentUser != null || isGuestMode)) {
+                    pendingNotificationNoteId.value = null
+                    viewModel.openNoteById(targetId)
+                }
+            }
+
             DisposableEffect(lifecycleOwner) {
                 val observer = LifecycleEventObserver { _, event ->
                     if (event == Lifecycle.Event.ON_RESUME) {
@@ -200,11 +228,12 @@ class MainActivity : FragmentActivity() {
                                 errorMessage = authErrorMessage
                             )
                         } else {
+                            val currentEditingNote = editingNote
                             val activeScreen = when {
                                 currentUser == null && !isGuestMode -> FluffyScreenState.Welcome
                                 isVaultOpen -> FluffyScreenState.Vault
                                 isScannerHubOpen -> FluffyScreenState.ScannerHub
-                                editingNote != null -> FluffyScreenState.Editor(editingNote!!)
+                                currentEditingNote != null -> FluffyScreenState.Editor(currentEditingNote)
                                 isAccountScreenOpen -> FluffyScreenState.Account
                                 isTrashScreenOpen -> FluffyScreenState.Trash
                                 isArchiveScreenOpen -> FluffyScreenState.Archive
@@ -511,7 +540,7 @@ class MainActivity : FragmentActivity() {
                                                 isPremium = isPremium,
                                                 onRequestPremiumUpgrade = { viewModel.openPremiumUpgradeDialog() },
                                                 onBack = { viewModel.closeEditor() },
-                                                onSave = { title, content, pagesJson, category, colorPreset, backgroundId, customColorArgb, isPinned, isFav, checklist, audioDuration, audioPath, audioSize ->
+                                                onSave = { title, content, pagesJson, category, colorPreset, backgroundId, customColorArgb, isPinned, isFav, checklist, audioDuration, audioPath, audioSize, reminderAt ->
                                                     viewModel.saveNote(
                                                         title = title,
                                                         content = content,
@@ -525,13 +554,14 @@ class MainActivity : FragmentActivity() {
                                                         checklist = checklist,
                                                         audioDurationSec = audioDuration,
                                                         audioFilePath = audioPath,
-                                                        audioByteSize = audioSize
+                                                        audioByteSize = audioSize,
+                                                        reminderAt = reminderAt
                                                     )
                                                 },
                                                 onDelete = { viewModel.deleteCurrentNote() },
                                                 onToggleArchive = { viewModel.toggleArchive(screen.note) },
                                                 onMoveToVault = { updatedNote -> viewModel.moveNoteToVault(updatedNote) },
-                                                    onAutoSave = { title, content, pagesJson, category, colorPreset, backgroundId, customColorArgb, isPinned, isFav, checklist, audioDuration, audioPath, audioSize ->
+                                                onAutoSave = { title, content, pagesJson, category, colorPreset, backgroundId, customColorArgb, isPinned, isFav, checklist, audioDuration, audioPath, audioSize, reminderAt ->
                                                     viewModel.autoSaveNote(
                                                         title = title,
                                                         content = content,
@@ -545,7 +575,14 @@ class MainActivity : FragmentActivity() {
                                                         checklist = checklist,
                                                         audioDurationSec = audioDuration,
                                                         audioFilePath = audioPath,
-                                                        audioByteSize = audioSize
+                                                        audioByteSize = audioSize,
+                                                        reminderAt = reminderAt
+                                                    )
+                                                },
+                                                onReminderPermissionDenied = {
+                                                    viewModel.showSnackbar(
+                                                        if (isArabic) "تم حفظ وقت التذكير — فعّل إذن الإشعارات لتنبيهك في الوقت المحدد"
+                                                        else "Reminder saved — enable notifications in system settings to receive alerts"
                                                     )
                                                 },
                                                 onOpenScanner = {

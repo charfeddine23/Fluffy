@@ -289,9 +289,9 @@ fun AudioPlayerCard(
                 )
             }
 
-            if (isThisTrackActive && playbackController.lastError != null) {
+            val errMsg = playbackController.lastError
+            if (isThisTrackActive && errMsg != null) {
                 Spacer(modifier = Modifier.height(4.dp))
-                val errMsg = playbackController.lastError!!
                 Text(
                     text = when {
                         errMsg == "MISSING_FILE" -> if (isArabic) {

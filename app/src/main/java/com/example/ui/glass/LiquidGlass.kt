@@ -1,48 +1,34 @@
 package com.example.ui.glass
 
 import android.util.TypedValue
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.BlurredEdgeTreatment
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -52,8 +38,6 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.example.data.model.GlassTint
 import com.example.ui.theme.LocalAppThemePreset
-import kotlin.math.cos
-import kotlin.math.sin
 
 val LocalColoredContainerBorders = staticCompositionLocalOf { true }
 
@@ -79,40 +63,15 @@ fun rememberTwoMillimetersDp(): Dp {
 }
 
 /**
- * Feathers content alpha gently across the 2mm left and right edges so items reaching
- * the screen borders dissolve smoothly into the blurry frosted edges.
+ * Preserved lightweight API for scrolling containers.
+ * Visual edge misting is handled cleanly by [BlurryScreenEdges] without allocating
+ * full-viewport offscreen FBO render targets every scroll frame.
  */
-fun Modifier.blurryEdgeMask(edgeWidthDp: Dp): Modifier = this
-    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-    .drawWithContent {
-        drawContent()
-        val width = size.width
-        val height = size.height
-        val edgePx = edgeWidthDp.toPx()
-        if (width > edgePx * 2f && height > 0f && edgePx > 0f) {
-            val frac = (edgePx / width).coerceIn(0.005f, 0.18f)
-            val rightStart = 1f - frac
-            drawRect(
-                brush = Brush.horizontalGradient(
-                    colorStops = arrayOf(
-                        0.0f to Color.Transparent,
-                        (frac * 0.30f) to Color.Black.copy(alpha = 0.25f),
-                        (frac * 0.65f) to Color.Black.copy(alpha = 0.72f),
-                        frac to Color.Black,
-                        rightStart to Color.Black,
-                        (rightStart + frac * 0.35f) to Color.Black.copy(alpha = 0.72f),
-                        (rightStart + frac * 0.70f) to Color.Black.copy(alpha = 0.25f),
-                        1.0f to Color.Transparent
-                    )
-                ),
-                blendMode = BlendMode.DstIn
-            )
-        }
-    }
+fun Modifier.blurryEdgeMask(@Suppress("UNUSED_PARAMETER") edgeWidthDp: Dp): Modifier = this
 
 /**
- * Symmetric 2mm blurry frosted edges anchored on both physical Left and Right sides of the screen.
- * Purely visual (non-touch-intercepting) so edge swipes and scrolling pass through unaffected.
+ * Symmetric 2mm optical mist frosted edges anchored on both physical Left and Right sides.
+ * Uses [drawWithCache] so zero Brush objects are reallocated during scroll or animation frames.
  */
 @Composable
 fun BlurryScreenEdges(
@@ -126,66 +85,38 @@ fun BlurryScreenEdges(
     val effectiveDark = if (edgeColorOverride != null) isDark else (activePreset.isDark || isDark)
     val edgeBase = edgeColorOverride ?: activePreset.background
     val edgeSurface = edgeColorOverride ?: activePreset.surface
-    val blurGlowTop = if (effectiveDark) activePreset.orb1.copy(alpha = 0.42f) else activePreset.orb1.copy(alpha = 0.28f)
-    val blurGlowMid = if (effectiveDark) edgeSurface.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.55f)
-    val blurGlowBot = if (effectiveDark) activePreset.orb2.copy(alpha = 0.38f) else activePreset.orb2.copy(alpha = 0.24f)
+    val blurGlow = if (effectiveDark) activePreset.orb1.copy(alpha = 0.22f) else activePreset.orb1.copy(alpha = 0.16f)
+    val hairlineColor = when {
+        !coloredBorders && effectiveDark -> Color.White.copy(alpha = 0.12f)
+        !coloredBorders -> Color(0xFF0F172A).copy(alpha = 0.10f)
+        effectiveDark -> activePreset.primary.copy(alpha = 0.16f)
+        else -> Color.White.copy(alpha = 0.42f)
+    }
 
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-        Box(modifier = modifier.fillMaxSize()) {
-            // 1. Native Gaussian-blurred frosted edge strips (API 31+ RenderEffect; soft on older APIs)
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .fillMaxHeight()
-                    .width(edgeWidthDp * 0.52f)
-                    .blur(
-                        radiusX = edgeWidthDp * 0.48f,
-                        radiusY = edgeWidthDp * 0.48f,
-                        edgeTreatment = BlurredEdgeTreatment.Unbounded
-                    )
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(blurGlowTop, blurGlowMid, blurGlowBot)
-                        )
-                    )
-            )
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .fillMaxHeight()
-                    .width(edgeWidthDp * 0.52f)
-                    .blur(
-                        radiusX = edgeWidthDp * 0.48f,
-                        radiusY = edgeWidthDp * 0.48f,
-                        edgeTreatment = BlurredEdgeTreatment.Unbounded
-                    )
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(blurGlowBot, blurGlowMid, blurGlowTop)
-                        )
-                    )
-            )
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .drawWithCache {
+                    val edgePx = edgeWidthDp.toPx().coerceAtLeast(1f)
+                    val w = size.width
+                    val h = size.height
+                    val coreAlpha = if (effectiveDark) 0.78f else 0.80f
+                    val midAlpha = if (effectiveDark) 0.44f else 0.46f
+                    val tailAlpha = if (effectiveDark) 0.14f else 0.16f
+                    val rimStroke = 1.dp.toPx()
 
-            // 2. Smooth multi-stop 2mm optical mist & frosted edge refraction veil on both sides
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val edgePx = edgeWidthDp.toPx().coerceAtLeast(1f)
-                val w = size.width
-                val h = size.height
-                if (w <= edgePx * 2f || h <= 0f) return@Canvas
-
-                val coreAlpha = if (effectiveDark) 0.78f else 0.80f
-                val midAlpha = if (effectiveDark) 0.44f else 0.46f
-                val tailAlpha = if (effectiveDark) 0.14f else 0.16f
-                val hairlineColor = when {
-                    !coloredBorders && effectiveDark -> Color.White.copy(alpha = 0.12f)
-                    !coloredBorders -> Color(0xFF0F172A).copy(alpha = 0.10f)
-                    effectiveDark -> activePreset.primary.copy(alpha = 0.16f)
-                    else -> Color.White.copy(alpha = 0.42f)
-                }
-
-                // Left 2mm blurry edge
-                drawRect(
-                    brush = Brush.horizontalGradient(
+                    val leftGlowBrush = Brush.horizontalGradient(
+                        colors = listOf(blurGlow, Color.Transparent),
+                        startX = 0f,
+                        endX = (edgePx * 1.15f).coerceAtLeast(1f)
+                    )
+                    val rightGlowBrush = Brush.horizontalGradient(
+                        colors = listOf(Color.Transparent, blurGlow),
+                        startX = (w - edgePx * 1.15f).coerceAtLeast(0f),
+                        endX = w.coerceAtLeast(1f)
+                    )
+                    val leftEdgeBrush = Brush.horizontalGradient(
                         colorStops = arrayOf(
                             0.00f to edgeBase.copy(alpha = coreAlpha),
                             0.32f to edgeSurface.copy(alpha = midAlpha),
@@ -194,49 +125,47 @@ fun BlurryScreenEdges(
                         ),
                         startX = 0f,
                         endX = edgePx
-                    ),
-                    topLeft = Offset.Zero,
-                    size = Size(edgePx, h)
-                )
-
-                // Right 2mm blurry edge
-                drawRect(
-                    brush = Brush.horizontalGradient(
+                    )
+                    val rightEdgeBrush = Brush.horizontalGradient(
                         colorStops = arrayOf(
                             0.00f to Color.Transparent,
                             0.32f to edgeBase.copy(alpha = tailAlpha),
                             0.68f to edgeSurface.copy(alpha = midAlpha),
                             1.00f to edgeBase.copy(alpha = coreAlpha)
                         ),
-                        startX = w - edgePx,
-                        endX = w
-                    ),
-                    topLeft = Offset(w - edgePx, 0f),
-                    size = Size(edgePx, h)
-                )
+                        startX = (w - edgePx).coerceAtLeast(0f),
+                        endX = w.coerceAtLeast(1f)
+                    )
 
-                // Subtle 1dp glass edge specular rim on both sides
-                val rimStroke = 1.dp.toPx()
-                drawLine(
-                    color = hairlineColor,
-                    start = Offset(rimStroke * 0.5f, 0f),
-                    end = Offset(rimStroke * 0.5f, h),
-                    strokeWidth = rimStroke
-                )
-                drawLine(
-                    color = hairlineColor,
-                    start = Offset(w - rimStroke * 0.5f, 0f),
-                    end = Offset(w - rimStroke * 0.5f, h),
-                    strokeWidth = rimStroke
-                )
-            }
-        }
+                    onDrawBehind {
+                        if (w <= edgePx * 2f || h <= 0f) return@onDrawBehind
+                        drawRect(brush = leftGlowBrush, topLeft = Offset.Zero, size = Size(edgePx * 1.15f, h))
+                        drawRect(brush = rightGlowBrush, topLeft = Offset(w - edgePx * 1.15f, 0f), size = Size(edgePx * 1.15f, h))
+                        drawRect(brush = leftEdgeBrush, topLeft = Offset.Zero, size = Size(edgePx, h))
+                        drawRect(brush = rightEdgeBrush, topLeft = Offset(w - edgePx, 0f), size = Size(edgePx, h))
+
+                        drawLine(
+                            color = hairlineColor,
+                            start = Offset(rimStroke * 0.5f, 0f),
+                            end = Offset(rimStroke * 0.5f, h),
+                            strokeWidth = rimStroke
+                        )
+                        drawLine(
+                            color = hairlineColor,
+                            start = Offset(w - rimStroke * 0.5f, 0f),
+                            end = Offset(w - rimStroke * 0.5f, h),
+                            strokeWidth = rimStroke
+                        )
+                    }
+                }
+        )
     }
 }
 
 /**
- * Animated dynamic frosted backdrop with floating ambient aura orbs that pulse and move smoothly.
- * Creates the authentic "Frosted / Blurred Backdrop" through which liquid glass elements refract light.
+ * Rich multi-orb frosted ambient backdrop.
+ * Uses cached GPU gradients ([drawWithCache]) instead of continuous 60-120fps per-frame redraws
+ * so the UI & RenderThread stay completely responsive and idle cleanly between user interactions.
  */
 @Composable
 fun FrostedBackdrop(
@@ -245,42 +174,9 @@ fun FrostedBackdrop(
     showBlurryEdges: Boolean = true,
     content: @Composable BoxScope.() -> Unit
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "backdrop_animation")
-
-    val t1 by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 6.28318f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(18000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "orb1_phase"
-    )
-
-    val t2 by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 6.28318f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(24000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "orb2_phase"
-    )
-
-    val pulse by infiniteTransition.animateFloat(
-        initialValue = 0.9f,
-        targetValue = 1.15f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(9000, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulse_scale"
-    )
-
     val activePreset = LocalAppThemePreset.current
     val effectiveDark = activePreset.isDark
 
-    // Dynamic palette tokens derived from the active theme preset
     val baseBackground = activePreset.background
     val orbColor1 = activePreset.orb1
     val orbColor2 = activePreset.orb2
@@ -295,78 +191,59 @@ fun FrostedBackdrop(
         modifier = modifier
             .fillMaxSize()
             .background(baseBackground)
-    ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val width = size.width
-            val height = size.height
+            .drawWithCache {
+                val width = size.width.coerceAtLeast(1f)
+                val height = size.height.coerceAtLeast(1f)
 
-            // Orb 1: Upper-left flowing cyan
-            val x1 = width * 0.25f + cos(t1) * (width * 0.18f)
-            val y1 = height * 0.20f + sin(t1) * (height * 0.12f)
-            val r1 = (width * 0.55f) * pulse
-            drawCircle(
-                brush = Brush.radialGradient(
+                val c1 = Offset(width * 0.28f, height * 0.18f)
+                val r1 = (width * 0.58f).coerceAtLeast(1f)
+                val b1 = Brush.radialGradient(
                     colors = listOf(orbColor1, orbColor1.copy(alpha = 0.08f), Color.Transparent),
-                    center = Offset(x1, y1),
+                    center = c1,
                     radius = r1
-                ),
-                center = Offset(x1, y1),
-                radius = r1
-            )
+                )
 
-            // Orb 2: Center-right glowing violet
-            val x2 = width * 0.80f + sin(t2) * (width * 0.15f)
-            val y2 = height * 0.45f + cos(t2) * (height * 0.16f)
-            val r2 = (width * 0.60f) * (2f - pulse)
-            drawCircle(
-                brush = Brush.radialGradient(
+                val c2 = Offset(width * 0.82f, height * 0.44f)
+                val r2 = (width * 0.62f).coerceAtLeast(1f)
+                val b2 = Brush.radialGradient(
                     colors = listOf(orbColor2, orbColor2.copy(alpha = 0.08f), Color.Transparent),
-                    center = Offset(x2, y2),
+                    center = c2,
                     radius = r2
-                ),
-                center = Offset(x2, y2),
-                radius = r2
-            )
+                )
 
-            // Orb 3: Lower-left magenta
-            val x3 = width * 0.30f - cos(t2) * (width * 0.16f)
-            val y3 = height * 0.82f - sin(t2) * (height * 0.10f)
-            val r3 = (width * 0.52f) * pulse
-            drawCircle(
-                brush = Brush.radialGradient(
+                val c3 = Offset(width * 0.26f, height * 0.82f)
+                val r3 = (width * 0.54f).coerceAtLeast(1f)
+                val b3 = Brush.radialGradient(
                     colors = listOf(orbColor3, orbColor3.copy(alpha = 0.08f), Color.Transparent),
-                    center = Offset(x3, y3),
+                    center = c3,
                     radius = r3
-                ),
-                center = Offset(x3, y3),
-                radius = r3
-            )
+                )
 
-            // Orb 4: Top-right deep ambient amber / indigo
-            val x4 = width * 0.65f + cos(t1 * 0.7f) * (width * 0.12f)
-            val y4 = height * 0.10f + sin(t1 * 0.7f) * (height * 0.08f)
-            val r4 = (width * 0.48f)
-            drawCircle(
-                brush = Brush.radialGradient(
+                val c4 = Offset(width * 0.68f, height * 0.11f)
+                val r4 = (width * 0.48f).coerceAtLeast(1f)
+                val b4 = Brush.radialGradient(
                     colors = listOf(orbColor4, orbColor4.copy(alpha = 0.06f), Color.Transparent),
-                    center = Offset(x4, y4),
+                    center = c4,
                     radius = r4
-                ),
-                center = Offset(x4, y4),
-                radius = r4
-            )
+                )
 
-            // Subtle Frosted noise / sheen overlay to diffuse the lights
-            val sheenBrush = Brush.verticalGradient(
-                colors = if (isDark) {
-                    listOf(Color(0x18FFFFFF), Color(0x04000000), Color(0x10FFFFFF))
-                } else {
-                    listOf(Color(0x35FFFFFF), Color(0x10FFFFFF), Color(0x25FFFFFF))
+                val sheenBrush = Brush.verticalGradient(
+                    colors = if (isDark) {
+                        listOf(Color(0x18FFFFFF), Color(0x04000000), Color(0x10FFFFFF))
+                    } else {
+                        listOf(Color(0x35FFFFFF), Color(0x10FFFFFF), Color(0x25FFFFFF))
+                    }
+                )
+
+                onDrawBehind {
+                    drawCircle(brush = b1, center = c1, radius = r1)
+                    drawCircle(brush = b2, center = c2, radius = r2)
+                    drawCircle(brush = b3, center = c3, radius = r3)
+                    drawCircle(brush = b4, center = c4, radius = r4)
+                    drawRect(brush = sheenBrush)
                 }
-            )
-            drawRect(brush = sheenBrush)
-        }
-
+            }
+    ) {
         content()
 
         if (showBlurryEdges) {

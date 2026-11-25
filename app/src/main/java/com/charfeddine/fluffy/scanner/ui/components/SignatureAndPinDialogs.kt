@@ -527,8 +527,8 @@ fun ScannerBiometricPinDialog(
                 modifier = Modifier.fillMaxWidth()
             )
 
-            if (errorMsg != null) {
-                Text(errorMsg!!, color = ScannerGlassPalette.RoseGlow, fontSize = 12.sp)
+            errorMsg?.let { msg ->
+                Text(msg, color = ScannerGlassPalette.RoseGlow, fontSize = 12.sp)
             }
 
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {

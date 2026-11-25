@@ -24,16 +24,20 @@ import com.example.ui.theme.AppLanguage
 import com.example.ui.theme.AppThemePreset
 import com.example.ui.theme.AppThemeRegistry
 import com.example.ui.theme.translateText
+import com.example.reminders.NoteReminderScheduler
 import com.example.update.AppUpdateManager
 import com.example.update.ReleaseUpdateInfo
 import com.example.update.UpdateUiState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -202,6 +206,10 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             backfillMissingSyncIds()
             backfillSortOrderIfNeeded()
             purgeExpiredTrashNotes()
+            launch(Dispatchers.IO) {
+                NoteReminderScheduler.ensureNotificationChannel(getApplication())
+                NoteReminderScheduler.rescheduleAllActiveReminders(getApplication())
+            }
 
             // Observe Firebase Authentication & automatically bind real-time Cloud Firestore listeners
             launch {
@@ -225,18 +233,22 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
 
-            // Keep local literal snapshot synced automatically (active + archived + trashed)
+            // Keep local literal snapshot synced automatically (debounced to prevent main/IO contention during typing)
+            @OptIn(FlowPreview::class)
             combine(
                 repository.allNotes,
                 repository.archivedNotes,
                 repository.trashedNotes
             ) { active, archived, trashed ->
                 active + archived + trashed
-            }.collect { notes ->
-                withContext(Dispatchers.IO) {
-                    LocalDeviceStorageManager.saveNotesLiteralSnapshot(getApplication(), notes)
-                }
             }
+                .distinctUntilChanged()
+                .debounce(1500L)
+                .collect { notes ->
+                    withContext(Dispatchers.IO) {
+                        LocalDeviceStorageManager.saveNotesLiteralSnapshot(getApplication(), notes)
+                    }
+                }
         }
         persistSettingsSnapshot(syncToCloud = false)
         checkForUpdates(isManual = false)
@@ -246,6 +258,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         val cutoff = System.currentTimeMillis() - TRASH_RETENTION_MILLIS
         val expired = repository.getExpiredTrashNotes(cutoff)
         if (expired.isNotEmpty()) {
+            expired.forEach { NoteReminderScheduler.cancelReminder(getApplication(), it.id) }
             repository.deleteExpiredTrash(cutoff)
             val uid = currentUser.value?.uid
             if (uid != null) {
@@ -328,7 +341,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                         withContext(Dispatchers.IO) {
                             remoteSnapshot.upserted.forEach { remoteNote ->
                                 val existing = repository.getNoteBySyncId(remoteNote.syncId)
-                                if (existing == null) {
+                                val savedId = if (existing == null) {
                                     repository.insertOrUpdate(remoteNote.copy(id = 0L))
                                 } else if (remoteNote.updatedAt > existing.updatedAt) {
                                     // Preserve local device audio attachment if local audio exists or exceeds 900 MB cloud limit
@@ -345,12 +358,25 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                                         remoteNote.copy(id = existing.id)
                                     }
                                     repository.insertOrUpdate(merged)
+                                    existing.id
+                                } else {
+                                    existing.id
+                                }
+                                if (savedId > 0L) {
+                                    if (!remoteNote.isDeleted && remoteNote.reminderAt > System.currentTimeMillis()) {
+                                        NoteReminderScheduler.scheduleReminder(getApplication(), savedId, remoteNote.reminderAt, remoteNote.syncId)
+                                    } else if (remoteNote.isDeleted || remoteNote.reminderAt <= 0L) {
+                                        NoteReminderScheduler.cancelReminder(getApplication(), savedId)
+                                    }
                                 }
                             }
 
                             if (!remoteSnapshot.hasPendingWrites) {
                                 remoteSnapshot.removedSyncIds.forEach { sid ->
                                     if (editingNote.value?.syncId != sid) {
+                                        repository.getNoteBySyncId(sid)?.let { toRemove ->
+                                            NoteReminderScheduler.cancelReminder(getApplication(), toRemove.id)
+                                        }
                                         repository.deleteBySyncId(sid)
                                     }
                                 }
@@ -514,6 +540,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             "PINNED" -> list.filter { it.isPinned }
             "FAVORITES" -> list.filter { it.isFavorite }
             "TODO" -> list.filter { it.checklistJson.isNotBlank() }
+            "REMINDERS" -> list.filter { it.reminderAt > 0L }.sortedBy { it.reminderAt }
             else -> list.filter { it.category.equals(category, ignoreCase = true) }
         }
     }.stateIn(
@@ -1029,6 +1056,76 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         isCreatingNew.value = false
     }
 
+    fun openNoteById(noteId: Long) {
+        if (noteId <= 0L) return
+        viewModelScope.launch {
+            val found = withContext(Dispatchers.IO) { repository.getNoteByIdOnce(noteId) }
+            if (found != null && !found.isDeleted) {
+                isSettingsDrawerOpen.value = false
+                isThemesScreenOpen.value = false
+                isTrashScreenOpen.value = false
+                isArchiveScreenOpen.value = false
+                isAccountScreenOpen.value = false
+                isScannerHubOpen.value = false
+                isVaultOpen.value = false
+                openExistingNote(found)
+            } else {
+                showSnackbar(
+                    if (isArabic.value) "المسودة غير متوفرة أو تم حذفها"
+                    else "Draft is unavailable or was moved to Trash"
+                )
+            }
+        }
+    }
+
+    fun setNoteReminder(note: NoteEntity, reminderAtMillis: Long) {
+        viewModelScope.launch {
+            noteSaveMutex.withLock {
+                val cleanReminder = reminderAtMillis.coerceAtLeast(0L)
+                val now = System.currentTimeMillis()
+                val ensuredSyncId = note.syncId.ifBlank { UUID.randomUUID().toString() }
+                val targetSortOrder = if (note.id == 0L) repository.getMinSortOrder() - 1000L else note.sortOrder
+                val updated = note.copy(
+                    reminderAt = cleanReminder,
+                    updatedAt = now,
+                    sortOrder = targetSortOrder,
+                    syncId = ensuredSyncId
+                )
+                val insertedId = repository.insertOrUpdate(updated)
+                val saved = if (updated.id == 0L && insertedId > 0L) updated.copy(id = insertedId) else updated
+                if (editingNote.value?.id == saved.id || editingNote.value?.syncId == saved.syncId) {
+                    editingNote.value = saved
+                }
+                if (saved.reminderAt > System.currentTimeMillis() && !saved.isDeleted) {
+                    NoteReminderScheduler.scheduleReminder(getApplication(), saved.id, saved.reminderAt, saved.syncId)
+                } else {
+                    NoteReminderScheduler.cancelReminder(getApplication(), saved.id)
+                }
+                syncNoteUpsertIfSignedIn(saved)
+                showSnackbar(
+                    if (cleanReminder > 0L) {
+                        val formatted = NoteReminderScheduler.formatReminderBadgeText(cleanReminder, isArabic.value)
+                        translateText(
+                            appLanguage.value,
+                            ar = "تم ضبط التذكير: $formatted 🔔",
+                            fr = "Rappel défini : $formatted 🔔",
+                            en = "Reminder set: $formatted 🔔",
+                            tzm = "Asmekti yettusbadu: $formatted 🔔"
+                        )
+                    } else {
+                        translateText(
+                            appLanguage.value,
+                            ar = "تم إلغاء التذكير",
+                            fr = "Rappel supprimé",
+                            en = "Reminder cleared",
+                            tzm = "Asmekti yettwakkes"
+                        )
+                    }
+                )
+            }
+        }
+    }
+
     /**
      * Silent real-time autosave while editing:
      * Saves written text LITERALLY without altering/trimming whitespace, formatting, or newlines,
@@ -1047,48 +1144,66 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         checklist: List<ChecklistItem>,
         audioDurationSec: Int,
         audioFilePath: String = "",
-        audioByteSize: Long = 0L
+        audioByteSize: Long = 0L,
+        reminderAt: Long = editingNote.value?.reminderAt ?: 0L
     ) {
         if (editingNote.value == null) return
         val activeChecklist = checklist.filter { it.text.isNotEmpty() }
 
         // Only skip when completely empty (never touch non-empty literal whitespace)
-        if (title.isEmpty() && !NotePagesCodec.hasAnyContent(content, pagesJson) && activeChecklist.isEmpty() && audioDurationSec == 0 && audioFilePath.isBlank()) {
+        if (title.isEmpty() &&
+            !NotePagesCodec.hasAnyContent(content, pagesJson) &&
+            activeChecklist.isEmpty() &&
+            audioDurationSec == 0 &&
+            audioFilePath.isBlank() &&
+            reminderAt <= 0L
+        ) {
             return
         }
 
         viewModelScope.launch {
-            noteSaveMutex.withLock {
-                val current = editingNote.value ?: return@withLock
-                val ensuredSyncId = current.syncId.ifBlank { UUID.randomUUID().toString() }
-                val targetSortOrder = if (current.id == 0L) {
-                    repository.getMinSortOrder() - 1000L
-                } else {
-                    current.sortOrder
+            val saved = withContext(Dispatchers.IO) {
+                noteSaveMutex.withLock {
+                    val current = editingNote.value ?: return@withContext null
+                    val ensuredSyncId = current.syncId.ifBlank { UUID.randomUUID().toString() }
+                    val targetSortOrder = if (current.id == 0L) {
+                        repository.getMinSortOrder() - 1000L
+                    } else {
+                        current.sortOrder
+                    }
+                    val resolvedAudioSize = AudioCloudPolicy.effectiveAudioByteSize(audioByteSize, audioFilePath)
+                    val updatedNote = current.copy(
+                        title = title,
+                        content = content,
+                        pagesJson = pagesJson,
+                        category = category.ifBlank { if (isArabic.value) "عام" else "General" },
+                        colorPreset = colorPreset,
+                        backgroundId = backgroundId,
+                        customColorArgb = customColorArgb,
+                        isPinned = isPinned,
+                        isFavorite = isFavorite,
+                        checklistJson = ChecklistItem.listToJson(activeChecklist),
+                        audioDurationSec = audioDurationSec,
+                        audioFilePath = audioFilePath,
+                        audioByteSize = resolvedAudioSize,
+                        reminderAt = reminderAt,
+                        sortOrder = targetSortOrder,
+                        updatedAt = System.currentTimeMillis(),
+                        syncId = ensuredSyncId
+                    )
+                    val id = repository.insertOrUpdate(updatedNote)
+                    val persisted = if (current.id == 0L && id > 0) updatedNote.copy(id = id) else updatedNote
+                    if (persisted.reminderAt > System.currentTimeMillis() && !persisted.isDeleted) {
+                        NoteReminderScheduler.scheduleReminder(getApplication(), persisted.id, persisted.reminderAt, persisted.syncId)
+                    } else if (persisted.reminderAt <= 0L && persisted.id > 0L) {
+                        NoteReminderScheduler.cancelReminder(getApplication(), persisted.id)
+                    }
+                    syncNoteUpsertIfSignedIn(persisted)
+                    persisted
                 }
-                val resolvedAudioSize = AudioCloudPolicy.effectiveAudioByteSize(audioByteSize, audioFilePath)
-                val updatedNote = current.copy(
-                    title = title,
-                    content = content,
-                    pagesJson = pagesJson,
-                    category = category.ifBlank { if (isArabic.value) "عام" else "General" },
-                    colorPreset = colorPreset,
-                    backgroundId = backgroundId,
-                    customColorArgb = customColorArgb,
-                    isPinned = isPinned,
-                    isFavorite = isFavorite,
-                    checklistJson = ChecklistItem.listToJson(activeChecklist),
-                    audioDurationSec = audioDurationSec,
-                    audioFilePath = audioFilePath,
-                    audioByteSize = resolvedAudioSize,
-                    sortOrder = targetSortOrder,
-                    updatedAt = System.currentTimeMillis(),
-                    syncId = ensuredSyncId
-                )
-                val id = repository.insertOrUpdate(updatedNote)
-                val saved = if (current.id == 0L && id > 0) updatedNote.copy(id = id) else updatedNote
+            }
+            if (saved != null) {
                 editingNote.value = saved
-                syncNoteUpsertIfSignedIn(saved)
             }
         }
     }
@@ -1106,47 +1221,65 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         checklist: List<ChecklistItem>,
         audioDurationSec: Int,
         audioFilePath: String = "",
-        audioByteSize: Long = 0L
+        audioByteSize: Long = 0L,
+        reminderAt: Long = editingNote.value?.reminderAt ?: 0L
     ) {
         if (editingNote.value == null) return
         val activeChecklist = checklist.filter { it.text.isNotEmpty() }
 
-        if (title.isEmpty() && !NotePagesCodec.hasAnyContent(content, pagesJson) && activeChecklist.isEmpty() && audioDurationSec == 0 && audioFilePath.isBlank()) {
+        if (title.isEmpty() &&
+            !NotePagesCodec.hasAnyContent(content, pagesJson) &&
+            activeChecklist.isEmpty() &&
+            audioDurationSec == 0 &&
+            audioFilePath.isBlank() &&
+            reminderAt <= 0L
+        ) {
             closeEditor()
             return
         }
 
         viewModelScope.launch {
-            noteSaveMutex.withLock {
-                val current = editingNote.value ?: return@withLock
-                val ensuredSyncId = current.syncId.ifBlank { UUID.randomUUID().toString() }
-                val targetSortOrder = if (current.id == 0L) {
-                    repository.getMinSortOrder() - 1000L
-                } else {
-                    current.sortOrder
+            val saved = withContext(Dispatchers.IO) {
+                noteSaveMutex.withLock {
+                    val current = editingNote.value ?: return@withContext null
+                    val ensuredSyncId = current.syncId.ifBlank { UUID.randomUUID().toString() }
+                    val targetSortOrder = if (current.id == 0L) {
+                        repository.getMinSortOrder() - 1000L
+                    } else {
+                        current.sortOrder
+                    }
+                    val resolvedAudioSize = AudioCloudPolicy.effectiveAudioByteSize(audioByteSize, audioFilePath)
+                    val updatedNote = current.copy(
+                        title = title,
+                        content = content,
+                        pagesJson = pagesJson,
+                        category = category.ifBlank { if (isArabic.value) "عام" else "General" },
+                        colorPreset = colorPreset,
+                        backgroundId = backgroundId,
+                        customColorArgb = customColorArgb,
+                        isPinned = isPinned,
+                        isFavorite = isFavorite,
+                        checklistJson = ChecklistItem.listToJson(activeChecklist),
+                        audioDurationSec = audioDurationSec,
+                        audioFilePath = audioFilePath,
+                        audioByteSize = resolvedAudioSize,
+                        reminderAt = reminderAt,
+                        sortOrder = targetSortOrder,
+                        updatedAt = System.currentTimeMillis(),
+                        syncId = ensuredSyncId
+                    )
+                    val id = repository.insertOrUpdate(updatedNote)
+                    val persisted = if (current.id == 0L && id > 0) updatedNote.copy(id = id) else updatedNote
+                    if (persisted.reminderAt > System.currentTimeMillis() && !persisted.isDeleted) {
+                        NoteReminderScheduler.scheduleReminder(getApplication(), persisted.id, persisted.reminderAt, persisted.syncId)
+                    } else if (persisted.reminderAt <= 0L && persisted.id > 0L) {
+                        NoteReminderScheduler.cancelReminder(getApplication(), persisted.id)
+                    }
+                    syncNoteUpsertIfSignedIn(persisted)
+                    persisted
                 }
-                val resolvedAudioSize = AudioCloudPolicy.effectiveAudioByteSize(audioByteSize, audioFilePath)
-                val updatedNote = current.copy(
-                    title = title,
-                    content = content,
-                    pagesJson = pagesJson,
-                    category = category.ifBlank { if (isArabic.value) "عام" else "General" },
-                    colorPreset = colorPreset,
-                    backgroundId = backgroundId,
-                    customColorArgb = customColorArgb,
-                    isPinned = isPinned,
-                    isFavorite = isFavorite,
-                    checklistJson = ChecklistItem.listToJson(activeChecklist),
-                    audioDurationSec = audioDurationSec,
-                    audioFilePath = audioFilePath,
-                    audioByteSize = resolvedAudioSize,
-                    sortOrder = targetSortOrder,
-                    updatedAt = System.currentTimeMillis(),
-                    syncId = ensuredSyncId
-                )
-                val id = repository.insertOrUpdate(updatedNote)
-                val saved = if (current.id == 0L && id > 0) updatedNote.copy(id = id) else updatedNote
-                syncNoteUpsertIfSignedIn(saved)
+            }
+            if (saved != null) {
                 closeEditor()
                 if (!AudioCloudPolicy.canStoreNoteAudioInCloud(saved)) {
                     showSnackbar(
@@ -1297,12 +1430,14 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         val current = editingNote.value ?: return
         viewModelScope.launch {
             if (current.id != 0L) {
+                NoteReminderScheduler.cancelReminder(getApplication(), current.id)
                 val now = System.currentTimeMillis()
                 val trashed = current.copy(
                     isDeleted = true,
                     deletedAt = now,
                     isArchived = false,
                     isPinned = false,
+                    reminderAt = 0L,
                     updatedAt = now,
                     syncId = current.syncId.ifBlank { UUID.randomUUID().toString() }
                 )
@@ -1318,12 +1453,14 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun deleteNoteDirectly(note: NoteEntity) {
+        NoteReminderScheduler.cancelReminder(getApplication(), note.id)
         val now = System.currentTimeMillis()
         val trashed = note.copy(
             isDeleted = true,
             deletedAt = now,
             isArchived = false,
             isPinned = false,
+            reminderAt = 0L,
             updatedAt = now,
             syncId = note.syncId.ifBlank { UUID.randomUUID().toString() }
         )
@@ -1353,6 +1490,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
 
     fun deletePermanentlyFromTrash(note: NoteEntity) {
         viewModelScope.launch {
+            NoteReminderScheduler.cancelReminder(getApplication(), note.id)
             repository.deleteNote(note)
             syncNoteDeleteIfSignedIn(note.syncId)
             showSnackbar(if (isArabic.value) "تم الحذف النهائي" else "Permanently deleted")
@@ -1363,6 +1501,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             val trashed = withContext(Dispatchers.IO) {
                 val items = repository.getTrashedNotesOnce()
+                items.forEach { NoteReminderScheduler.cancelReminder(getApplication(), it.id) }
                 repository.emptyTrash()
                 items
             }
@@ -1633,8 +1772,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             authInfoMessage.value = null
             isAuthBusy.value = true
             val result = FirebaseSyncRepository.signUpWithEmailPassword(getApplication(), trimmedEmail, password)
-            if (result.isSuccess) {
-                val createdUser = result.getOrNull()!!
+            val createdUser = result.getOrNull()
+            if (result.isSuccess && createdUser != null) {
                 useGoogleAccountName.value = false
                 prefs.edit()
                     .putBoolean("is_guest_mode", false)
@@ -2040,6 +2179,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
 
                 // Remove original note from active/archived/trashed notes so it's cleanly moved
                 if (note.id != 0L) {
+                    NoteReminderScheduler.cancelReminder(getApplication(), note.id)
                     repository.deleteNote(note)
                 }
                 if (note.syncId.isNotBlank()) {

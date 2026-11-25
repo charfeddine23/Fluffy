@@ -134,6 +134,7 @@ import com.example.ui.components.EditorNoteHeader
 import com.example.ui.components.EditorPageTitleField
 import com.example.ui.components.EditorTopAppBar
 import com.example.ui.components.InsertFeaturesBottomSheet
+import com.example.ui.components.NoteReminderDialog
 import com.example.ui.components.RichContentView
 import com.example.ui.components.SegmentedRichPageEditor
 import com.example.ui.components.TableEditorDialog
@@ -175,7 +176,8 @@ fun NoteEditorScreen(
         checklist: List<ChecklistItem>,
         audioDurationSec: Int,
         audioFilePath: String,
-        audioByteSize: Long
+        audioByteSize: Long,
+        reminderAt: Long
     ) -> Unit,
     onDelete: () -> Unit,
     onToggleArchive: () -> Unit = {},
@@ -193,9 +195,11 @@ fun NoteEditorScreen(
         checklist: List<ChecklistItem>,
         audioDurationSec: Int,
         audioFilePath: String,
-        audioByteSize: Long
+        audioByteSize: Long,
+        reminderAt: Long
     ) -> Unit)? = null,
-    onOpenScanner: () -> Unit = {}
+    onOpenScanner: () -> Unit = {},
+    onReminderPermissionDenied: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val playbackController = rememberAudioPlaybackController()
@@ -232,10 +236,21 @@ fun NoteEditorScreen(
     var isFavorite by remember { mutableStateOf(note.isFavorite) }
     var audioDurationSec by remember { mutableIntStateOf(note.audioDurationSec) }
     var audioFilePath by remember { mutableStateOf(note.audioFilePath) }
-    var audioByteSize by remember {
-        mutableLongStateOf(AudioCloudPolicy.effectiveAudioByteSize(note.audioByteSize, note.audioFilePath))
+    var audioByteSize by remember { mutableLongStateOf(note.audioByteSize) }
+    var reminderAt by remember(note.id, note.syncId) { mutableLongStateOf(note.reminderAt) }
+
+    LaunchedEffect(note.id, note.audioFilePath, note.audioByteSize) {
+        if (note.audioByteSize <= 0L && note.audioFilePath.isNotBlank()) {
+            val resolved = withContext(Dispatchers.IO) {
+                AudioCloudPolicy.effectiveAudioByteSize(note.audioByteSize, note.audioFilePath)
+            }
+            if (resolved > 0L) {
+                audioByteSize = resolved
+            }
+        }
     }
 
+    var showReminderDialog by remember { mutableStateOf(false) }
     var showVoiceRecorderDialog by remember { mutableStateOf(false) }
     var showStyleSheet by remember { mutableStateOf(false) }
     var styleSheetInitialTab by remember { mutableIntStateOf(0) }
@@ -588,9 +603,17 @@ fun NoteEditorScreen(
             onAutoSave?.invoke(
                 title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
                 isPinned, isFavorite, checklistItems.toList(),
-                audioDurationSec, audioFilePath, audioByteSize
+                audioDurationSec, audioFilePath, audioByteSize, reminderAt
             )
         }
+    }
+
+    fun triggerImmediateReminderSave(overrideReminderAt: Long) {
+        onAutoSave?.invoke(
+            title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
+            isPinned, isFavorite, checklistItems.toList(),
+            audioDurationSec, audioFilePath, audioByteSize, overrideReminderAt
+        )
     }
 
     fun extractOcrFromUrisAndInsert(uris: List<Uri>) {
@@ -673,7 +696,8 @@ fun NoteEditorScreen(
             checklistJson = ChecklistItem.listToJson(checklistItems.filter { it.text.isNotBlank() }),
             audioDurationSec = audioDurationSec,
             audioFilePath = audioFilePath,
-            audioByteSize = AudioCloudPolicy.effectiveAudioByteSize(audioByteSize, audioFilePath)
+            audioByteSize = audioByteSize,
+            reminderAt = reminderAt
         )
     }
 
@@ -681,14 +705,14 @@ fun NoteEditorScreen(
     LaunchedEffect(
         isEditMode, title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
         isPinned, isFavorite, checklistItems.toList(),
-        audioDurationSec, audioFilePath, audioByteSize
+        audioDurationSec, audioFilePath, audioByteSize, reminderAt
     ) {
         if (!isEditMode) return@LaunchedEffect
         kotlinx.coroutines.delay(500)
         onAutoSave?.invoke(
             title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
             isPinned, isFavorite, checklistItems.toList(),
-            audioDurationSec, audioFilePath, audioByteSize
+            audioDurationSec, audioFilePath, audioByteSize, reminderAt
         )
     }
 
@@ -699,19 +723,20 @@ fun NoteEditorScreen(
             onSave(
                 title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
                 isPinned, isFavorite, checklistItems.toList(),
-                audioDurationSec, audioFilePath, audioByteSize
+                audioDurationSec, audioFilePath, audioByteSize, reminderAt
             )
         } else {
             if (isPinned != note.isPinned ||
                 selectedTint.id != note.colorPreset ||
                 backgroundId != note.backgroundId ||
                 customColorArgb != note.customColorArgb ||
-                category != note.category
+                category != note.category ||
+                reminderAt != note.reminderAt
             ) {
                 onAutoSave?.invoke(
                     title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
                     isPinned, isFavorite, checklistItems.toList(),
-                    audioDurationSec, audioFilePath, audioByteSize
+                    audioDurationSec, audioFilePath, audioByteSize, reminderAt
                 )
             }
             onBack()
@@ -788,6 +813,7 @@ fun NoteEditorScreen(
                 isPinned = isPinned,
                 isFavorite = isFavorite,
                 isArchived = note.isArchived,
+                reminderAt = reminderAt,
                 canArchiveOrDelete = note.id != 0L,
                 isFocusMode = isFocusMode,
                 isDark = effectiveDark,
@@ -803,19 +829,20 @@ fun NoteEditorScreen(
                         onSave(
                             title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
                             isPinned, isFavorite, checklistItems.toList(),
-                            audioDurationSec, audioFilePath, audioByteSize
+                            audioDurationSec, audioFilePath, audioByteSize, reminderAt
                         )
                     } else {
                         if (isPinned != note.isPinned ||
                             selectedTint.id != note.colorPreset ||
                             backgroundId != note.backgroundId ||
                             customColorArgb != note.customColorArgb ||
-                            category != note.category
+                            category != note.category ||
+                            reminderAt != note.reminderAt
                         ) {
                             onAutoSave?.invoke(
                                 title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
                                 isPinned, isFavorite, checklistItems.toList(),
-                                audioDurationSec, audioFilePath, audioByteSize
+                                audioDurationSec, audioFilePath, audioByteSize, reminderAt
                             )
                         }
                         onBack()
@@ -825,12 +852,13 @@ fun NoteEditorScreen(
                     isPinned = !isPinned
                     triggerImmediateSaveIfViewMode()
                 },
+                onOpenReminder = { showReminderDialog = true },
                 onSaveOrEdit = {
                     if (isEditMode) {
                         onSave(
                             title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
                             isPinned, isFavorite, checklistItems.toList(),
-                            audioDurationSec, audioFilePath, audioByteSize
+                            audioDurationSec, audioFilePath, audioByteSize, reminderAt
                         )
                     } else {
                         isEditMode = true
@@ -890,6 +918,7 @@ fun NoteEditorScreen(
             // 2. Streamlined Note Title & Compact Single-Row Multi-Page Pill
             EditorNoteHeader(
                 title = title,
+                reminderAt = reminderAt,
                 isEditMode = isEditMode,
                 isFocusMode = isFocusMode,
                 pages = pagesSnapshot,
@@ -909,6 +938,11 @@ fun NoteEditorScreen(
                 metaColor = metaColor,
                 pillFill = pillFill,
                 onTitleChange = { updateTitleBounded(it) },
+                onOpenReminder = { showReminderDialog = true },
+                onClearReminder = {
+                    reminderAt = 0L
+                    triggerImmediateReminderSave(0L)
+                },
                 onOpenPagePicker = { showPagePickerDialog = true },
                 onJumpToPage = { idx ->
                     coroutineScope.launch { pagerState.animateScrollToPage(idx) }
@@ -1980,6 +2014,26 @@ fun NoteEditorScreen(
                         coroutineScope.launch { pagerState.animateScrollToPage(0) }
                     }
                 }
+            )
+        }
+        // Draft Reminder Scheduling Dialog
+        if (showReminderDialog) {
+            NoteReminderDialog(
+                currentReminderAt = reminderAt,
+                isDark = effectiveDark,
+                isArabic = isArabic,
+                onConfirmReminder = { pickedMillis ->
+                    reminderAt = pickedMillis
+                    showReminderDialog = false
+                    triggerImmediateReminderSave(pickedMillis)
+                },
+                onClearReminder = {
+                    reminderAt = 0L
+                    showReminderDialog = false
+                    triggerImmediateReminderSave(0L)
+                },
+                onPermissionDenied = onReminderPermissionDenied,
+                onDismiss = { showReminderDialog = false }
             )
         }
     }

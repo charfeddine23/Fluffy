@@ -54,8 +54,11 @@ import androidx.compose.material.icons.filled.FormatItalic
 import androidx.compose.material.icons.filled.FormatStrikethrough
 import androidx.compose.material.icons.filled.FormatUnderlined
 import androidx.compose.material.icons.filled.IosShare
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Unarchive
@@ -88,6 +91,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.model.GlassTint
 import com.example.data.model.NotePagesCodec
 import com.example.data.model.RichFormatAction
+import com.example.reminders.NoteReminderScheduler
 import com.example.ui.glass.liquidGlass
 import com.example.ui.theme.LocalAppFontFamily
 
@@ -103,6 +107,7 @@ fun EditorTopAppBar(
     isPinned: Boolean,
     isFavorite: Boolean,
     isArchived: Boolean,
+    reminderAt: Long = 0L,
     canArchiveOrDelete: Boolean,
     isFocusMode: Boolean,
     isDark: Boolean,
@@ -114,6 +119,7 @@ fun EditorTopAppBar(
     pillFill: Color,
     onBack: () -> Unit,
     onTogglePin: () -> Unit,
+    onOpenReminder: () -> Unit = {},
     onSaveOrEdit: () -> Unit,
     onAddPage: () -> Unit,
     onMoveToVault: () -> Unit,
@@ -200,14 +206,53 @@ fun EditorTopAppBar(
             }
         }
 
-        // End group: Pin, Save/Done (or Edit), and single Overflow Menu (⋮)
+        // End group: Reminder, Pin, Save/Done (or Edit), and single Overflow Menu (⋮)
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            // Reminder Toggle / Picker
+            val hasActiveReminder = reminderAt > 0L
+            val isOverdueReminder = hasActiveReminder && reminderAt <= System.currentTimeMillis()
+            val reminderTintColor = when {
+                isOverdueReminder -> Color(0xFFF43F5E)
+                hasActiveReminder -> Color(0xFFF59E0B)
+                else -> textColor
+            }
+            Box(
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .size(44.dp)
+                    .testTag("editor_reminder_button")
+                    .liquidGlass(
+                        isDark = isDark,
+                        tint = if (hasActiveReminder) GlassTint.AMBER else GlassTint.FROST,
+                        shape = RoundedCornerShape(14.dp),
+                        borderWidth = 1.dp,
+                        customFill = if (hasActiveReminder) {
+                            reminderTintColor.copy(alpha = 0.22f)
+                        } else {
+                            pillFill
+                        }
+                    )
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = ripple(bounded = true)
+                    ) { onOpenReminder() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = if (hasActiveReminder) Icons.Default.NotificationsActive else Icons.Default.Notifications,
+                    contentDescription = if (isArabic) "تعيين تذكير" else "Set Reminder",
+                    tint = reminderTintColor,
+                    modifier = Modifier.size(19.dp)
+                )
+            }
+
             // Pin Toggle
             Box(
                 modifier = Modifier
+                    .minimumInteractiveComponentSize()
                     .size(44.dp)
                     .testTag("editor_pin_toggle")
                     .liquidGlass(
@@ -414,6 +459,32 @@ fun EditorTopAppBar(
                         }
                     )
 
+                    DropdownMenuItem(
+                        modifier = Modifier.testTag("editor_menu_reminder"),
+                        text = {
+                            Text(
+                                text = if (reminderAt > 0L) {
+                                    if (isArabic) "تعديل التذكير" else "Edit Reminder"
+                                } else {
+                                    if (isArabic) "إضافة تذكير" else "Add Reminder"
+                                },
+                                color = if (reminderAt > 0L) Color(0xFFF59E0B) else textColor,
+                                fontWeight = FontWeight.Medium
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.NotificationsActive,
+                                contentDescription = null,
+                                tint = Color(0xFFF59E0B)
+                            )
+                        },
+                        onClick = {
+                            showOverflowMenu = false
+                            onOpenReminder()
+                        }
+                    )
+
                     HorizontalDivider(
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
                         color = metaColor.copy(alpha = 0.16f)
@@ -504,6 +575,7 @@ fun EditorTopAppBar(
 @Composable
 fun EditorNoteHeader(
     title: String,
+    reminderAt: Long = 0L,
     isEditMode: Boolean,
     isFocusMode: Boolean,
     pages: List<String>,
@@ -523,6 +595,8 @@ fun EditorNoteHeader(
     metaColor: Color,
     pillFill: Color,
     onTitleChange: (String) -> Unit,
+    onOpenReminder: () -> Unit = {},
+    onClearReminder: () -> Unit = {},
     onOpenPagePicker: () -> Unit,
     onJumpToPage: (Int) -> Unit,
     onRemoveCurrentPage: () -> Unit,
@@ -596,6 +670,64 @@ fun EditorNoteHeader(
                                 color = textColor
                             )
                         )
+                    }
+                }
+
+                // Active Draft Reminder Pill (clickable to edit, with quick clear button)
+                if (reminderAt > 0L) {
+                    val isOverdue = reminderAt <= System.currentTimeMillis()
+                    val pillTint = if (isOverdue) Color(0xFFF43F5E) else Color(0xFFF59E0B)
+                    Row(
+                        modifier = Modifier
+                            .padding(bottom = 8.dp)
+                            .defaultMinSize(minHeight = 36.dp)
+                            .clip(CircleShape)
+                            .background(pillTint.copy(alpha = if (isDark) 0.20f else 0.13f))
+                            .border(1.dp, pillTint.copy(alpha = 0.45f), CircleShape)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = ripple(bounded = true, color = pillTint),
+                                onClick = onOpenReminder
+                            )
+                            .padding(start = 11.dp, end = 6.dp, top = 4.dp, bottom = 4.dp)
+                            .testTag("editor_active_reminder_pill"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.NotificationsActive,
+                            contentDescription = if (isArabic) "تذكير نشط" else "Active Reminder",
+                            tint = pillTint,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = NoteReminderScheduler.formatReminderFullText(reminderAt, isArabic),
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = pillTint,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(26.dp)
+                                .clip(CircleShape)
+                                .background(pillTint.copy(alpha = 0.18f))
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = ripple(bounded = true),
+                                    onClick = onClearReminder
+                                )
+                                .testTag("reminder_pill_clear_btn"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = if (isArabic) "إزالة التذكير" else "Clear reminder",
+                                tint = pillTint,
+                                modifier = Modifier.size(13.dp)
+                            )
+                        }
                     }
                 }
 

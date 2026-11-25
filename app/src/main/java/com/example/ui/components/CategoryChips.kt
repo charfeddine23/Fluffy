@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Work
@@ -52,6 +53,7 @@ val defaultCategories = listOf(
     CategoryOption("PINNED", "المثبتة", "Épinglées", "Pinned", "Yettwabḍen", Icons.Default.PushPin, GlassTint.AMBER),
     CategoryOption("FAVORITES", "المفضلة", "Favoris", "Favorites", "Imenyafen", Icons.Default.Favorite, GlassTint.ROSE),
     CategoryOption("TODO", "المهام", "Tâches", "Checklists", "Timahalin", Icons.Default.CheckCircle, GlassTint.CYAN),
+    CategoryOption("REMINDERS", "التذكيرات", "Rappels", "Reminders", "Ismektiyen", Icons.Default.NotificationsActive, GlassTint.AMBER),
     CategoryOption("أفكار", "أفكار", "Idées", "Ideas", "Tiktiwin", Icons.Default.Lightbulb, GlassTint.AMETHYST),
     CategoryOption("عمل", "عمل", "Travail", "Work", "Amahil", Icons.Default.Work, GlassTint.CYAN),
     CategoryOption("شخصي", "شخصي", "Personnel", "Personal", "Udmawan", Icons.Default.Person, GlassTint.EMERALD)
