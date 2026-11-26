@@ -87,16 +87,4 @@ interface NoteDao {
         ORDER BY isPinned DESC, sortOrder ASC, createdAt DESC
     """)
     fun searchNotes(query: String): Flow<List<NoteEntity>>
-
-    @Query("SELECT * FROM notes WHERE isArchived = 0 AND isDeleted = 0 AND isFavorite = 1 ORDER BY isPinned DESC, sortOrder ASC, createdAt DESC")
-    fun getFavoriteNotes(): Flow<List<NoteEntity>>
-
-    @Query("SELECT * FROM notes WHERE isArchived = 0 AND isDeleted = 0 AND isPinned = 1 ORDER BY isPinned DESC, sortOrder ASC, createdAt DESC")
-    fun getPinnedNotes(): Flow<List<NoteEntity>>
-
-    @Query("SELECT * FROM notes WHERE isArchived = 0 AND isDeleted = 0 AND category = :category ORDER BY isPinned DESC, sortOrder ASC, createdAt DESC")
-    fun getNotesByCategory(category: String): Flow<List<NoteEntity>>
-
-    @Query("SELECT COUNT(*) FROM notes WHERE isArchived = 0 AND isDeleted = 0")
-    fun getNotesCount(): Flow<Int>
 }

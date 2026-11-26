@@ -61,5 +61,3 @@ fun buildAppTypography(fontFamily: FontFamily = EditorFontFamily): Typography {
         )
     )
 }
-
-val Typography = buildAppTypography(EditorFontFamily)

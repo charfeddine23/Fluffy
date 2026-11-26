@@ -27,9 +27,6 @@ interface VaultDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertEditedVaultItem(item: VaultItemEntity): Long
 
-    @Query("SELECT COUNT(*) FROM vault_items")
-    suspend fun getVaultCount(): Int
-
     @Query("DELETE FROM vault_items WHERE id = :itemId")
     suspend fun deleteVaultItemById(itemId: String): Int
 }

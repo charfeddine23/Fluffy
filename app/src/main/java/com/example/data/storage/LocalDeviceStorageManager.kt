@@ -1049,9 +1049,6 @@ object LocalDeviceStorageManager {
         )
     }
 
-    fun getStorageFolderDisplayPath(context: Context): String =
-        rootDir(context).absolutePath
-
     private fun queryDisplayName(context: Context, uri: Uri): String? {
         return runCatching {
             context.applicationContext.contentResolver.query(uri, null, null, null, null)?.use { cursor ->

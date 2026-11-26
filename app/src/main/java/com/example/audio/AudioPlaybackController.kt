@@ -140,7 +140,7 @@ class AudioPlaybackController(
                     }
                     runCatching { prepared.setVolume(1.0f, 1.0f) }
                     prepared.start()
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && playbackSpeed != 1.0f) {
+                    if (playbackSpeed != 1.0f) {
                         runCatching {
                             prepared.playbackParams = PlaybackParams().setSpeed(playbackSpeed)
                         }
@@ -199,7 +199,7 @@ class AudioPlaybackController(
                 }
                 runCatching { mp.setVolume(1.0f, 1.0f) }
                 mp.start()
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && playbackSpeed != 1.0f) {
+                if (playbackSpeed != 1.0f) {
                     runCatching {
                         mp.playbackParams = PlaybackParams().setSpeed(playbackSpeed)
                     }
@@ -231,7 +231,7 @@ class AudioPlaybackController(
         }
         playbackSpeed = next
         val mp = mediaPlayer ?: return
-        if (!isPreparing && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        if (!isPreparing) {
             runCatching {
                 val wasPlaying = mp.isPlaying
                 mp.playbackParams = PlaybackParams().setSpeed(next)

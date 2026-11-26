@@ -48,7 +48,6 @@ abstract class ScannerDatabase : RoomDatabase() {
                     "fluffy_scanner.db"
                 )
                     .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
-                    .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance
                 instance

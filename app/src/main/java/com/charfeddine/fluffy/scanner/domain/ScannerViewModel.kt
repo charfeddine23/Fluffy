@@ -416,14 +416,6 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun updateIdCardPairPrintMode(groupId: String, mode: IdCardPrintMode) {
-        idCardPrintMode.value = mode
-        editScannerPrefsSync { putString("scanner_id_card_print_mode", mode.id) }
-        batchFrames.value = batchFrames.value.map { frame ->
-            if (frame.idCardGroupId == groupId) frame.copy(idCardPrintMode = mode) else frame
-        }
-    }
-
     fun markDocumentModified(docId: String) {
         modifiedDocIdsForAutoSave.value = modifiedDocIdsForAutoSave.value + docId
     }
@@ -837,10 +829,6 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                 isBusy.value = false
             }
         }
-    }
-
-    fun importGalleryUris(uris: List<Uri>, appendToDocId: String?, isArabic: Boolean) {
-        importDeviceFiles(uris, appendToDocId, isArabic)
     }
 
     fun importDeviceFiles(uris: List<Uri>, appendToDocId: String?, isArabic: Boolean) {

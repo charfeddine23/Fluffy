@@ -25,6 +25,7 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.min
 
@@ -382,7 +383,7 @@ object PdfEngine {
         val totalObjs = offsets.size + 1
         out.write("xref\n0 $totalObjs\n0000000000 65535 f \n".toByteArray(Charsets.US_ASCII))
         offsets.forEach { off ->
-            out.write(String.format("%010d 00000 n \n", off).toByteArray(Charsets.US_ASCII))
+            out.write(String.format(Locale.US, "%010d 00000 n \n", off).toByteArray(Charsets.US_ASCII))
         }
         val idHex = fileId.toHexString()
         out.write(

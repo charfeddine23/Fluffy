@@ -17,9 +17,6 @@ interface ScannerDao {
     @Query("SELECT * FROM scanner_folders ORDER BY name COLLATE NOCASE ASC")
     fun observeAllFolders(): Flow<List<ScannerFolderEntity>>
 
-    @Query("SELECT * FROM scanner_folders WHERE id = :folderId LIMIT 1")
-    suspend fun getFolderById(folderId: String): ScannerFolderEntity?
-
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertFolder(folder: ScannerFolderEntity)
 
@@ -38,9 +35,6 @@ interface ScannerDao {
 
     @Query("SELECT * FROM scanned_documents WHERE id = :documentId LIMIT 1")
     suspend fun getDocumentById(documentId: String): ScannedDocumentEntity?
-
-    @Query("SELECT * FROM scanned_documents WHERE folderId = :folderId AND isTrashed = 0")
-    suspend fun getDocumentsInFolder(folderId: String): List<ScannedDocumentEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertDocument(document: ScannedDocumentEntity)
@@ -100,9 +94,6 @@ interface ScannerDao {
     // Saved E-Signatures
     @Query("SELECT * FROM saved_signatures ORDER BY createdAt DESC")
     fun observeSavedSignatures(): Flow<List<SavedSignatureEntity>>
-
-    @Query("SELECT * FROM saved_signatures WHERE id = :signatureId LIMIT 1")
-    suspend fun getSignatureById(signatureId: String): SavedSignatureEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertSignature(signature: SavedSignatureEntity)

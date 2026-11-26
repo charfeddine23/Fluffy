@@ -11,8 +11,6 @@ class NoteRepository(private val noteDao: NoteDao) {
     val archivedNotes: Flow<List<NoteEntity>> = noteDao.getArchivedNotes()
     val trashedNotes: Flow<List<NoteEntity>> = noteDao.getTrashedNotes()
 
-    fun getNote(id: Long): Flow<NoteEntity?> = noteDao.getNoteById(id)
-
     suspend fun getNoteByIdOnce(id: Long): NoteEntity? = noteDao.getNoteByIdOnce(id)
 
     suspend fun getActiveReminderNotesOnce(minTimestamp: Long = 0L): List<NoteEntity> =

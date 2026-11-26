@@ -133,7 +133,6 @@ import com.example.data.model.RichFormatAction
 import com.example.data.model.RichTextCodec
 import java.io.File
 import com.example.ui.glass.LiquidGlassCard
-import com.example.ui.glass.liquidGlass
 import com.example.ui.theme.LocalAppFontOption
 
 /**
@@ -1771,100 +1770,6 @@ fun SegmentedRichPageEditor(
                         }
                     )
                 }
-            }
-        }
-    }
-}
-
-/**
- * Interactive Rendered Grid Cards for all Pipe Tables on the active page in Writing Mode,
- * allowing 1-tap visual editing of cells/rows/columns without manually typing `|` syntax.
- */
-@Composable
-fun InlineTablesPreviewSection(
-    tables: List<MarkdownTableData>,
-    isDark: Boolean,
-    isArabic: Boolean,
-    accentColor: Color,
-    textColor: Color,
-    metaColor: Color,
-    onEditTable: (MarkdownTableData) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    if (tables.isEmpty()) return
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(top = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        tables.forEachIndexed { idx, table ->
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(if (isDark) Color.White.copy(alpha = 0.04f) else Color.Black.copy(alpha = 0.03f))
-                    .border(1.dp, accentColor.copy(alpha = 0.32f), RoundedCornerShape(16.dp))
-                    .padding(10.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.TableChart,
-                            contentDescription = null,
-                            tint = accentColor,
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Text(
-                            text = if (isArabic) {
-                                "جدول ${idx + 1} (${table.rowCount}×${table.colCount})"
-                            } else {
-                                "Table ${idx + 1} (${table.rowCount}×${table.colCount})"
-                            },
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = accentColor
-                        )
-                    }
-                    Row(
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .background(accentColor.copy(alpha = 0.16f))
-                            .clickable { onEditTable(table) }
-                            .padding(horizontal = 10.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Edit,
-                            contentDescription = null,
-                            tint = accentColor,
-                            modifier = Modifier.size(13.dp)
-                        )
-                        Text(
-                            text = if (isArabic) "تعديل الجدول" else "Edit Table",
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = accentColor
-                        )
-                    }
-                }
-
-                StyledMarkdownTable(
-                    table = table,
-                    isDark = isDark,
-                    accentColor = accentColor,
-                    textColor = textColor,
-                    metaColor = metaColor
-                )
             }
         }
     }

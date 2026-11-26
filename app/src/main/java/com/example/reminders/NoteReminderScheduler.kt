@@ -1,6 +1,7 @@
 package com.example.reminders
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -79,6 +80,7 @@ object NoteReminderScheduler {
         )
     }
 
+    @SuppressLint("MissingPermission")
     fun scheduleReminder(
         context: Context,
         noteId: Long,
