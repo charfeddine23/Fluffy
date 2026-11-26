@@ -197,6 +197,7 @@ fun VaultScreen(
     onClearSnackbar: () -> Unit = {},
     onTriggerBiometricUnlock: () -> Unit = {},
     onVerifyPasskey: (String) -> Boolean = { false },
+    editorFontSizeSp: Float = 16f,
     modifier: Modifier = Modifier
 ) {
     val playbackController = rememberAudioPlaybackController()
@@ -1786,6 +1787,7 @@ fun VaultScreen(
             isArabic = isArabic,
             isPremium = isPremium,
             initialPageIndex = editingInitialPage,
+            initialFontSizeSp = editorFontSizeSp,
             onRequestPremiumUpgrade = onRequestPremiumUpgrade,
             onDismiss = {
                 editingInitialPage = 0

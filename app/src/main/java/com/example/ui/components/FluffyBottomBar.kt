@@ -612,11 +612,6 @@ private fun ConstellationDropletOrb(
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = 420f),
         label = "constellation_orb_press"
     )
-    val dimAlpha by animateFloatAsState(
-        targetValue = if (isDimmed) 0.70f else 1f,
-        animationSpec = tween(120),
-        label = "constellation_orb_dim"
-    )
     val preset = LocalAppThemePreset.current
     val baseOpaqueSurface = if (isDark) preset.surface.copy(alpha = 1f) else Color.White
     val orbFill = action.tintColor
@@ -636,7 +631,7 @@ private fun ConstellationDropletOrb(
                 val s = pressScale * (0.45f + 0.55f * progress)
                 scaleX = s
                 scaleY = s
-                alpha = (progress * 1.4f).coerceIn(0f, 1f) * dimAlpha
+                alpha = (progress * 1.4f).coerceIn(0f, 1f)
             },
         horizontalAlignment = Alignment.CenterHorizontally
     ) {

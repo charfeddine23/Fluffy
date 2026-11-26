@@ -561,104 +561,74 @@ fun FluffyHomeScreen(
                                     val canReorderInGroup = listSnapshot.count { it.isPinned == hitNote.isPinned } > 1
 
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    selectedActionNote = hitNote
 
-                                    if (!canReorderInGroup) {
-                                        selectedActionNote = hitNote
+                                    val grabRootPos = containerCoords?.takeIf { it.isAttached }?.localToRoot(latestPos) ?: latestPos
+                                    val dragStartSlop = maxOf(touchSlop * 1.35f, with(density) { 12.dp.toPx() })
+                                    var startedDragging = false
+
+                                    try {
+                                        // Keep-holding loop (no timeout):
+                                        // - Lifting without moving keeps the contextual action buttons open
+                                        // - Moving finger at any point while still holding enters Drag & Reorder
                                         while (true) {
                                             val ev = awaitPointerEvent(PointerEventPass.Initial)
-                                            ev.changes.forEach { it.consume() }
                                             val ch = ev.changes.firstOrNull { it.id == pointerId }
-                                            if (ch == null || !ch.pressed || ev.changes.none { it.pressed }) break
-                                        }
-                                        return@awaitEachGesture
-                                    }
-
-                                    // 500ms reached: offer brief decision window (~220ms) between drag & contextual top bar:
-                                    // - Moving finger beyond dragStartSlop enters full Drag & Reorder
-                                    // - Releasing OR staying still activates Contextual Top App Bar for the note
-                                    val dragStartSlop = maxOf(touchSlop * 1.35f, with(density) { 12.dp.toPx() })
-                                    val decisionStart = SystemClock.uptimeMillis()
-                                    var startedDragging = false
-                                    var shouldSelectForTopBar = false
-                                    var pointerStillDown = true
-
-                                    draggedNoteId = hitNoteId
-                                    currentPointerPos = latestPos
-                                    grabOffsetInsideCard = latestPos - cardOrigin
-                                    lastKnownTranslationXY[0] = 0f
-                                    lastKnownTranslationXY[1] = 0f
-
-                                    while (true) {
-                                        val rem = 220L - (SystemClock.uptimeMillis() - decisionStart)
-                                        if (rem <= 0L) {
-                                            shouldSelectForTopBar = true
-                                            break
-                                        }
-                                        val ev = withTimeoutOrNull(rem) {
-                                            awaitPointerEvent(PointerEventPass.Initial)
-                                        }
-                                        if (ev == null) {
-                                            shouldSelectForTopBar = true
-                                            break
-                                        }
-                                        val ch = ev.changes.firstOrNull { it.id == pointerId }
-                                        if (ch == null || !ch.pressed) {
                                             ev.changes.forEach { it.consume() }
-                                            pointerStillDown = false
-                                            shouldSelectForTopBar = true
-                                            break
+                                            if (ch == null || !ch.pressed || ev.changes.none { it.pressed }) {
+                                                break
+                                            }
+                                            latestPos = ch.position
+                                            val currentRootPos = containerCoords?.takeIf { it.isAttached }?.localToRoot(latestPos) ?: latestPos
+                                            if (canReorderInGroup && (currentRootPos - grabRootPos).getDistance() > dragStartSlop) {
+                                                startedDragging = true
+                                                break
+                                            }
                                         }
-                                        ev.changes.forEach { it.consume() }
-                                        latestPos = ch.position
-                                        if ((latestPos - downPos).getDistance() > dragStartSlop) {
-                                            startedDragging = true
-                                            break
-                                        }
-                                    }
 
-                                    if (shouldSelectForTopBar && !startedDragging) {
+                                        if (!startedDragging) return@awaitEachGesture
+
+                                        val freshOrigin = rectsForMode(currentViewMode)[hitNoteId]?.topLeft ?: cardOrigin
+                                        val freshOriginRoot = containerCoords?.takeIf { it.isAttached }?.localToRoot(freshOrigin) ?: freshOrigin
+                                        val computedGrabOffset = grabRootPos - freshOriginRoot
+
+                                        selectedActionNote = null
+                                        draggedNoteId = hitNoteId
+                                        grabOffsetInsideCard = computedGrabOffset
+                                        currentPointerPos = latestPos
+                                        lastSwappedKey = null
+                                        lastSwapTimeMs = 0L
+                                        lastSwapPointerPos = latestPos
+                                        lastKnownTranslationXY[0] = (latestPos.x - freshOrigin.x - computedGrabOffset.x)
+                                        lastKnownTranslationXY[1] = (latestPos.y - freshOrigin.y - computedGrabOffset.y)
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        trySwapDraggedNote(latestPos, hitNoteId, currentViewMode)
+
+                                        while (true) {
+                                            val dragEvent = awaitPointerEvent(PointerEventPass.Initial)
+                                            val change = dragEvent.changes.firstOrNull { it.id == pointerId }
+                                            dragEvent.changes.forEach { it.consume() }
+                                            if (change == null || !change.pressed || dragEvent.changes.none { it.pressed }) {
+                                                break
+                                            }
+                                            latestPos = change.position
+                                            currentPointerPos = latestPos
+                                            trySwapDraggedNote(latestPos, hitNoteId, currentViewMode)
+                                        }
+
+                                        val committed = currentDisplayedNotes.toList()
+                                        pendingCommitOrderIds = committed.map { it.id }
                                         draggedNoteId = null
                                         lastKnownTranslationXY[0] = 0f
                                         lastKnownTranslationXY[1] = 0f
-                                        selectedActionNote = hitNote
-                                        if (pointerStillDown) {
-                                            while (true) {
-                                                val ev = awaitPointerEvent(PointerEventPass.Initial)
-                                                ev.changes.forEach { it.consume() }
-                                                val ch = ev.changes.firstOrNull { it.id == pointerId }
-                                                if (ch == null || !ch.pressed || ev.changes.none { it.pressed }) break
-                                            }
+                                        viewModel.reorderNotes(committed)
+                                    } finally {
+                                        if (draggedNoteId != null) {
+                                            draggedNoteId = null
+                                            lastKnownTranslationXY[0] = 0f
+                                            lastKnownTranslationXY[1] = 0f
                                         }
-                                        return@awaitEachGesture
                                     }
-
-                                    // Active Drag & Reorder loop
-                                    selectedActionNote = null
-                                    currentPointerPos = latestPos
-                                    lastSwappedKey = null
-                                    lastSwapTimeMs = 0L
-                                    lastSwapPointerPos = latestPos
-                                    trySwapDraggedNote(latestPos, hitNoteId, currentViewMode)
-
-                                    while (true) {
-                                        val dragEvent = awaitPointerEvent(PointerEventPass.Initial)
-                                        val change = dragEvent.changes.firstOrNull { it.id == pointerId }
-                                        if (change == null || !change.pressed) {
-                                            dragEvent.changes.forEach { it.consume() }
-                                            break
-                                        }
-                                        dragEvent.changes.forEach { it.consume() }
-                                        latestPos = change.position
-                                        currentPointerPos = latestPos
-                                        trySwapDraggedNote(latestPos, hitNoteId, currentViewMode)
-                                    }
-
-                                    val committed = currentDisplayedNotes.toList()
-                                    pendingCommitOrderIds = committed.map { it.id }
-                                    draggedNoteId = null
-                                    lastKnownTranslationXY[0] = 0f
-                                    lastKnownTranslationXY[1] = 0f
-                                    viewModel.reorderNotes(committed)
                                 }
                             }
                     ) {

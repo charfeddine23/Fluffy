@@ -35,7 +35,16 @@ data class FluffySettingsSnapshot(
     val notesViewMode: String = if (isGridView) "grid" else "list",
     val isPremium: Boolean = false,
     val fabMenuStyle: String = "vertical_stack",
-    val selectedFontId: String = "sans_serif"
+    val selectedFontId: String = "sans_serif",
+    val vaultViewMode: String = notesViewMode,
+    val lastCustomFabMenuStyle: String = if (fabMenuStyle == "original") "vertical_stack" else fabMenuStyle,
+    val isVaultLockEnabled: Boolean = false,
+    val editorFontSizeSp: Float = 16f,
+    val editorTextAlign: String = "start",
+    val useGoogleAccountName: Boolean = false,
+    val profileFirstName: String = "",
+    val profileLastName: String = "",
+    val profileAvatarChoice: String = ""
 )
 
 data class FluffyBackupBundle(
@@ -118,7 +127,7 @@ object LocalDeviceStorageManager {
         runCatching {
             val json = settingsToJson(settings).toString()
             val file = File(subDir(context, SETTINGS_DIR), SETTINGS_SNAPSHOT_FILE)
-            atomicWriteUtf8(file, json, syncFd = false)
+            atomicWriteUtf8(file, json, syncFd = true)
         }
     }
 
@@ -1084,12 +1093,26 @@ object LocalDeviceStorageManager {
         put("isPremium", s.isPremium)
         put("fabMenuStyle", s.fabMenuStyle)
         put("selectedFontId", s.selectedFontId)
+        put("vaultViewMode", s.vaultViewMode)
+        put("lastCustomFabMenuStyle", s.lastCustomFabMenuStyle)
+        put("isVaultLockEnabled", s.isVaultLockEnabled)
+        put("editorFontSizeSp", s.editorFontSizeSp.toDouble())
+        put("editorTextAlign", s.editorTextAlign)
+        put("useGoogleAccountName", s.useGoogleAccountName)
+        put("profileFirstName", s.profileFirstName)
+        put("profileLastName", s.profileLastName)
+        put("profileAvatarChoice", s.profileAvatarChoice)
     }
 
     private fun jsonToSettings(obj: JSONObject): FluffySettingsSnapshot {
         val dark = obj.optBoolean("isDarkMode", true)
         val arabic = obj.optBoolean("isArabic", true)
         val gridFlag = obj.optBoolean("isGridView", true)
+        val notesMode = obj.optString(
+            "notesViewMode",
+            if (gridFlag) "grid" else "list"
+        )
+        val fabStyle = obj.optString("fabMenuStyle", "vertical_stack")
         return FluffySettingsSnapshot(
             isDarkMode = dark,
             isArabic = arabic,
@@ -1107,13 +1130,22 @@ object LocalDeviceStorageManager {
             ),
             nonScreenshotEnabled = obj.optBoolean("nonScreenshotEnabled", false),
             coloredContainerBorders = obj.optBoolean("coloredContainerBorders", true),
-            notesViewMode = obj.optString(
-                "notesViewMode",
-                if (gridFlag) "grid" else "list"
-            ),
+            notesViewMode = notesMode,
             isPremium = obj.optBoolean("isPremium", false),
-            fabMenuStyle = obj.optString("fabMenuStyle", "vertical_stack"),
-            selectedFontId = obj.optString("selectedFontId", "sans_serif")
+            fabMenuStyle = fabStyle,
+            selectedFontId = obj.optString("selectedFontId", "sans_serif"),
+            vaultViewMode = obj.optString("vaultViewMode", notesMode),
+            lastCustomFabMenuStyle = obj.optString(
+                "lastCustomFabMenuStyle",
+                if (fabStyle == "original") "vertical_stack" else fabStyle
+            ),
+            isVaultLockEnabled = obj.optBoolean("isVaultLockEnabled", false),
+            editorFontSizeSp = obj.optDouble("editorFontSizeSp", 16.0).toFloat().coerceIn(12f, 32f),
+            editorTextAlign = obj.optString("editorTextAlign", "start"),
+            useGoogleAccountName = obj.optBoolean("useGoogleAccountName", false),
+            profileFirstName = obj.optString("profileFirstName", ""),
+            profileLastName = obj.optString("profileLastName", ""),
+            profileAvatarChoice = obj.optString("profileAvatarChoice", "")
         )
     }
 

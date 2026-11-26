@@ -8,6 +8,7 @@ import android.graphics.PointF
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.util.LruCache
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.charfeddine.fluffy.scanner.data.local.ScannerDatabase
@@ -76,24 +77,64 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
 
     private val scannerPrefs = application.getSharedPreferences("fluffy_scanner_prefs", android.content.Context.MODE_PRIVATE)
 
-    // Hub Filters, Sorting, Folder & View state
-    val currentFolderId = MutableStateFlow<String?>(null)
+    private inline fun editScannerPrefsSync(block: android.content.SharedPreferences.Editor.() -> Unit) {
+        scannerPrefs.edit().apply(block).commit()
+    }
+
+    // Hub Filters, Sorting, Folder & View state (Persisted across restarts)
+    val currentFolderId = MutableStateFlow<String?>(
+        scannerPrefs.getString("scanner_current_folder_id", null)
+    )
     val searchQuery = MutableStateFlow("")
-    val selectedTagFilter = MutableStateFlow<String?>(null)
-    val onlyStarredFilter = MutableStateFlow(false)
+    val selectedTagFilter = MutableStateFlow<String?>(
+        scannerPrefs.getString("scanner_selected_tag_filter", null)
+    )
+    val onlyStarredFilter = MutableStateFlow(
+        scannerPrefs.getBoolean("scanner_only_starred_filter", false)
+    )
     val showTrashView = MutableStateFlow(false)
     val sortOption = MutableStateFlow(
         SortOption.fromId(scannerPrefs.getString("scanner_sort_option", SortOption.DATE_DESC.id))
     )
-    val isGridView = MutableStateFlow(true)
+    val isGridView = MutableStateFlow(
+        scannerPrefs.getBoolean("scanner_is_grid_view", true)
+    )
 
     // Biometric / PIN session unlock tracking
     val unlockedProtectedIds = MutableStateFlow<Set<String>>(emptySet())
     val hasPinConfigured = MutableStateFlow(CryptoVaultHelper.hasPinConfigured(application))
 
-    // Active Capture / Batch / Crop Pipeline State
-    val activeScanMode = MutableStateFlow(ScanMode.ID_CARD)
-    val idCardPrintMode = MutableStateFlow(IdCardPrintMode.RECTO)
+    // Active Capture / Camera / Viewer / Export Preferences (Persisted across restarts)
+    val activeScanMode = MutableStateFlow(
+        ScanMode.fromId(scannerPrefs.getString("scanner_active_scan_mode", ScanMode.ID_CARD.id))
+    )
+    val idCardPrintMode = MutableStateFlow(
+        IdCardPrintMode.fromId(scannerPrefs.getString("scanner_id_card_print_mode", IdCardPrintMode.RECTO.id))
+    )
+    val cameraShowGrid = MutableStateFlow(
+        scannerPrefs.getBoolean("scanner_camera_show_grid", true)
+    )
+    val cameraAutoCapture = MutableStateFlow(
+        scannerPrefs.getBoolean("scanner_camera_auto_capture", false)
+    )
+    val cameraFlashMode = MutableStateFlow(
+        scannerPrefs.getInt("scanner_camera_flash_mode", androidx.camera.core.ImageCapture.FLASH_MODE_OFF)
+    )
+    val penColorArgb = MutableStateFlow(
+        scannerPrefs.getLong("scanner_pen_color_argb", 0xFF0EA5E9L)
+    )
+    val redactionBlack = MutableStateFlow(
+        scannerPrefs.getBoolean("scanner_redaction_black", true)
+    )
+    val pdfExportAsImages = MutableStateFlow(
+        scannerPrefs.getBoolean("scanner_export_as_images", false)
+    )
+    val pdfExportPageSize = MutableStateFlow(
+        PdfPageSizePreset.fromId(scannerPrefs.getString("scanner_export_page_size", PdfPageSizePreset.A4.id))
+    )
+    val pdfExportSearchableOcr = MutableStateFlow(
+        scannerPrefs.getBoolean("scanner_export_searchable_ocr", true)
+    )
     val batchFrames = MutableStateFlow<List<BatchCapturedFrame>>(emptyList())
     val idCardFrontRawPath = MutableStateFlow<String?>(null)
     private var idCardFrontQuad: DocumentQuad? = null
@@ -107,6 +148,59 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
     // Async Processing & Snackbar Feedback
     val isBusy = MutableStateFlow(false)
     val statusMessage = MutableStateFlow<String?>(null)
+
+    private val pageBitmapLruCache = object : LruCache<String, Bitmap>(
+        (Runtime.getRuntime().maxMemory() / 1024L / 8L).toInt().coerceIn(8 * 1024, 36 * 1024)
+    ) {
+        override fun sizeOf(key: String, value: Bitmap): Int {
+            return (value.byteCount / 1024).coerceAtLeast(1)
+        }
+    }
+
+    private fun bitmapCacheKey(pageId: String, processedPath: String, isLocked: Boolean): String =
+        "$pageId|$processedPath|$isLocked"
+
+    fun getCachedPageBitmap(pageId: String, processedPath: String, isLocked: Boolean): Bitmap? {
+        val bmp = pageBitmapLruCache.get(bitmapCacheKey(pageId, processedPath, isLocked))
+        return if (bmp != null && !bmp.isRecycled) bmp else null
+    }
+
+    suspend fun loadOrGetCachedPageBitmap(
+        pageId: String,
+        processedPath: String,
+        isLocked: Boolean
+    ): Bitmap? {
+        val key = bitmapCacheKey(pageId, processedPath, isLocked)
+        pageBitmapLruCache.get(key)?.let { cached ->
+            if (!cached.isRecycled) return cached
+        }
+        val decoded = withContext(Dispatchers.IO) {
+            repository.decodePageBitmap(processedPath)
+        }
+        if (decoded != null && !decoded.isRecycled) {
+            pageBitmapLruCache.put(key, decoded)
+        }
+        return decoded
+    }
+
+    fun preloadAdjacentDocuments(docIds: List<String>, unlockedIds: Set<String>, docsById: Map<String, ScannedDocumentEntity>) {
+        if (docIds.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            for (docId in docIds) {
+                val doc = docsById[docId] ?: continue
+                if (doc.isLocked && doc.id !in unlockedIds) continue
+                val firstPage = repository.getPagesOnce(docId).firstOrNull() ?: continue
+                val key = bitmapCacheKey(firstPage.id, firstPage.processedImagePath, doc.isLocked)
+                val existing = pageBitmapLruCache.get(key)
+                if (existing == null || existing.isRecycled) {
+                    val bmp = repository.decodePageBitmap(firstPage.processedImagePath)
+                    if (bmp != null && !bmp.isRecycled) {
+                        pageBitmapLruCache.put(key, bmp)
+                    }
+                }
+            }
+        }
+    }
 
     val allFolders: StateFlow<List<ScannerFolderEntity>> = repository.folders
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -169,12 +263,104 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
         OfflineOcrAndBarcodeEngine.init(application)
         viewModelScope.launch {
             repository.purgeExpiredTrash()
+            val savedFolderId = currentFolderId.value
+            if (savedFolderId != null) {
+                val folders = withContext(Dispatchers.IO) { repository.folders.first() }
+                val targetFolder = folders.firstOrNull { it.id == savedFolderId }
+                if (targetFolder == null || (targetFolder.isLocked && targetFolder.id !in unlockedProtectedIds.value)) {
+                    setCurrentFolderId(null)
+                }
+            }
         }
     }
 
     fun setSortOption(option: SortOption) {
         sortOption.value = option
-        scannerPrefs.edit().putString("scanner_sort_option", option.id).apply()
+        editScannerPrefsSync { putString("scanner_sort_option", option.id) }
+    }
+
+    fun setGridView(grid: Boolean) {
+        isGridView.value = grid
+        editScannerPrefsSync { putBoolean("scanner_is_grid_view", grid) }
+    }
+
+    fun toggleGridView() {
+        setGridView(!isGridView.value)
+    }
+
+    fun setCurrentFolderId(folderId: String?) {
+        currentFolderId.value = folderId
+        editScannerPrefsSync {
+            if (folderId != null) putString("scanner_current_folder_id", folderId)
+            else remove("scanner_current_folder_id")
+        }
+    }
+
+    fun setSelectedTagFilter(tag: String?) {
+        selectedTagFilter.value = tag
+        editScannerPrefsSync {
+            if (tag != null) putString("scanner_selected_tag_filter", tag)
+            else remove("scanner_selected_tag_filter")
+        }
+    }
+
+    fun setOnlyStarredFilter(onlyStarred: Boolean) {
+        onlyStarredFilter.value = onlyStarred
+        editScannerPrefsSync { putBoolean("scanner_only_starred_filter", onlyStarred) }
+    }
+
+    fun clearFilters() {
+        onlyStarredFilter.value = false
+        selectedTagFilter.value = null
+        editScannerPrefsSync {
+            putBoolean("scanner_only_starred_filter", false)
+            remove("scanner_selected_tag_filter")
+        }
+    }
+
+    fun setActiveScanMode(mode: ScanMode) {
+        activeScanMode.value = mode
+        editScannerPrefsSync { putString("scanner_active_scan_mode", mode.id) }
+    }
+
+    fun setCameraShowGrid(show: Boolean) {
+        cameraShowGrid.value = show
+        editScannerPrefsSync { putBoolean("scanner_camera_show_grid", show) }
+    }
+
+    fun setCameraAutoCapture(enabled: Boolean) {
+        cameraAutoCapture.value = enabled
+        editScannerPrefsSync { putBoolean("scanner_camera_auto_capture", enabled) }
+    }
+
+    fun setCameraFlashMode(mode: Int) {
+        cameraFlashMode.value = mode
+        editScannerPrefsSync { putInt("scanner_camera_flash_mode", mode) }
+    }
+
+    fun setPenColorArgb(argb: Long) {
+        penColorArgb.value = argb
+        editScannerPrefsSync { putLong("scanner_pen_color_argb", argb) }
+    }
+
+    fun setRedactionBlack(black: Boolean) {
+        redactionBlack.value = black
+        editScannerPrefsSync { putBoolean("scanner_redaction_black", black) }
+    }
+
+    fun setPdfExportAsImages(asImages: Boolean) {
+        pdfExportAsImages.value = asImages
+        editScannerPrefsSync { putBoolean("scanner_export_as_images", asImages) }
+    }
+
+    fun setPdfExportPageSize(pageSize: PdfPageSizePreset) {
+        pdfExportPageSize.value = pageSize
+        editScannerPrefsSync { putString("scanner_export_page_size", pageSize.id) }
+    }
+
+    fun setPdfExportSearchableOcr(searchable: Boolean) {
+        pdfExportSearchableOcr.value = searchable
+        editScannerPrefsSync { putBoolean("scanner_export_searchable_ocr", searchable) }
     }
 
     fun clearStatusMessage() {
@@ -187,7 +373,7 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
 
     fun openCameraScanner(appendToDocId: String? = null, initialMode: ScanMode? = null) {
         if (initialMode != null) {
-            activeScanMode.value = initialMode
+            setActiveScanMode(initialMode)
         }
         detailTransitionDirection.value = 0
         batchFrames.value = emptyList()
@@ -217,6 +403,7 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
             IdCardPrintMode.RECTO
         }
         idCardPrintMode.value = next
+        editScannerPrefsSync { putString("scanner_id_card_print_mode", next.id) }
         val current = batchFrames.value
         if (current.any { it.idCardSide != IdCardSide.NONE || it.idCardGroupId != null }) {
             batchFrames.value = current.map { frame ->
@@ -231,6 +418,7 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
 
     fun updateIdCardPairPrintMode(groupId: String, mode: IdCardPrintMode) {
         idCardPrintMode.value = mode
+        editScannerPrefsSync { putString("scanner_id_card_print_mode", mode.id) }
         batchFrames.value = batchFrames.value.map { frame ->
             if (frame.idCardGroupId == groupId) frame.copy(idCardPrintMode = mode) else frame
         }
@@ -393,7 +581,7 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
     fun deleteFolder(folderId: String) {
         viewModelScope.launch {
             repository.deleteFolderAndUnassignDocs(folderId)
-            if (currentFolderId.value == folderId) currentFolderId.value = null
+            if (currentFolderId.value == folderId) setCurrentFolderId(null)
         }
     }
 

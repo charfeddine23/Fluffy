@@ -137,6 +137,8 @@ class MainActivity : FragmentActivity() {
             val profileLastName by viewModel.profileLastName.collectAsState()
             val profileAvatarChoice by viewModel.profileAvatarChoice.collectAsState()
             val useGoogleAccountName by viewModel.useGoogleAccountName.collectAsState()
+            val editorFontSizeSp by viewModel.editorFontSizeSp.collectAsState()
+            val editorTextAlign by viewModel.editorTextAlign.collectAsState()
             val snackbarMessage by viewModel.snackbarMessage.collectAsState()
 
             val activeThemePreset = remember(selectedThemeId, isDark) {
@@ -528,7 +530,8 @@ class MainActivity : FragmentActivity() {
                                                 },
                                                 onVerifyPasskey = { passkey ->
                                                     viewModel.verifyVaultPasskey(passkey)
-                                                }
+                                                },
+                                                editorFontSizeSp = editorFontSizeSp
                                             )
                                         }
                                         is FluffyScreenState.Editor -> {
@@ -588,6 +591,23 @@ class MainActivity : FragmentActivity() {
                                                 onOpenScanner = {
                                                     viewModel.closeEditor()
                                                     viewModel.openScannerHub()
+                                                },
+                                                initialFontSizeSp = editorFontSizeSp,
+                                                initialTextAlign = when (editorTextAlign.lowercase()) {
+                                                    "center" -> androidx.compose.ui.text.style.TextAlign.Center
+                                                    "end" -> androidx.compose.ui.text.style.TextAlign.End
+                                                    else -> androidx.compose.ui.text.style.TextAlign.Start
+                                                },
+                                                onFontSizeChanged = { sizeSp ->
+                                                    viewModel.setEditorFontSizeSp(sizeSp)
+                                                },
+                                                onTextAlignChanged = { align ->
+                                                    val key = when (align) {
+                                                        androidx.compose.ui.text.style.TextAlign.Center -> "center"
+                                                        androidx.compose.ui.text.style.TextAlign.End -> "end"
+                                                        else -> "start"
+                                                    }
+                                                    viewModel.setEditorTextAlign(key)
                                                 }
                                             )
                                         }

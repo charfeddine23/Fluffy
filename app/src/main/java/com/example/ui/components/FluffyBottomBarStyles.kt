@@ -303,10 +303,7 @@ internal fun OriginalCapsuleMenu(
                     Row(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(horizontal = 10.dp)
-                            .graphicsLayer {
-                                alpha = (expandProgress / 0.65f).coerceIn(0f, 1f)
-                            },
+                            .padding(horizontal = 10.dp),
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -364,11 +361,6 @@ private fun HorizontalCapsuleOrbButton(
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = 420f),
         label = "capsule_orb_scale"
     )
-    val dimAlpha by animateFloatAsState(
-        targetValue = if (isDimmed) 0.65f else 1f,
-        animationSpec = tween(120),
-        label = "capsule_orb_dim"
-    )
     val preset = LocalAppThemePreset.current
     val baseOpaqueSurface = if (isDark) preset.surface.copy(alpha = 1f) else Color.White
     val orbFill = tintColor
@@ -391,7 +383,6 @@ private fun HorizontalCapsuleOrbButton(
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
-                alpha = dimAlpha
             }
             .testTag(testTag)
             .clip(CircleShape)
@@ -487,11 +478,6 @@ internal fun VerticalGlassStackMenu(
                         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = 420f),
                         label = "stack_pill_press"
                     )
-                    val dimAlpha by animateFloatAsState(
-                        targetValue = if (isDimmed) 0.70f else 1f,
-                        animationSpec = tween(120),
-                        label = "stack_pill_dim"
-                    )
                     val baseCardFill = if (isDark) {
                         preset.surface.copy(alpha = 1f)
                     } else {
@@ -523,7 +509,7 @@ internal fun VerticalGlassStackMenu(
                                 scaleX = s
                                 scaleY = s
                                 translationY = (1f - stagger) * 32.dp.toPx()
-                                alpha = (stagger * 1.4f).coerceIn(0f, 1f) * dimAlpha
+                                alpha = (stagger * 1.4f).coerceIn(0f, 1f)
                             }
                             .minimumInteractiveComponentSize()
                             .testTag(action.testTag)
@@ -910,11 +896,6 @@ private fun DialSegmentButton(
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = 420f),
         label = "dial_orb_press"
     )
-    val dimAlpha by animateFloatAsState(
-        targetValue = if (isDimmed) 0.70f else 1f,
-        animationSpec = tween(120),
-        label = "dial_orb_dim"
-    )
     val preset = LocalAppThemePreset.current
     val baseOrbSurface = if (isDark) preset.surface.copy(alpha = 1f) else Color.White
     val orbSurface = if (isDragHovered) {
@@ -939,7 +920,7 @@ private fun DialSegmentButton(
                 val s = pressScale * (0.5f + 0.5f * progress)
                 scaleX = s
                 scaleY = s
-                alpha = (progress * 1.4f).coerceIn(0f, 1f) * dimAlpha
+                alpha = (progress * 1.4f).coerceIn(0f, 1f)
             },
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -1101,11 +1082,6 @@ private fun MosaicTileButton(
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = 420f),
         label = "mosaic_tile_press"
     )
-    val dimAlpha by animateFloatAsState(
-        targetValue = if (isDimmed) 0.70f else 1f,
-        animationSpec = tween(120),
-        label = "mosaic_tile_dim"
-    )
     val baseTileFill = if (isDark) surfaceColor.copy(alpha = 1f) else Color.White
     val tileFill = if (isDragHovered) {
         action.tintColor
@@ -1131,7 +1107,7 @@ private fun MosaicTileButton(
                 scaleX = s
                 scaleY = s
                 translationY = (1f - progress) * 24.dp.toPx()
-                alpha = (progress * 1.4f).coerceIn(0f, 1f) * dimAlpha
+                alpha = (progress * 1.4f).coerceIn(0f, 1f)
             }
             .testTag(action.testTag)
             .background(tileFill, RoundedCornerShape(22.dp))

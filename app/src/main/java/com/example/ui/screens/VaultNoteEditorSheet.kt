@@ -117,6 +117,7 @@ fun VaultNoteEditorSheet(
     isPremium: Boolean,
     initialPageIndex: Int = 0,
     initialStartVoiceRecorder: Boolean = false,
+    initialFontSizeSp: Float = 15.5f,
     onRequestPremiumUpgrade: () -> Unit,
     onDismiss: () -> Unit,
     onSave: (
@@ -194,7 +195,9 @@ fun VaultNoteEditorSheet(
     val segmentSelections = remember(existingItem?.id) { mutableStateMapOf<String, TextRange>() }
     val segmentCompositions = remember(existingItem?.id) { mutableStateMapOf<String, TextRange?>() }
     val pendingStylesByPage = remember(existingItem?.id) { mutableStateMapOf<Int, Set<RichFormatAction>>() }
-    var writingFontSizeSp by remember { mutableFloatStateOf(15.5f) }
+    var writingFontSizeSp by remember(existingItem?.id, initialFontSizeSp) {
+        mutableFloatStateOf(initialFontSizeSp.coerceIn(12f, 32f))
+    }
     var showInsertSheet by remember { mutableStateOf(false) }
     var showTableDialog by remember { mutableStateOf(false) }
     var editingTableTarget by remember { mutableStateOf<MarkdownTableData?>(null) }

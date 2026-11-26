@@ -302,7 +302,7 @@ fun ScannerHubScreen(
             showTrash -> scannerViewModel.showTrashView.value = false
             currentFolderId != null -> {
                 val parent = allFolders.firstOrNull { it.id == currentFolderId }?.parentFolderId
-                scannerViewModel.currentFolderId.value = parent
+                scannerViewModel.setCurrentFolderId(parent)
             }
             else -> onExitEcosystem()
         }
@@ -386,7 +386,7 @@ fun ScannerHubScreen(
                                     showTrash -> scannerViewModel.showTrashView.value = false
                                     currentFolderId != null -> {
                                         val parent = allFolders.firstOrNull { it.id == currentFolderId }?.parentFolderId
-                                        scannerViewModel.currentFolderId.value = parent
+                                        scannerViewModel.setCurrentFolderId(parent)
                                     }
                                     else -> onExitEcosystem()
                                 }
@@ -436,9 +436,10 @@ fun ScannerHubScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (!showTrash) {
                             IconButton(
-                                onClick = { scannerViewModel.isGridView.value = !isGridView },
+                                onClick = { scannerViewModel.toggleGridView() },
                                 modifier = Modifier
                                     .size(48.dp)
+                                    .testTag("hub_view_toggle_btn")
                                     .scannerGlassSurface(CircleShape)
                             ) {
                                 Icon(
@@ -962,8 +963,7 @@ fun ScannerHubScreen(
                                         selected = !onlyStarred && selectedTag == null,
                                         accentColor = ScannerGlassPalette.CyanGlow,
                                         onClick = {
-                                            scannerViewModel.onlyStarredFilter.value = false
-                                            scannerViewModel.selectedTagFilter.value = null
+                                            scannerViewModel.clearFilters()
                                         }
                                     )
 
@@ -972,7 +972,7 @@ fun ScannerHubScreen(
                                         icon = if (onlyStarred) Icons.Default.Star else Icons.Default.StarBorder,
                                         selected = onlyStarred,
                                         accentColor = ScannerGlassPalette.AmberGlow,
-                                        onClick = { scannerViewModel.onlyStarredFilter.value = !onlyStarred }
+                                        onClick = { scannerViewModel.setOnlyStarredFilter(!onlyStarred) }
                                     )
 
                                     Box {
@@ -1024,7 +1024,7 @@ fun ScannerHubScreen(
                                                     )
                                                 },
                                                 onClick = {
-                                                    scannerViewModel.selectedTagFilter.value = null
+                                                    scannerViewModel.setSelectedTagFilter(null)
                                                     showTagMenu = false
                                                 }
                                             )
@@ -1048,7 +1048,7 @@ fun ScannerHubScreen(
                                                         )
                                                     },
                                                     onClick = {
-                                                        scannerViewModel.selectedTagFilter.value = preset.name
+                                                        scannerViewModel.setSelectedTagFilter(preset.name)
                                                         showTagMenu = false
                                                     }
                                                 )
@@ -1111,10 +1111,10 @@ fun ScannerHubScreen(
                                                             if (folder.isLocked && folder.id !in unlockedIds) {
                                                                 onRequestProtectedAccess(folder.id) {
                                                                     scannerViewModel.markProtectedUnlocked(folder.id)
-                                                                    scannerViewModel.currentFolderId.value = folder.id
+                                                                    scannerViewModel.setCurrentFolderId(folder.id)
                                                                 }
                                                             } else {
-                                                                scannerViewModel.currentFolderId.value = folder.id
+                                                                scannerViewModel.setCurrentFolderId(folder.id)
                                                             }
                                                         },
                                                         onToggleLock = {

@@ -31,6 +31,7 @@ import com.example.update.UpdateUiState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -45,6 +46,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.UUID
 
 class FluffyViewModel(application: Application) : AndroidViewModel(application) {
@@ -53,6 +55,10 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     private val repository = NoteRepository(db.noteDao())
     private val vaultDao = db.vaultDao()
     private val prefs = application.getSharedPreferences("fluffy_prefs", android.content.Context.MODE_PRIVATE)
+
+    private inline fun commitPrefs(block: android.content.SharedPreferences.Editor.() -> Unit) {
+        prefs.edit().apply(block).commit()
+    }
 
     // App Preferences (Persisted across restarts, literal phone storage & Cloud Firestore)
     val isDarkMode = MutableStateFlow(prefs.getBoolean("is_dark_mode", true))
@@ -96,6 +102,12 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             prefs.getString("selected_font_id", com.example.ui.theme.AppFontCatalog.DEFAULT_FONT_ID)
         ).id
     )
+    val editorFontSizeSp = MutableStateFlow(
+        prefs.getFloat("editor_font_size_sp", 16f).coerceIn(12f, 32f)
+    )
+    val editorTextAlign = MutableStateFlow(
+        prefs.getString("editor_text_align", "start") ?: "start"
+    )
 
     // Biometric Authentication, App Lock, Non-Screenshot & Vault Lock (Biometric + Passkey)
     val isBiometricEnabled = MutableStateFlow(prefs.getBoolean("biometric_enabled", false))
@@ -111,7 +123,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun markVaultIdDeleted(itemId: String) {
         val updated = getDeletedVaultIds().toMutableSet().apply { add(itemId) }
-        prefs.edit().putStringSet("deleted_vault_item_ids", updated).apply()
+        commitPrefs { putStringSet("deleted_vault_item_ids", updated) }
     }
 
     private var openedTrashFromSettings = false
@@ -202,8 +214,9 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
 
     init {
         viewModelScope.launch {
-            // Reconcile and guarantee literal recovery from phone storage if DB was reset
+            // Reconcile and guarantee literal recovery from phone storage BEFORE writing settings snapshot
             recoverLiteralStorageIfNeeded()
+            persistSettingsSnapshot(syncToCloud = false)
             backfillMissingSyncIds()
             backfillSortOrderIfNeeded()
             purgeExpiredTrashNotes()
@@ -221,7 +234,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                         syncProfileNameFromUser(user.displayName, forceIfGoogleNaming = useGoogleAccountName.value)
                         if (isGuestMode.value) {
                             isGuestMode.value = false
-                            prefs.edit().putBoolean("is_guest_mode", false).apply()
+                            commitPrefs { putBoolean("is_guest_mode", false) }
                         }
                         if (previousUid != user.uid || cloudSyncJob == null || cloudSyncJob?.isActive != true) {
                             startRealTimeCloudSync(user.uid)
@@ -251,7 +264,6 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }
         }
-        persistSettingsSnapshot(syncToCloud = false)
         checkForUpdates(isManual = false)
     }
 
@@ -292,9 +304,15 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         // Recover settings if SharedPreferences were cleared while local snapshot survived
-        if (!prefs.contains("is_dark_mode")) {
-            LocalDeviceStorageManager.loadSettingsSnapshot(app)?.let { restored ->
-                applyRestoredSettings(restored, fromRemote = false)
+        if (!prefs.contains("is_dark_mode") && !prefs.contains("selected_theme_id")) {
+            val restored = LocalDeviceStorageManager.loadSettingsSnapshot(app)
+            if (restored != null) {
+                withContext(Dispatchers.Main) {
+                    applyRestoredSettings(restored, fromRemote = false)
+                    if (restored.isBiometricEnabled) {
+                        isAppLocked.value = true
+                    }
+                }
             }
         }
     }
@@ -402,8 +420,11 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                             val localUpdatedAt = prefs.getLong("local_settings_updated_at", 0L)
                             if (payload.updatedAt > lastAppliedRemoteSettingsAt && payload.updatedAt > localUpdatedAt) {
                                 lastAppliedRemoteSettingsAt = payload.updatedAt
-                                prefs.edit().putLong("last_remote_settings_at", payload.updatedAt).apply()
-                                applyRestoredSettings(payload.snapshot, fromRemote = true)
+                                applyRestoredSettings(
+                                    payload.snapshot,
+                                    fromRemote = true,
+                                    remoteUpdatedAt = payload.updatedAt
+                                )
                             }
                         }
                     }
@@ -481,11 +502,14 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                 updatedAt = localSettingsAt.takeIf { it > 0L } ?: System.currentTimeMillis()
             )
         } else if (remoteSettings.updatedAt > localSettingsAt) {
-            withContext(Dispatchers.Main) {
-                applyRestoredSettings(remoteSettings.snapshot, fromRemote = true)
-            }
             lastAppliedRemoteSettingsAt = remoteSettings.updatedAt
-            prefs.edit().putLong("last_remote_settings_at", remoteSettings.updatedAt).apply()
+            withContext(Dispatchers.Main) {
+                applyRestoredSettings(
+                    remoteSettings.snapshot,
+                    fromRemote = true,
+                    remoteUpdatedAt = remoteSettings.updatedAt
+                )
+            }
         }
 
         // Reconcile Immutable Vault Items (bidirectional union; skips explicitly deleted IDs)
@@ -563,37 +587,38 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             ?: if (next) AppThemeRegistry.defaultDark else AppThemeRegistry.defaultLight
 
         selectedThemeId.value = switchedTheme.id
-        prefs.edit()
-            .putBoolean("is_dark_mode", next)
-            .putString("selected_theme_id", switchedTheme.id)
-            .apply()
+        commitPrefs {
+            putBoolean("is_dark_mode", next)
+            putString("selected_theme_id", switchedTheme.id)
+        }
         persistSettingsSnapshot(syncToCloud = true)
     }
 
     fun selectTheme(preset: AppThemePreset) {
         selectedThemeId.value = preset.id
         isDarkMode.value = preset.isDark
-        prefs.edit()
-            .putString("selected_theme_id", preset.id)
-            .putBoolean("is_dark_mode", preset.isDark)
-            .apply()
+        commitPrefs {
+            putString("selected_theme_id", preset.id)
+            putBoolean("is_dark_mode", preset.isDark)
+        }
         persistSettingsSnapshot(syncToCloud = true)
     }
 
     fun setColoredBordersEnabled(enabled: Boolean) {
         isColoredBordersEnabled.value = enabled
-        prefs.edit().putBoolean("colored_container_borders", enabled).apply()
+        commitPrefs { putBoolean("colored_container_borders", enabled) }
         persistSettingsSnapshot(syncToCloud = true)
     }
 
     fun setFabMenuStyle(style: FabMenuStyle) {
         fabMenuStyle.value = style
-        val editor = prefs.edit().putString("fab_menu_style", style.id)
-        if (style.isCustomEnabled) {
-            lastCustomFabMenuStyle = style
-            editor.putString("last_custom_fab_menu_style", style.id)
+        commitPrefs {
+            putString("fab_menu_style", style.id)
+            if (style.isCustomEnabled) {
+                lastCustomFabMenuStyle = style
+                putString("last_custom_fab_menu_style", style.id)
+            }
         }
-        editor.apply()
         persistSettingsSnapshot(syncToCloud = true)
     }
 
@@ -612,7 +637,25 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
 
     fun selectFont(font: com.example.ui.theme.AppFontOption) {
         selectedFontId.value = font.id
-        prefs.edit().putString("selected_font_id", font.id).apply()
+        commitPrefs { putString("selected_font_id", font.id) }
+        persistSettingsSnapshot(syncToCloud = true)
+    }
+
+    fun setEditorFontSizeSp(sizeSp: Float) {
+        val clamped = sizeSp.coerceIn(12f, 32f)
+        editorFontSizeSp.value = clamped
+        commitPrefs { putFloat("editor_font_size_sp", clamped) }
+        persistSettingsSnapshot(syncToCloud = true)
+    }
+
+    fun setEditorTextAlign(alignKey: String) {
+        val normalized = when (alignKey.lowercase()) {
+            "center" -> "center"
+            "end" -> "end"
+            else -> "start"
+        }
+        editorTextAlign.value = normalized
+        commitPrefs { putString("editor_text_align", normalized) }
         persistSettingsSnapshot(syncToCloud = true)
     }
 
@@ -733,15 +776,16 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         val last = if (parts.size > 1) parts.drop(1).joinToString(" ") else ""
         profileFirstName.value = first
         profileLastName.value = last
-        prefs.edit()
-            .putString("profile_first_name", first)
-            .putString("profile_last_name", last)
-            .apply()
+        commitPrefs {
+            putString("profile_first_name", first)
+            putString("profile_last_name", last)
+        }
+        persistSettingsSnapshot(syncToCloud = true)
     }
 
     fun setUseGoogleAccountName(enabled: Boolean) {
         useGoogleAccountName.value = enabled
-        prefs.edit().putBoolean("use_google_account_name", enabled).apply()
+        commitPrefs { putBoolean("use_google_account_name", enabled) }
         if (enabled) {
             val googleName = currentUser.value?.displayName?.trim().orEmpty()
             if (googleName.isNotBlank()) {
@@ -751,12 +795,14 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                     else "Using Google account name ✨"
                 )
             } else {
+                persistSettingsSnapshot(syncToCloud = true)
                 showSnackbar(
                     if (isArabic.value) "تم تفعيل التسمية التلقائية من Google ✨"
                     else "Google account naming enabled ✨"
                 )
             }
         } else {
+            persistSettingsSnapshot(syncToCloud = true)
             showSnackbar(
                 if (isArabic.value) "يمكنك الآن كتابة الاسم واللقب المخصص"
                 else "Custom Name & Surname enabled"
@@ -770,11 +816,12 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         useGoogleAccountName.value = false
         profileFirstName.value = cleanFirst
         profileLastName.value = cleanLast
-        prefs.edit()
-            .putBoolean("use_google_account_name", false)
-            .putString("profile_first_name", cleanFirst)
-            .putString("profile_last_name", cleanLast)
-            .apply()
+        commitPrefs {
+            putBoolean("use_google_account_name", false)
+            putString("profile_first_name", cleanFirst)
+            putString("profile_last_name", cleanLast)
+        }
+        persistSettingsSnapshot(syncToCloud = true)
 
         val fullName = listOf(cleanFirst, cleanLast).filter { it.isNotBlank() }.joinToString(" ")
         if (currentUser.value != null && fullName.isNotBlank()) {
@@ -791,19 +838,22 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     fun selectPresetAvatar(presetId: String) {
         val choice = "preset:$presetId"
         profileAvatarChoice.value = choice
-        prefs.edit().putString("profile_avatar_choice", choice).apply()
+        commitPrefs { putString("profile_avatar_choice", choice) }
+        persistSettingsSnapshot(syncToCloud = true)
         showSnackbar(if (isArabic.value) "تم تحديث صورة الأفاتار ✨" else "Avatar updated ✨")
     }
 
     fun useGoogleProfilePhoto() {
         profileAvatarChoice.value = "google"
-        prefs.edit().putString("profile_avatar_choice", "google").apply()
+        commitPrefs { putString("profile_avatar_choice", "google") }
+        persistSettingsSnapshot(syncToCloud = true)
         showSnackbar(if (isArabic.value) "تم تفعيل صورة حساب Google ✨" else "Google profile photo enabled ✨")
     }
 
     fun resetProfileAvatarToInitials() {
         profileAvatarChoice.value = "initials"
-        prefs.edit().putString("profile_avatar_choice", "initials").apply()
+        commitPrefs { putString("profile_avatar_choice", "initials") }
+        persistSettingsSnapshot(syncToCloud = true)
         showSnackbar(if (isArabic.value) "تم تعيين الأحرف الأولى للصورة ✨" else "Monogram avatar enabled ✨")
     }
 
@@ -863,7 +913,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             if (!savedPath.isNullOrBlank()) {
                 val choice = "custom:$savedPath"
                 profileAvatarChoice.value = choice
-                prefs.edit().putString("profile_avatar_choice", choice).apply()
+                commitPrefs { putString("profile_avatar_choice", choice) }
+                persistSettingsSnapshot(syncToCloud = true)
                 showSnackbar(
                     if (isArabic.value) "تم تعيين صورة البروفايل بنجاح ✨"
                     else "Profile picture updated ✨"
@@ -881,10 +932,10 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         val arabicFlag = language == AppLanguage.ARABIC
         appLanguage.value = language
         isArabic.value = arabicFlag
-        prefs.edit()
-            .putString("app_language_code", language.code)
-            .putBoolean("is_arabic", arabicFlag)
-            .apply()
+        commitPrefs {
+            putString("app_language_code", language.code)
+            putBoolean("is_arabic", arabicFlag)
+        }
         persistSettingsSnapshot(syncToCloud = true)
     }
 
@@ -896,10 +947,10 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     fun setViewMode(mode: NotesViewMode) {
         viewMode.value = mode
         isGridView.value = mode.isGridLike
-        prefs.edit()
-            .putString("notes_view_mode", mode.id)
-            .putBoolean("is_grid_view", mode.isGridLike)
-            .apply()
+        commitPrefs {
+            putString("notes_view_mode", mode.id)
+            putBoolean("is_grid_view", mode.isGridLike)
+        }
         persistSettingsSnapshot(syncToCloud = true)
     }
 
@@ -909,7 +960,8 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setVaultViewMode(mode: NotesViewMode) {
         vaultViewMode.value = mode
-        prefs.edit().putString("vault_view_mode", mode.id).apply()
+        commitPrefs { putString("vault_view_mode", mode.id) }
+        persistSettingsSnapshot(syncToCloud = true)
     }
 
     fun setSearch(query: String) {
@@ -918,7 +970,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
 
     fun selectCategory(cat: String) {
         selectedCategory.value = cat
-        prefs.edit().putString("selected_category", cat).apply()
+        commitPrefs { putString("selected_category", cat) }
         persistSettingsSnapshot(syncToCloud = true)
     }
 
@@ -936,17 +988,26 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         notesViewMode = viewMode.value.id,
         isPremium = isPremium.value,
         fabMenuStyle = fabMenuStyle.value.id,
-        selectedFontId = selectedFontId.value
+        selectedFontId = selectedFontId.value,
+        vaultViewMode = vaultViewMode.value.id,
+        lastCustomFabMenuStyle = lastCustomFabMenuStyle.id,
+        isVaultLockEnabled = isVaultLockEnabled.value,
+        editorFontSizeSp = editorFontSizeSp.value,
+        editorTextAlign = editorTextAlign.value,
+        useGoogleAccountName = useGoogleAccountName.value,
+        profileFirstName = profileFirstName.value,
+        profileLastName = profileLastName.value,
+        profileAvatarChoice = profileAvatarChoice.value
     )
 
     private fun persistSettingsSnapshot(syncToCloud: Boolean = true) {
         val now = System.currentTimeMillis()
         if (syncToCloud) {
-            prefs.edit().putLong("local_settings_updated_at", now).apply()
+            commitPrefs { putLong("local_settings_updated_at", now) }
         }
         val snapshot = currentSettingsSnapshot()
         val uid = currentUser.value?.uid
-        viewModelScope.launch(Dispatchers.IO) {
+        viewModelScope.launch(Dispatchers.IO + NonCancellable) {
             LocalDeviceStorageManager.saveSettingsSnapshot(getApplication(), snapshot)
             if (syncToCloud && uid != null) {
                 runCatching {
@@ -956,20 +1017,44 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun applyRestoredSettings(s: FluffySettingsSnapshot, fromRemote: Boolean) {
+    private fun applyRestoredSettings(
+        s: FluffySettingsSnapshot,
+        fromRemote: Boolean,
+        remoteUpdatedAt: Long = 0L
+    ) {
         val resolvedTheme = AppThemeRegistry.resolve(s.selectedThemeId, s.isDarkMode)
         val resolvedLanguage = AppLanguage.fromCode(s.appLanguageCode, fallbackArabic = s.isArabic)
         val resolvedViewMode = NotesViewMode.fromId(s.notesViewMode, fallbackGrid = s.isGridView)
+        val resolvedVaultViewMode = NotesViewMode.fromId(s.vaultViewMode, fallbackGrid = resolvedViewMode.isGridLike)
         val resolvedFabStyle = FabMenuStyle.fromId(s.fabMenuStyle)
+        val resolvedCustomFabStyle = FabMenuStyle.fromId(s.lastCustomFabMenuStyle).let {
+            if (it.isCustomEnabled) it
+            else if (resolvedFabStyle.isCustomEnabled) resolvedFabStyle
+            else FabMenuStyle.VERTICAL_STACK
+        }
         val resolvedFont = com.example.ui.theme.AppFontCatalog.resolve(s.selectedFontId)
         val arabicFlag = resolvedLanguage == AppLanguage.ARABIC
         val resolvedPremium = isPremium.value || s.isPremium
+        val resolvedFontSize = s.editorFontSizeSp.coerceIn(12f, 32f)
+        val resolvedAlign = when (s.editorTextAlign.lowercase()) {
+            "center" -> "center"
+            "end" -> "end"
+            else -> "start"
+        }
+        val resolvedAvatar = if (fromRemote && s.profileAvatarChoice.startsWith("custom:")) {
+            val remotePath = s.profileAvatarChoice.removePrefix("custom:")
+            if (remotePath.isNotBlank() && File(remotePath).exists()) s.profileAvatarChoice
+            else profileAvatarChoice.value
+        } else {
+            s.profileAvatarChoice
+        }
 
         isDarkMode.value = s.isDarkMode
         appLanguage.value = resolvedLanguage
         isArabic.value = arabicFlag
         viewMode.value = resolvedViewMode
         isGridView.value = resolvedViewMode.isGridLike
+        vaultViewMode.value = resolvedVaultViewMode
         isBiometricEnabled.value = s.isBiometricEnabled
         isScreenshotProtectionEnabled.value = s.nonScreenshotEnabled
         isColoredBordersEnabled.value = s.coloredContainerBorders
@@ -977,26 +1062,57 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         selectedThemeId.value = resolvedTheme.id
         isPremium.value = resolvedPremium
         fabMenuStyle.value = resolvedFabStyle
+        lastCustomFabMenuStyle = resolvedCustomFabStyle
         selectedFontId.value = resolvedFont.id
-        if (resolvedFabStyle.isCustomEnabled) {
-            lastCustomFabMenuStyle = resolvedFabStyle
+        isVaultLockEnabled.value = s.isVaultLockEnabled
+        editorFontSizeSp.value = resolvedFontSize
+        editorTextAlign.value = resolvedAlign
+        useGoogleAccountName.value = s.useGoogleAccountName
+        if (s.profileFirstName.isNotBlank() || !fromRemote) {
+            profileFirstName.value = s.profileFirstName
+        }
+        if (s.profileLastName.isNotBlank() || !fromRemote) {
+            profileLastName.value = s.profileLastName
+        }
+        if (resolvedAvatar.isNotBlank() || !fromRemote) {
+            profileAvatarChoice.value = resolvedAvatar
         }
 
-        prefs.edit()
-            .putBoolean("is_dark_mode", s.isDarkMode)
-            .putBoolean("is_arabic", arabicFlag)
-            .putString("app_language_code", resolvedLanguage.code)
-            .putString("notes_view_mode", resolvedViewMode.id)
-            .putBoolean("is_grid_view", resolvedViewMode.isGridLike)
-            .putBoolean("biometric_enabled", s.isBiometricEnabled)
-            .putBoolean("non_screenshot_enabled", s.nonScreenshotEnabled)
-            .putBoolean("colored_container_borders", s.coloredContainerBorders)
-            .putString("selected_category", s.selectedCategory)
-            .putString("selected_theme_id", resolvedTheme.id)
-            .putBoolean("is_premium", resolvedPremium)
-            .putString("fab_menu_style", resolvedFabStyle.id)
-            .putString("selected_font_id", resolvedFont.id)
-            .apply()
+        commitPrefs {
+            putBoolean("is_dark_mode", s.isDarkMode)
+            putBoolean("is_arabic", arabicFlag)
+            putString("app_language_code", resolvedLanguage.code)
+            putString("notes_view_mode", resolvedViewMode.id)
+            putBoolean("is_grid_view", resolvedViewMode.isGridLike)
+            putString("vault_view_mode", resolvedVaultViewMode.id)
+            putBoolean("biometric_enabled", s.isBiometricEnabled)
+            putBoolean("non_screenshot_enabled", s.nonScreenshotEnabled)
+            putBoolean("colored_container_borders", s.coloredContainerBorders)
+            putString("selected_category", s.selectedCategory)
+            putString("selected_theme_id", resolvedTheme.id)
+            putBoolean("is_premium", resolvedPremium)
+            putString("fab_menu_style", resolvedFabStyle.id)
+            putString("last_custom_fab_menu_style", resolvedCustomFabStyle.id)
+            putString("selected_font_id", resolvedFont.id)
+            putBoolean("vault_lock_enabled", s.isVaultLockEnabled)
+            putFloat("editor_font_size_sp", resolvedFontSize)
+            putString("editor_text_align", resolvedAlign)
+            putBoolean("use_google_account_name", s.useGoogleAccountName)
+            if (s.profileFirstName.isNotBlank() || !fromRemote) {
+                putString("profile_first_name", s.profileFirstName)
+            }
+            if (s.profileLastName.isNotBlank() || !fromRemote) {
+                putString("profile_last_name", s.profileLastName)
+            }
+            if (resolvedAvatar.isNotBlank() || !fromRemote) {
+                putString("profile_avatar_choice", resolvedAvatar)
+            }
+            if (fromRemote && remoteUpdatedAt > 0L) {
+                val mergedLocalAt = maxOf(prefs.getLong("local_settings_updated_at", 0L), remoteUpdatedAt)
+                putLong("local_settings_updated_at", mergedLocalAt)
+                putLong("last_remote_settings_at", remoteUpdatedAt)
+            }
+        }
 
         persistSettingsSnapshot(syncToCloud = !fromRemote)
     }
@@ -1014,7 +1130,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             return false
         }
         isPremium.value = true
-        prefs.edit().putBoolean("is_premium", true).apply()
+        commitPrefs { putBoolean("is_premium", true) }
         persistSettingsSnapshot(syncToCloud = true)
         showSnackbar(
             if (isArabic.value) "تمت ترقية حسابك إلى وضع Premium بنجاح 👑✨"
@@ -1166,7 +1282,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         viewModelScope.launch {
-            val saved = withContext(Dispatchers.IO) {
+            val saved = withContext(Dispatchers.IO + NonCancellable) {
                 noteSaveMutex.withLock {
                     val current = editingNote.value ?: return@withContext null
                     val ensuredSyncId = current.syncId.ifBlank { UUID.randomUUID().toString() }
@@ -1206,7 +1322,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                     persisted
                 }
             }
-            if (saved != null) {
+            if (saved != null && editingNote.value != null) {
                 editingNote.value = saved
             }
         }
@@ -1243,7 +1359,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         viewModelScope.launch {
-            val saved = withContext(Dispatchers.IO) {
+            val saved = withContext(Dispatchers.IO + NonCancellable) {
                 noteSaveMutex.withLock {
                     val current = editingNote.value ?: return@withContext null
                     val ensuredSyncId = current.syncId.ifBlank { UUID.randomUUID().toString() }
@@ -1665,14 +1781,15 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             useGoogleAccountName.value = false
             profileFirstName.value = cleanName
             profileLastName.value = ""
-            prefs.edit()
-                .putBoolean("use_google_account_name", false)
-                .putString("profile_first_name", cleanName)
-                .putString("profile_last_name", "")
-                .apply()
+            commitPrefs {
+                putBoolean("use_google_account_name", false)
+                putString("profile_first_name", cleanName)
+                putString("profile_last_name", "")
+            }
         }
         isGuestMode.value = true
-        prefs.edit().putBoolean("is_guest_mode", true).apply()
+        commitPrefs { putBoolean("is_guest_mode", true) }
+        persistSettingsSnapshot(syncToCloud = false)
         showAuthDialog.value = false
         showSnackbar(
             if (isArabic.value) {
@@ -1700,10 +1817,10 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             result.onSuccess { user ->
                 isGuestMode.value = false
                 useGoogleAccountName.value = true
-                prefs.edit()
-                    .putBoolean("is_guest_mode", false)
-                    .putBoolean("use_google_account_name", true)
-                    .apply()
+                commitPrefs {
+                    putBoolean("is_guest_mode", false)
+                    putBoolean("use_google_account_name", true)
+                }
                 syncProfileNameFromUser(user.displayName, forceIfGoogleNaming = true)
                 currentUser.value = user
                 showAuthDialog.value = false
@@ -1750,7 +1867,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             isAuthBusy.value = false
             result.onSuccess { user ->
                 isGuestMode.value = false
-                prefs.edit().putBoolean("is_guest_mode", false).apply()
+                commitPrefs { putBoolean("is_guest_mode", false) }
                 currentUser.value = user
                 showAuthDialog.value = false
                 showSnackbar(
@@ -1812,10 +1929,10 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             val createdUser = result.getOrNull()
             if (result.isSuccess && createdUser != null) {
                 useGoogleAccountName.value = false
-                prefs.edit()
-                    .putBoolean("is_guest_mode", false)
-                    .putBoolean("use_google_account_name", false)
-                    .apply()
+                commitPrefs {
+                    putBoolean("is_guest_mode", false)
+                    putBoolean("use_google_account_name", false)
+                }
                 syncProfileNameFromUser(trimmedUsername, forceIfGoogleNaming = true)
 
                 val renamedUser = FirebaseSyncRepository.updateUserDisplayName(getApplication(), trimmedUsername)
@@ -1920,7 +2037,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
             FirebaseSyncRepository.signOut(getApplication())
             currentUser.value = null
             isGuestMode.value = false
-            prefs.edit().putBoolean("is_guest_mode", false).apply()
+            commitPrefs { putBoolean("is_guest_mode", false) }
             cloudSyncStatus.value = CloudSyncStatus.Disconnected
             showAuthDialog.value = false
             isSettingsDrawerOpen.value = false
@@ -2420,7 +2537,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setBiometricEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean("biometric_enabled", enabled).apply()
+        commitPrefs { putBoolean("biometric_enabled", enabled) }
         isBiometricEnabled.value = enabled
         if (!enabled) {
             isAppLocked.value = false
@@ -2429,7 +2546,7 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setScreenshotProtectionEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean("non_screenshot_enabled", enabled).apply()
+        commitPrefs { putBoolean("non_screenshot_enabled", enabled) }
         isScreenshotProtectionEnabled.value = enabled
         persistSettingsSnapshot(syncToCloud = true)
         showSnackbar(
@@ -2454,12 +2571,13 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         val clean = passkey.trim()
         if (clean.length < 4) return
         val hashed = hashPasskey(clean)
-        prefs.edit()
-            .putString("vault_passkey_hash", hashed)
-            .putBoolean("vault_lock_enabled", true)
-            .apply()
+        commitPrefs {
+            putString("vault_passkey_hash", hashed)
+            putBoolean("vault_lock_enabled", true)
+        }
         hasVaultPasskey.value = true
         isVaultLockEnabled.value = true
+        persistSettingsSnapshot(syncToCloud = true)
         showSnackbar(
             translateText(
                 appLanguage.value,
@@ -2472,11 +2590,12 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setVaultLockEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean("vault_lock_enabled", enabled).apply()
+        commitPrefs { putBoolean("vault_lock_enabled", enabled) }
         isVaultLockEnabled.value = enabled
         if (!enabled) {
             isVaultUnlockedForSession.value = true
         }
+        persistSettingsSnapshot(syncToCloud = true)
         showSnackbar(
             translateText(
                 appLanguage.value,

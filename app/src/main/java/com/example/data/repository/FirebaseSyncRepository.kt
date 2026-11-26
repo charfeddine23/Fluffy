@@ -384,6 +384,15 @@ object FirebaseSyncRepository {
             "isPremium" to settings.isPremium,
             "fabMenuStyle" to settings.fabMenuStyle,
             "selectedFontId" to settings.selectedFontId,
+            "vaultViewMode" to settings.vaultViewMode,
+            "lastCustomFabMenuStyle" to settings.lastCustomFabMenuStyle,
+            "isVaultLockEnabled" to settings.isVaultLockEnabled,
+            "editorFontSizeSp" to settings.editorFontSizeSp.toDouble(),
+            "editorTextAlign" to settings.editorTextAlign,
+            "useGoogleAccountName" to settings.useGoogleAccountName,
+            "profileFirstName" to settings.profileFirstName,
+            "profileLastName" to settings.profileLastName,
+            "profileAvatarChoice" to settings.profileAvatarChoice,
             "updatedAt" to updatedAt,
             "serverUpdatedAt" to FieldValue.serverTimestamp()
         )
@@ -623,6 +632,8 @@ object FirebaseSyncRepository {
         val isDark = getBoolean("isDarkMode") ?: true
         val arabic = getBoolean("isArabic") ?: true
         val isGrid = getBoolean("isGridView") ?: true
+        val notesMode = getString("notesViewMode") ?: if (isGrid) "grid" else "list"
+        val fabStyle = getString("fabMenuStyle") ?: "vertical_stack"
         val snapshot = FluffySettingsSnapshot(
             isDarkMode = isDark,
             isArabic = arabic,
@@ -636,10 +647,20 @@ object FirebaseSyncRepository {
                 ?: if (arabic) "ar" else "en",
             nonScreenshotEnabled = getBoolean("nonScreenshotEnabled") ?: false,
             coloredContainerBorders = getBoolean("coloredContainerBorders") ?: true,
-            notesViewMode = getString("notesViewMode") ?: if (isGrid) "grid" else "list",
+            notesViewMode = notesMode,
             isPremium = getBoolean("isPremium") ?: false,
-            fabMenuStyle = getString("fabMenuStyle") ?: "vertical_stack",
-            selectedFontId = getString("selectedFontId") ?: "sans_serif"
+            fabMenuStyle = fabStyle,
+            selectedFontId = getString("selectedFontId") ?: "sans_serif",
+            vaultViewMode = getString("vaultViewMode") ?: notesMode,
+            lastCustomFabMenuStyle = getString("lastCustomFabMenuStyle")
+                ?: if (fabStyle == "original") "vertical_stack" else fabStyle,
+            isVaultLockEnabled = getBoolean("isVaultLockEnabled") ?: false,
+            editorFontSizeSp = (getDouble("editorFontSizeSp") ?: 16.0).toFloat().coerceIn(12f, 32f),
+            editorTextAlign = getString("editorTextAlign") ?: "start",
+            useGoogleAccountName = getBoolean("useGoogleAccountName") ?: false,
+            profileFirstName = getString("profileFirstName") ?: "",
+            profileLastName = getString("profileLastName") ?: "",
+            profileAvatarChoice = getString("profileAvatarChoice") ?: ""
         )
         return RemoteSettingsPayload(
             snapshot = snapshot,

@@ -12,7 +12,7 @@ enum class ScanMode(val id: String, val labelEn: String, val labelAr: String) {
     QR_BARCODE("qr_barcode", "QR / Barcode", "QR وباركود");
 
     companion object {
-        fun fromId(id: String): ScanMode = entries.firstOrNull { it.id == id } ?: ID_CARD
+        fun fromId(id: String?): ScanMode = entries.firstOrNull { it.id == id } ?: ID_CARD
     }
 }
 
@@ -32,7 +32,11 @@ enum class PdfPageSizePreset(val id: String, val labelEn: String, val labelAr: S
     A4("a4", "A4", "A4 قياسي", 595, 842),
     LETTER("letter", "Letter", "Letter", 612, 792),
     LEGAL("legal", "Legal", "Legal", 612, 1008),
-    AUTO_FIT("auto_fit", "Auto-Fit", "تناسب تلقائي", 0, 0)
+    AUTO_FIT("auto_fit", "Auto-Fit", "تناسب تلقائي", 0, 0);
+
+    companion object {
+        fun fromId(id: String?): PdfPageSizePreset = entries.firstOrNull { it.id == id } ?: A4
+    }
 }
 
 enum class CompressionQuality(val id: String, val labelEn: String, val labelAr: String, val jpegQuality: Int, val maxDimensionPx: Int) {
@@ -304,7 +308,11 @@ enum class IdCardSide {
 
 enum class IdCardPrintMode(val id: String, val label: String) {
     RECTO("recto", "Recto"),
-    RECTO_VERSO("recto_verso", "Recto Verso")
+    RECTO_VERSO("recto_verso", "Recto Verso");
+
+    companion object {
+        fun fromId(id: String?): IdCardPrintMode = entries.firstOrNull { it.id == id } ?: RECTO
+    }
 }
 
 data class BatchCapturedFrame(

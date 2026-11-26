@@ -76,6 +76,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -86,7 +87,12 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -151,6 +157,9 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -199,7 +208,11 @@ fun NoteEditorScreen(
         reminderAt: Long
     ) -> Unit)? = null,
     onOpenScanner: () -> Unit = {},
-    onReminderPermissionDenied: () -> Unit = {}
+    onReminderPermissionDenied: () -> Unit = {},
+    initialFontSizeSp: Float = 16f,
+    initialTextAlign: TextAlign = TextAlign.Start,
+    onFontSizeChanged: (Float) -> Unit = {},
+    onTextAlignChanged: (TextAlign) -> Unit = {}
 ) {
     val context = LocalContext.current
     val playbackController = rememberAudioPlaybackController()
@@ -262,7 +275,7 @@ fun NoteEditorScreen(
     var showImageScanDialog by remember { mutableStateOf(false) }
     var isExtractingOcr by remember { mutableStateOf(false) }
     var isFocusMode by remember { mutableStateOf(false) }
-    var editorTextAlign by remember(noteIdentityKey) { mutableStateOf(TextAlign.Start) }
+    var editorTextAlign by remember(noteIdentityKey) { mutableStateOf(initialTextAlign) }
     var editingTableTarget by remember { mutableStateOf<MarkdownTableData?>(null) }
     var isRemovingPage by remember { mutableStateOf(false) }
     var limitWarningMessage by remember { mutableStateOf<String?>(null) }
@@ -271,7 +284,10 @@ fun NoteEditorScreen(
     var readZoomScale by remember { mutableFloatStateOf(1f) }
     var readPanOffset by remember { mutableStateOf(Offset.Zero) }
     var readViewportSize by remember { mutableStateOf(IntSize.Zero) }
-    var writingFontSizeSp by remember(noteIdentityKey) { mutableFloatStateOf(16f) }
+    var writingFontSizeSp by remember(noteIdentityKey) {
+        mutableFloatStateOf(initialFontSizeSp.coerceIn(12f, 32f))
+    }
+    var skipAutoSaveOnExit by remember(noteIdentityKey) { mutableStateOf(false) }
 
     val checklistItems = remember(noteIdentityKey) {
         mutableStateListOf<ChecklistItem>().apply {
@@ -703,25 +719,68 @@ fun NoteEditorScreen(
         )
     }
 
+    // Persist pinch-to-resize writing font size smoothly after gesture settles
+    LaunchedEffect(noteIdentityKey) {
+        snapshotFlow { writingFontSizeSp }
+            .distinctUntilChanged()
+            .drop(1)
+            .collectLatest { sizeSp ->
+                kotlinx.coroutines.delay(150)
+                onFontSizeChanged(sizeSp)
+            }
+    }
+
     // Real-time automatic background save with 500ms debounce (active only in Writing/Edit mode)
     LaunchedEffect(
         isEditMode, title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
         isPinned, isFavorite, checklistItems.toList(),
         audioDurationSec, audioFilePath, audioByteSize, reminderAt
     ) {
-        if (!isEditMode) return@LaunchedEffect
+        if (!isEditMode || skipAutoSaveOnExit) return@LaunchedEffect
         kotlinx.coroutines.delay(500)
-        onAutoSave?.invoke(
-            title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
-            isPinned, isFavorite, checklistItems.toList(),
-            audioDurationSec, audioFilePath, audioByteSize, reminderAt
-        )
+        if (!skipAutoSaveOnExit) {
+            onAutoSave?.invoke(
+                title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
+                isPinned, isFavorite, checklistItems.toList(),
+                audioDurationSec, audioFilePath, audioByteSize, reminderAt
+            )
+        }
+    }
+
+    // Flush unsaved edits immediately when app is paused, stopped, or screen is disposed
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val latestFlushAutoSave by rememberUpdatedState(newValue = {
+        if (isEditMode && !skipAutoSaveOnExit) {
+            onAutoSave?.invoke(
+                title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
+                isPinned, isFavorite, checklistItems.toList(),
+                audioDurationSec, audioFilePath, audioByteSize, reminderAt
+            )
+        }
+    })
+    val latestFlushFontSize by rememberUpdatedState(newValue = {
+        onFontSizeChanged(writingFontSizeSp)
+    })
+    DisposableEffect(lifecycleOwner, noteIdentityKey) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                latestFlushFontSize()
+                latestFlushAutoSave()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            latestFlushFontSize()
+            latestFlushAutoSave()
+        }
     }
 
     // Handle Android system back gesture cleanly for both Edit & View modes
     BackHandler {
         playbackController.stop()
         if (isEditMode) {
+            skipAutoSaveOnExit = true
             onSave(
                 title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
                 isPinned, isFavorite, checklistItems.toList(),
@@ -828,6 +887,7 @@ fun NoteEditorScreen(
                 onBack = {
                     playbackController.stop()
                     if (isEditMode) {
+                        skipAutoSaveOnExit = true
                         onSave(
                             title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
                             isPinned, isFavorite, checklistItems.toList(),
@@ -857,6 +917,7 @@ fun NoteEditorScreen(
                 onOpenReminder = { showReminderDialog = true },
                 onSaveOrEdit = {
                     if (isEditMode) {
+                        skipAutoSaveOnExit = true
                         onSave(
                             title, page1Content, encodedExtraPages, category, selectedTint.id, backgroundId, customColorArgb,
                             isPinned, isFavorite, checklistItems.toList(),
@@ -869,6 +930,7 @@ fun NoteEditorScreen(
                 onAddPage = { addPageAndNavigate() },
                 onMoveToVault = {
                     playbackController.stop()
+                    skipAutoSaveOnExit = true
                     onMoveToVault(buildCurrentEditorNote())
                 },
                 onExportNote = {
@@ -909,10 +971,12 @@ fun NoteEditorScreen(
                 },
                 onToggleArchive = {
                     playbackController.stop()
+                    skipAutoSaveOnExit = true
                     onToggleArchive()
                 },
                 onDelete = {
                     playbackController.stop()
+                    skipAutoSaveOnExit = true
                     onDelete()
                 }
             )
@@ -1373,6 +1437,7 @@ fun NoteEditorScreen(
                                         indication = ripple(bounded = true)
                                     ) {
                                         writingFontSizeSp = 16f
+                                        onFontSizeChanged(16f)
                                     }
                                     .padding(horizontal = 12.dp, vertical = 6.dp),
                                 contentAlignment = Alignment.Center
@@ -1476,11 +1541,13 @@ fun NoteEditorScreen(
                         onFormatAction = { action -> applyFormatActionToPage(activePageIdx, action) },
                         onOpenAddMenu = { showInsertSheet = true },
                         onCycleAlignment = {
-                            editorTextAlign = when (editorTextAlign) {
+                            val nextAlign = when (editorTextAlign) {
                                 TextAlign.Start -> TextAlign.Center
                                 TextAlign.Center -> TextAlign.End
                                 else -> TextAlign.Start
                             }
+                            editorTextAlign = nextAlign
+                            onTextAlignChanged(nextAlign)
                         },
                         onOpenStyleSheet = {
                             styleSheetInitialTab = if (activeBgPreset != null) 1 else 0

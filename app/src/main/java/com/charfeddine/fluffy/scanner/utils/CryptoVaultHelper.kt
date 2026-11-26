@@ -82,7 +82,7 @@ object CryptoVaultHelper {
         val clean = pin.trim()
         if (clean.length < 4) return
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().putString(KEY_PIN_HASH, sha256(clean)).apply()
+        prefs.edit().putString(KEY_PIN_HASH, sha256(clean)).commit()
     }
 
     fun verifyPin(context: Context, candidate: String): Boolean {

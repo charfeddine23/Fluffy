@@ -212,9 +212,9 @@ fun CameraScannerScreen(
     val haptics = LocalHapticFeedback.current
     val density = LocalDensity.current
     val idGuideTopOffsetPx = remember(density) { with(density) { 20.dp.toPx() } }
-    var flashMode by remember { mutableIntStateOf(FLASH_MODE_OFF) }
-    var showGrid by remember { mutableStateOf(true) }
-    var autoCaptureEnabled by remember { mutableStateOf(false) }
+    val flashMode by scannerViewModel.cameraFlashMode.collectAsState()
+    val showGrid by scannerViewModel.cameraShowGrid.collectAsState()
+    val autoCaptureEnabled by scannerViewModel.cameraAutoCapture.collectAsState()
     var edgeState by remember { mutableStateOf(TrackedEdgeState()) }
     var barcodeResult by remember { mutableStateOf<BarcodeScanResult?>(null) }
     var showCapturedBanner by remember { mutableStateOf(false) }
@@ -1031,7 +1031,7 @@ fun CameraScannerScreen(
                         horizontalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         IconButton(
-                            onClick = { autoCaptureEnabled = !autoCaptureEnabled },
+                            onClick = { scannerViewModel.setCameraAutoCapture(!autoCaptureEnabled) },
                             modifier = Modifier.size(44.dp)
                         ) {
                             Icon(
@@ -1051,11 +1051,12 @@ fun CameraScannerScreen(
 
                         IconButton(
                             onClick = {
-                                flashMode = when (flashMode) {
+                                val nextFlash = when (flashMode) {
                                     FLASH_MODE_OFF -> FLASH_MODE_ON
                                     FLASH_MODE_ON -> FLASH_MODE_AUTO
                                     else -> FLASH_MODE_OFF
                                 }
+                                scannerViewModel.setCameraFlashMode(nextFlash)
                             },
                             modifier = Modifier.size(44.dp)
                         ) {
@@ -1079,7 +1080,7 @@ fun CameraScannerScreen(
                         )
 
                         IconButton(
-                            onClick = { showGrid = !showGrid },
+                            onClick = { scannerViewModel.setCameraShowGrid(!showGrid) },
                             modifier = Modifier.size(44.dp)
                         ) {
                             Icon(
@@ -1305,7 +1306,7 @@ fun CameraScannerScreen(
                                         }
                                     )
                                     .clickable {
-                                        scannerViewModel.activeScanMode.value = mode
+                                        scannerViewModel.setActiveScanMode(mode)
                                         if (mode != ScanMode.QR_BARCODE) barcodeResult = null
                                     }
                                     .padding(horizontal = 14.dp, vertical = 7.dp),

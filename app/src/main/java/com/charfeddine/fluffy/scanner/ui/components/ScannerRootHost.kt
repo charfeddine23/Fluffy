@@ -82,7 +82,7 @@ fun ScannerRootHost(
             } else {
                 scannerViewModel.openCameraScanner(
                     appendToDocId = appendTarget,
-                    initialMode = ScanMode.ID_CARD
+                    initialMode = null
                 )
             }
         }
@@ -97,7 +97,7 @@ fun ScannerRootHost(
                 pendingScanAppendDocId = null
                 scannerViewModel.openCameraScanner(
                     appendToDocId = appendToDocId,
-                    initialMode = ScanMode.ID_CARD
+                    initialMode = null
                 )
             }
         )
@@ -113,24 +113,12 @@ fun ScannerRootHost(
     Box(modifier = Modifier.fillMaxSize()) {
         AnimatedContent(
             targetState = route,
+            contentKey = { r ->
+                if (r is ScannerSubRoute.DocumentDetail) "DocumentDetailHost" else r
+            },
             transitionSpec = {
-                val dir = scannerViewModel.detailTransitionDirection.value
-                if (initialState is ScannerSubRoute.DocumentDetail &&
-                    targetState is ScannerSubRoute.DocumentDetail &&
-                    dir != 0
-                ) {
-                    (slideInVertically(animationSpec = tween(260)) { fullHeight ->
-                        (dir * fullHeight * 0.38f).roundToInt()
-                    } + fadeIn(tween(220)))
-                        .togetherWith(
-                            slideOutVertically(animationSpec = tween(230)) { fullHeight ->
-                                (-dir * fullHeight * 0.30f).roundToInt()
-                            } + fadeOut(tween(180))
-                        )
-                } else {
-                    (slideInHorizontally { if (isArabic) -it / 3 else it / 3 } + fadeIn())
-                        .togetherWith(slideOutHorizontally { if (isArabic) it / 3 else -it / 3 } + fadeOut())
-                }
+                (slideInHorizontally { if (isArabic) -it / 3 else it / 3 } + fadeIn())
+                    .togetherWith(slideOutHorizontally { if (isArabic) it / 3 else -it / 3 } + fadeOut())
             },
             label = "scanner_sub_route"
         ) { current ->
@@ -197,17 +185,10 @@ fun ScannerRootHost(
                         onAddMorePages = {
                             launchGoogleScanner(appendToDocId = current.documentId)
                         },
-                        onSwitchDocument = { targetDoc, dir ->
-                            val unlocked = scannerViewModel.unlockedProtectedIds.value
-                            if (targetDoc.isLocked && targetDoc.id !in unlocked) {
-                                pendingUnlockTarget = targetDoc.id to {
-                                    scannerViewModel.markProtectedUnlocked(targetDoc.id)
-                                    scannerViewModel.autoSaveModifiedDocumentOnExit(current.documentId, isArabic)
-                                    scannerViewModel.openDocumentDetail(targetDoc.id, transitionDirection = dir)
-                                }
-                            } else {
-                                scannerViewModel.autoSaveModifiedDocumentOnExit(current.documentId, isArabic)
-                                scannerViewModel.openDocumentDetail(targetDoc.id, transitionDirection = dir)
+                        onRequestUnlockDoc = { targetDoc, onUnlocked ->
+                            pendingUnlockTarget = targetDoc.id to {
+                                scannerViewModel.markProtectedUnlocked(targetDoc.id)
+                                onUnlocked()
                             }
                         },
                         onBackToHub = { scannerViewModel.navigateBackToHub() }

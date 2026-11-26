@@ -57,6 +57,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.pager.PagerDefaults
+import androidx.compose.foundation.pager.VerticalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -123,6 +126,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.Alignment
@@ -176,6 +180,7 @@ import com.charfeddine.fluffy.scanner.ui.theme.ScannerGlassPalette
 import com.charfeddine.fluffy.scanner.ui.theme.iosLiquidGlass
 import com.charfeddine.fluffy.scanner.ui.theme.scannerGlassSurface
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -193,48 +198,96 @@ fun DocumentDetailEditorScreen(
     isArabic: Boolean,
     onAddMorePages: () -> Unit,
     onBackToHub: () -> Unit,
-    onSwitchDocument: ((ScannedDocumentEntity, Int) -> Unit)? = null
+    onRequestUnlockDoc: ((ScannedDocumentEntity, () -> Unit) -> Unit)? = null
 ) {
+    val context = LocalContext.current
+    val fallbackDocState by scannerViewModel.observeDocument(documentId).collectAsState(initial = null)
+    val visibleDocs by scannerViewModel.visibleDocuments.collectAsState()
+    val allActiveDocs by scannerViewModel.allActiveDocs.collectAsState()
+    val unlockedIds by scannerViewModel.unlockedProtectedIds.collectAsState()
+    val savedSignatures by scannerViewModel.savedSignatures.collectAsState()
+    val isBusy by scannerViewModel.isBusy.collectAsState()
+
+    val pagerDocs = remember(visibleDocs, allActiveDocs, documentId, fallbackDocState) {
+        val base = if (visibleDocs.any { it.id == documentId }) visibleDocs else allActiveDocs
+        if (base.isNotEmpty()) base else listOfNotNull(fallbackDocState)
+    }
+    if (pagerDocs.isEmpty()) return
+
+    val initialPagerIndex = remember(pagerDocs, documentId) {
+        pagerDocs.indexOfFirst { it.id == documentId }.coerceAtLeast(0)
+    }
+    val pagerState = rememberPagerState(
+        initialPage = initialPagerIndex,
+        pageCount = { pagerDocs.size }
+    )
+
+    val activeDoc = pagerDocs.getOrNull(pagerState.currentPage) ?: fallbackDocState ?: return
+    val pages by scannerViewModel.observePages(activeDoc.id).collectAsState(initial = emptyList())
+
     val handleBackExit: () -> Unit = {
-        scannerViewModel.autoSaveModifiedDocumentOnExit(documentId, isArabic)
+        scannerViewModel.autoSaveModifiedDocumentOnExit(activeDoc.id, isArabic)
         onBackToHub()
     }
     BackHandler { handleBackExit() }
 
-    val context = LocalContext.current
-    val docState by scannerViewModel.observeDocument(documentId).collectAsState(initial = null)
-    val pages by scannerViewModel.observePages(documentId).collectAsState(initial = emptyList())
-    val visibleDocs by scannerViewModel.visibleDocuments.collectAsState()
-    val allActiveDocs by scannerViewModel.allActiveDocs.collectAsState()
-    val savedSignatures by scannerViewModel.savedSignatures.collectAsState()
-    val isBusy by scannerViewModel.isBusy.collectAsState()
-
-    val doc = docState ?: return
-    val navDocs = remember(visibleDocs, allActiveDocs, documentId) {
-        if (visibleDocs.any { it.id == documentId }) visibleDocs else allActiveDocs
+    LaunchedEffect(documentId, pagerDocs) {
+        val targetIdx = pagerDocs.indexOfFirst { it.id == documentId }
+        if (targetIdx >= 0 && !pagerState.isScrollInProgress && pagerState.currentPage != targetIdx) {
+            pagerState.scrollToPage(targetIdx)
+        }
     }
-    val currentDocNavIndex = navDocs.indexOfFirst { it.id == documentId }
 
-    var activePageIndex by remember(documentId) { mutableIntStateOf(0) }
+    val latestDocumentId by rememberUpdatedState(documentId)
+    val latestPagerDocs by rememberUpdatedState(pagerDocs)
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.settledPage }
+            .distinctUntilChanged()
+            .collect { settledIdx ->
+                val currentDocId = latestDocumentId
+                val settledDoc = latestPagerDocs.getOrNull(settledIdx) ?: return@collect
+                if (settledDoc.id != currentDocId) {
+                    scannerViewModel.autoSaveModifiedDocumentOnExit(currentDocId, isArabic)
+                    scannerViewModel.openDocumentDetail(settledDoc.id)
+                }
+            }
+    }
+
+    LaunchedEffect(pagerState.currentPage, pagerDocs, unlockedIds) {
+        val curIdx = pagerState.currentPage
+        val docsById = pagerDocs.associateBy { it.id }
+        val neighborIds = listOf(curIdx - 1, curIdx + 1, curIdx - 2, curIdx + 2)
+            .filter { it in pagerDocs.indices }
+            .map { pagerDocs[it].id }
+        scannerViewModel.preloadAdjacentDocuments(neighborIds, unlockedIds, docsById)
+    }
+
+    val activePageIndexMap = remember { mutableStateMapOf<String, Int>() }
+    var activePageIndex = activePageIndexMap[activeDoc.id] ?: 0
     val safePageIndex = activePageIndex.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
     val currentPage: ScannedPageEntity? = pages.getOrNull(safePageIndex)
 
-    var activeTool by remember(documentId) { mutableStateOf(AnnotationTool.NONE) }
-    var penColorArgb by remember { mutableLongStateOf(0xFF0EA5E9L) }
-    var redactionBlack by remember { mutableStateOf(true) }
+    var activeTool by remember(activeDoc.id) { mutableStateOf(AnnotationTool.NONE) }
+    val penColorArgb by scannerViewModel.penColorArgb.collectAsState()
+    val redactionBlack by scannerViewModel.redactionBlack.collectAsState()
+    val exportAsImages by scannerViewModel.pdfExportAsImages.collectAsState()
+    val exportPageSize by scannerViewModel.pdfExportPageSize.collectAsState()
+    val exportSearchableOcr by scannerViewModel.pdfExportSearchableOcr.collectAsState()
+    var isActiveDocZoomed by remember(activeDoc.id) { mutableStateOf(false) }
 
-    var showMoreMenu by remember(documentId) { mutableStateOf(false) }
-    var showRenameDialog by remember(documentId) { mutableStateOf(false) }
-    var showTagsDialog by remember(documentId) { mutableStateOf(false) }
-    var showPagesSheet by remember(documentId) { mutableStateOf(false) }
-    var showSignatureDialog by remember(documentId) { mutableStateOf(false) }
-    var showWatermarkDialog by remember(documentId) { mutableStateOf(false) }
-    var showOcrDialog by remember(documentId) { mutableStateOf(false) }
-    var ocrResultText by remember(documentId) { mutableStateOf("") }
-    var showExportSheet by remember(documentId) { mutableStateOf(false) }
+    var showMoreMenu by remember(activeDoc.id) { mutableStateOf(false) }
+    var showRenameDialog by remember(activeDoc.id) { mutableStateOf(false) }
+    var showTagsDialog by remember(activeDoc.id) { mutableStateOf(false) }
+    var showPagesSheet by remember(activeDoc.id) { mutableStateOf(false) }
+    var showSignatureDialog by remember(activeDoc.id) { mutableStateOf(false) }
+    var showWatermarkDialog by remember(activeDoc.id) { mutableStateOf(false) }
+    var showOcrDialog by remember(activeDoc.id) { mutableStateOf(false) }
+    var ocrResultText by remember(activeDoc.id) { mutableStateOf("") }
+    var showExportSheet by remember(activeDoc.id) { mutableStateOf(false) }
 
-    var activeSignaturePlacementId by remember(documentId) { mutableStateOf<String?>(null) }
+    var activeSignaturePlacementId by remember(activeDoc.id) { mutableStateOf<String?>(null) }
 
+    val doc = activeDoc
     val activeAnnotations = remember(currentPage?.annotationsJson) {
         PageAnnotations.fromJson(currentPage?.annotationsJson)
     }
@@ -248,120 +301,6 @@ fun DocumentDetailEditorScreen(
         doc.tagsCsv.split(",").map { it.trim() }.filter { it.isNotBlank() }
     }
 
-    val pageBitmapCache = remember(doc.id, doc.isLocked) { mutableStateMapOf<String, Bitmap>() }
-    val pageBitmapPathCache = remember(doc.id, doc.isLocked) { mutableStateMapOf<String, String>() }
-    LaunchedEffect(currentPage?.id, currentPage?.processedImagePath, doc.isLocked, pages, safePageIndex) {
-        val curr = currentPage ?: return@LaunchedEffect
-        if (pageBitmapCache[curr.id] == null || pageBitmapPathCache[curr.id] != curr.processedImagePath) {
-            val decoded = withContext(Dispatchers.IO) {
-                scannerViewModel.repository.decodePageBitmap(curr.processedImagePath)
-            }
-            if (decoded != null) {
-                pageBitmapCache[curr.id] = decoded
-                pageBitmapPathCache[curr.id] = curr.processedImagePath
-            }
-        }
-        val activePageIds = pages.map { it.id }.toSet()
-        pageBitmapCache.keys.toList().filter { it !in activePageIds }.forEach {
-            pageBitmapCache.remove(it)
-            pageBitmapPathCache.remove(it)
-        }
-        val neighbors = listOfNotNull(
-            pages.getOrNull(safePageIndex + 1),
-            pages.getOrNull(safePageIndex - 1)
-        )
-        for (neighbor in neighbors) {
-            if (pageBitmapCache[neighbor.id] == null || pageBitmapPathCache[neighbor.id] != neighbor.processedImagePath) {
-                val nBmp = withContext(Dispatchers.IO) {
-                    scannerViewModel.repository.decodePageBitmap(neighbor.processedImagePath)
-                }
-                if (nBmp != null) {
-                    pageBitmapCache[neighbor.id] = nBmp
-                    pageBitmapPathCache[neighbor.id] = neighbor.processedImagePath
-                }
-            }
-        }
-        if (pageBitmapCache.size > 6) {
-            val keepIds = (-2..2).mapNotNull { offset -> pages.getOrNull(safePageIndex + offset)?.id }.toSet()
-            pageBitmapCache.keys.toList().filter { it !in keepIds }.forEach {
-                pageBitmapCache.remove(it)
-                pageBitmapPathCache.remove(it)
-            }
-        }
-    }
-
-    val density = LocalDensity.current
-    val uiScope = rememberCoroutineScope()
-    val layoutDirection = LocalLayoutDirection.current
-    val stageDragAnim = remember(documentId) { Animatable(0f) }
-    val stageVerticalDragAnim = remember(documentId) { Animatable(0f) }
-    var lastNavDirection by remember(documentId) { mutableIntStateOf(0) }
-    val swipeThresholdPx = with(density) { 52.dp.toPx() }
-
-    fun navigatePageByDelta(delta: Int) {
-        val target = safePageIndex + delta
-        if (target in pages.indices) {
-            lastNavDirection = delta
-            activeSignaturePlacementId = null
-            activePageIndex = target
-        }
-    }
-
-    fun navigateDocumentByDelta(delta: Int) {
-        if (currentDocNavIndex < 0) return
-        val targetDoc = navDocs.getOrNull(currentDocNavIndex + delta) ?: return
-        activeSignaturePlacementId = null
-        if (onSwitchDocument != null) {
-            onSwitchDocument(targetDoc, delta)
-        } else {
-            scannerViewModel.autoSaveModifiedDocumentOnExit(documentId, isArabic)
-            scannerViewModel.openDocumentDetail(targetDoc.id, transitionDirection = delta)
-        }
-    }
-
-    val canSwipePages = pages.size > 1 && activeTool == AnnotationTool.NONE
-    val canSwipeDocuments = navDocs.size > 1 && currentDocNavIndex >= 0 && activeTool == AnnotationTool.NONE
-    val onStageSwipeDragDelta: (Float) -> Unit = { totalDx ->
-        val isNextDrag = if (isArabic) totalDx > 0f else totalDx < 0f
-        val canMoveInDir = if (isNextDrag) safePageIndex < pages.lastIndex else safePageIndex > 0
-        val targetDx = if (canMoveInDir) totalDx * 0.58f else totalDx * 0.16f
-        uiScope.launch { stageDragAnim.snapTo(targetDx) }
-    }
-    val onStageSwipeRelease: (Float, Float) -> Unit = { totalDx, totalDy ->
-        uiScope.launch {
-            stageDragAnim.animateTo(
-                targetValue = 0f,
-                animationSpec = spring(dampingRatio = 0.78f, stiffness = 440f)
-            )
-        }
-        if (abs(totalDx) >= swipeThresholdPx && abs(totalDx) > abs(totalDy) * 1.15f) {
-            val delta = if (isArabic) {
-                if (totalDx > 0f) 1 else -1
-            } else {
-                if (totalDx < 0f) 1 else -1
-            }
-            navigatePageByDelta(delta)
-        }
-    }
-    val onStageVerticalSwipeDragDelta: (Float) -> Unit = { totalDy ->
-        val isNextDocDrag = totalDy < 0f
-        val canMoveInDir = if (isNextDocDrag) currentDocNavIndex < navDocs.lastIndex else currentDocNavIndex > 0
-        val targetDy = if (canMoveInDir) totalDy * 0.52f else totalDy * 0.16f
-        uiScope.launch { stageVerticalDragAnim.snapTo(targetDy) }
-    }
-    val onStageVerticalSwipeRelease: (Float, Float) -> Unit = { totalDx, totalDy ->
-        uiScope.launch {
-            stageVerticalDragAnim.animateTo(
-                targetValue = 0f,
-                animationSpec = spring(dampingRatio = 0.78f, stiffness = 440f)
-            )
-        }
-        if (abs(totalDy) >= swipeThresholdPx && abs(totalDy) > abs(totalDx) * 1.15f) {
-            val delta = if (totalDy < 0f) 1 else -1
-            navigateDocumentByDelta(delta)
-        }
-    }
-
     val stageBottomBreathing by animateDpAsState(
         targetValue = if (activeTool != AnnotationTool.NONE) 186.dp else 90.dp,
         animationSpec = tween(220),
@@ -370,276 +309,84 @@ fun DocumentDetailEditorScreen(
 
     ScannerDarkLiquidBackdrop {
         Box(modifier = Modifier.fillMaxSize()) {
-            // 1. Expansive Document Viewing & Editing Stage (Balanced 14-16dp Breathing Room)
-            Column(
+            // 1. Expansive Vertical Pager Document Stage (120fps Hardware-Accelerated Switching)
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .windowInsetsPadding(WindowInsets.statusBars)
                     .windowInsetsPadding(WindowInsets.navigationBars)
                     .padding(top = 72.dp, bottom = stageBottomBreathing, start = 12.dp, end = 12.dp)
-                    .clip(RoundedCornerShape(22.dp))
-                    .background(ScannerGlassPalette.StageSurface)
-                    .border(
-                        width = if (activeTool != AnnotationTool.NONE) 1.2.dp else 0.75.dp,
-                        brush = if (activeTool != AnnotationTool.NONE) {
-                            ScannerGlassPalette.NeonBorderBrush
-                        } else {
-                            ScannerGlassPalette.SubtleGlassBorder
-                        },
-                        shape = RoundedCornerShape(22.dp)
-                    )
-                    .clipToBounds()
-                    .padding(8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .clipToBounds(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    AnimatedContent(
-                        targetState = safePageIndex,
-                        transitionSpec = {
-                            val dir = (targetState - initialState).coerceIn(-1, 1)
-                            val visualDir = if (layoutDirection == LayoutDirection.Rtl) -dir else dir
-                            if (visualDir == 0) {
-                                (fadeIn(tween(220)) + scaleIn(initialScale = 0.96f, animationSpec = tween(220)))
-                                    .togetherWith(fadeOut(tween(180)))
-                            } else {
-                                (slideInHorizontally(
-                                    animationSpec = tween(260),
-                                    initialOffsetX = { fullWidth -> (visualDir * fullWidth * 0.42f).roundToInt() }
-                                ) + fadeIn(tween(230)) + scaleIn(initialScale = 0.95f, animationSpec = tween(260)))
-                                    .togetherWith(
-                                        slideOutHorizontally(
-                                            animationSpec = tween(240),
-                                            targetOffsetX = { fullWidth -> (-visualDir * fullWidth * 0.35f).roundToInt() }
-                                        ) + fadeOut(tween(190)) + scaleOut(targetScale = 0.94f, animationSpec = tween(240))
-                                    )
-                            }
-                        },
-                        label = "detail_stage_page_transition",
-                        modifier = Modifier.fillMaxSize()
-                    ) { targetIdx ->
-                        val targetPage = pages.getOrNull(targetIdx)
-                        val targetBmp = targetPage?.let { pageBitmapCache[it.id] }
-                        if (targetBmp == null || targetPage == null) {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                CircularProgressIndicator(color = ScannerGlassPalette.CyanGlow)
-                            }
-                        } else {
-                            val dragPx = stageDragAnim.value
-                            val vDragPx = stageVerticalDragAnim.value
-                            val dragFraction = (maxOf(abs(dragPx), abs(vDragPx)) / 900f).coerceIn(0f, 1f)
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .graphicsLayer {
-                                        translationX = dragPx
-                                        translationY = vDragPx
-                                        val parallaxScale = 1f - dragFraction * 0.045f
-                                        scaleX = parallaxScale
-                                        scaleY = parallaxScale
-                                        alpha = 1f - dragFraction * 0.14f
-                                    },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                InteractiveAnnotatedPageCanvas(
-                                    pageId = targetPage.id,
-                                    bitmap = targetBmp,
-                                    annotations = PageAnnotations.fromJson(targetPage.annotationsJson),
-                                    signatures = SignaturePlacement.listFromJson(targetPage.signaturesJson),
-                                    watermark = WatermarkConfig.fromJson(targetPage.watermarkJson),
-                                    activeTool = if (targetIdx == safePageIndex) activeTool else AnnotationTool.NONE,
-                                    penColorArgb = penColorArgb,
-                                    redactionColorArgb = if (redactionBlack) 0xFF000000L else 0xFFFFFFFFL,
-                                    activeSignaturePlacementId = activeSignaturePlacementId,
-                                    canSwipePages = canSwipePages,
-                                    canSwipeDocuments = canSwipeDocuments,
-                                    loadSignatureBitmap = { sigId ->
-                                        savedSignatures.firstOrNull { it.id == sigId }?.let {
-                                            scannerViewModel.repository.loadEncryptedSignatureBitmap(it)
-                                        }
-                                    },
-                                    onSelectSignature = { activeSignaturePlacementId = it },
-                                    onAnnotationsChanged = { updatedAnn ->
-                                        scannerViewModel.updatePageMarkups(targetPage, updatedAnn, activeSignatures, activeWatermark)
-                                    },
-                                    onSignaturesChanged = { updatedSigs ->
-                                        scannerViewModel.updatePageMarkups(targetPage, activeAnnotations, updatedSigs, activeWatermark)
-                                    },
-                                    onSwipeDragDelta = onStageSwipeDragDelta,
-                                    onSwipeRelease = onStageSwipeRelease,
-                                    onVerticalSwipeDragDelta = onStageVerticalSwipeDragDelta,
-                                    onVerticalSwipeRelease = onStageVerticalSwipeRelease
-                                )
-                            }
-                        }
-                    }
+                VerticalPager(
+                    state = pagerState,
+                    beyondViewportPageCount = 1,
+                    key = { idx -> pagerDocs[idx].id },
+                    userScrollEnabled = activeTool == AnnotationTool.NONE && !isActiveDocZoomed && pagerDocs.size > 1,
+                    flingBehavior = PagerDefaults.flingBehavior(
+                        state = pagerState,
+                        snapPositionalThreshold = 0.16f,
+                        snapAnimationSpec = spring(dampingRatio = 0.88f, stiffness = 380f)
+                    ),
+                    pageSpacing = 14.dp,
+                    modifier = Modifier.fillMaxSize()
+                ) { docIdx ->
+                    val slotDoc = pagerDocs[docIdx]
+                    val isSlotCurrent = docIdx == pagerState.currentPage
+                    val pageOffset = ((pagerState.currentPage - docIdx) + pagerState.currentPageOffsetFraction)
+                        .coerceIn(-1f, 1f)
+                    val absOffset = abs(pageOffset)
 
-                    val vDragVal = stageVerticalDragAnim.value
-                    if (canSwipeDocuments && abs(vDragVal) > swipeThresholdPx * 0.25f) {
-                        val previewDelta = if (vDragVal < 0f) 1 else -1
-                        val adjacentDoc = navDocs.getOrNull(currentDocNavIndex + previewDelta)
-                        if (adjacentDoc != null) {
-                            Row(
-                                modifier = Modifier
-                                    .align(if (previewDelta > 0) Alignment.BottomCenter else Alignment.TopCenter)
-                                    .padding(vertical = 10.dp, horizontal = 12.dp)
-                                    .shadow(12.dp, CircleShape)
-                                    .iosLiquidGlass(CircleShape, glowAccent = true, fillAlpha = 0.88f)
-                                    .padding(horizontal = 14.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Text(
-                                    text = if (previewDelta > 0) {
-                                        if (isArabic) "↑ التالي: ${adjacentDoc.title}" else "↑ Next: ${adjacentDoc.title}"
-                                    } else {
-                                        if (isArabic) "↓ السابق: ${adjacentDoc.title}" else "↓ Prev: ${adjacentDoc.title}"
-                                    },
-                                    color = ScannerGlassPalette.EdgeOverlayCyan,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.widthIn(max = 240.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    // Selected Placed Signature Floating Resize / Rotate / Delete Pill (TopCenter, never collides)
-                    val p = currentPage
-                    val selPlacement = activeSignatures.firstOrNull { it.placementId == activeSignaturePlacementId }
-                    if (selPlacement != null && p != null) {
-                        Row(
-                            modifier = Modifier
-                                .align(Alignment.TopCenter)
-                                .padding(top = 8.dp)
-                                .shadow(14.dp, CircleShape)
-                                .iosLiquidGlass(CircleShape, glowAccent = true, fillAlpha = 0.85f)
-                                .padding(horizontal = 12.dp, vertical = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                "S-",
-                                color = ScannerGlassPalette.EdgeOverlayCyan,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier
-                                    .clickable {
-                                        val next = activeSignatures.map {
-                                            if (it.placementId == selPlacement.placementId) it.copy(scale = (it.scale - 0.15f).coerceAtLeast(0.45f)) else it
-                                        }
-                                        scannerViewModel.updatePageMarkups(p, activeAnnotations, next, activeWatermark)
-                                    }
-                                    .padding(6.dp)
-                            )
-                            Text(
-                                "S+",
-                                color = ScannerGlassPalette.EdgeOverlayCyan,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier
-                                    .clickable {
-                                        val next = activeSignatures.map {
-                                            if (it.placementId == selPlacement.placementId) it.copy(scale = (it.scale + 0.15f).coerceAtMost(2.5f)) else it
-                                        }
-                                        scannerViewModel.updatePageMarkups(p, activeAnnotations, next, activeWatermark)
-                                    }
-                                    .padding(6.dp)
-                            )
-                            Text(
-                                "↻15°",
-                                color = ScannerGlassPalette.VioletGlow,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier
-                                    .clickable {
-                                        val next = activeSignatures.map {
-                                            if (it.placementId == selPlacement.placementId) it.copy(rotationDeg = (it.rotationDeg + 15f) % 360f) else it
-                                        }
-                                        scannerViewModel.updatePageMarkups(p, activeAnnotations, next, activeWatermark)
-                                    }
-                                    .padding(6.dp)
-                            )
-                            IconButton(
-                                onClick = {
-                                    val next = activeSignatures.filterNot { it.placementId == selPlacement.placementId }
-                                    activeSignaturePlacementId = null
-                                    scannerViewModel.updatePageMarkups(p, activeAnnotations, next, activeWatermark)
-                                },
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.DeleteOutline,
-                                    contentDescription = if (isArabic) "حذف التوقيع" else "Remove signature",
-                                    tint = ScannerGlassPalette.RoseGlow,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    if (isBusy) {
-                        CircularProgressIndicator(
-                            color = ScannerGlassPalette.EdgeOverlayCyan,
-                            modifier = Modifier.align(Alignment.Center)
-                        )
-                    }
-                }
-
-                // Non-overlapping Multi-page Quick Navigation Pill docked cleanly below the canvas
-                if (pages.size > 1 && activeTool == AnnotationTool.NONE) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Row(
+                    Box(
                         modifier = Modifier
-                            .iosLiquidGlass(CircleShape, fillAlpha = 0.80f)
-                            .padding(horizontal = 6.dp, vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                val depthScale = 1f - absOffset * 0.045f
+                                scaleX = depthScale
+                                scaleY = depthScale
+                                alpha = 1f - absOffset * 0.16f
+                            }
+                            .clip(RoundedCornerShape(22.dp))
+                            .background(ScannerGlassPalette.StageSurface)
+                            .border(
+                                width = if (isSlotCurrent && activeTool != AnnotationTool.NONE) 1.2.dp else 0.75.dp,
+                                brush = if (isSlotCurrent && activeTool != AnnotationTool.NONE) {
+                                    ScannerGlassPalette.NeonBorderBrush
+                                } else {
+                                    ScannerGlassPalette.SubtleGlassBorder
+                                },
+                                shape = RoundedCornerShape(22.dp)
+                            )
+                            .clipToBounds()
+                            .padding(8.dp)
                     ) {
-                        IconButton(
-                            onClick = { navigatePageByDelta(-1) },
-                            enabled = safePageIndex > 0,
-                            modifier = Modifier.size(34.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.ArrowBackIosNew,
-                                contentDescription = if (isArabic) "السابق" else "Previous page",
-                                tint = if (safePageIndex > 0) ScannerGlassPalette.TextPrimary else ScannerGlassPalette.TextSecondary.copy(alpha = 0.35f),
-                                modifier = Modifier.size(13.dp)
-                            )
-                        }
-                        Text(
-                            text = "${safePageIndex + 1} / ${pages.size}",
-                            color = ScannerGlassPalette.EdgeOverlayCyan,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp,
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .clickable { showPagesSheet = true }
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        DocumentPagerStageSlot(
+                            scannerViewModel = scannerViewModel,
+                            doc = slotDoc,
+                            isSlotCurrent = isSlotCurrent,
+                            isLockedAndProtected = slotDoc.isLocked && slotDoc.id !in unlockedIds,
+                            activePageIndex = activePageIndexMap[slotDoc.id] ?: 0,
+                            onActivePageIndexChange = { newIdx -> activePageIndexMap[slotDoc.id] = newIdx },
+                            activeTool = if (isSlotCurrent) activeTool else AnnotationTool.NONE,
+                            penColorArgb = penColorArgb,
+                            redactionBlack = redactionBlack,
+                            activeSignaturePlacementId = if (isSlotCurrent) activeSignaturePlacementId else null,
+                            savedSignatures = savedSignatures,
+                            isBusy = isSlotCurrent && isBusy,
+                            isArabic = isArabic,
+                            onSelectSignature = { if (isSlotCurrent) activeSignaturePlacementId = it },
+                            onZoomStateChanged = { zoomed ->
+                                if (isSlotCurrent) isActiveDocZoomed = zoomed
+                            },
+                            onOpenPagesSheet = { if (isSlotCurrent) showPagesSheet = true },
+                            onRequestUnlock = {
+                                onRequestUnlockDoc?.invoke(slotDoc) {}
+                            }
                         )
-                        IconButton(
-                            onClick = { navigatePageByDelta(1) },
-                            enabled = safePageIndex < pages.lastIndex,
-                            modifier = Modifier.size(34.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.ArrowForwardIos,
-                                contentDescription = if (isArabic) "التالي" else "Next page",
-                                tint = if (safePageIndex < pages.lastIndex) ScannerGlassPalette.TextPrimary else ScannerGlassPalette.TextSecondary.copy(alpha = 0.35f),
-                                modifier = Modifier.size(13.dp)
-                            )
-                        }
                     }
-                    Spacer(modifier = Modifier.height(2.dp))
                 }
             }
 
-            // 2. FLOATING iOS 27 LIQUID GLASS TOP HEADER
+            // 2. FLOATING iOS 27 LIQUID GLASS TOP HEADER (Static Frame + Smooth Title Crossfade)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -676,45 +423,54 @@ fun DocumentDetailEditorScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = doc.title,
-                            color = ScannerGlassPalette.TextPrimary,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (doc.isStarred || doc.isLocked || activeTags.isNotEmpty()) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                if (doc.isStarred) {
-                                    Icon(
-                                        Icons.Default.Star,
-                                        contentDescription = null,
-                                        tint = ScannerGlassPalette.AmberGlow,
-                                        modifier = Modifier.size(11.dp)
-                                    )
-                                }
-                                if (doc.isLocked) {
-                                    Icon(
-                                        Icons.Default.Lock,
-                                        contentDescription = null,
-                                        tint = ScannerGlassPalette.EmeraldGlow,
-                                        modifier = Modifier.size(11.dp)
-                                    )
-                                }
-                                if (activeTags.isNotEmpty()) {
-                                    Text(
-                                        text = "${activeTags.first()}${if (activeTags.size > 1) " +${activeTags.size - 1}" else ""}",
-                                        color = ScannerGlassPalette.EdgeOverlayCyan,
-                                        fontSize = 10.5.sp,
-                                        maxLines = 1,
-                                        softWrap = false,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                    AnimatedContent(
+                        targetState = doc.id,
+                        transitionSpec = {
+                            fadeIn(tween(150)).togetherWith(fadeOut(tween(110)))
+                        },
+                        label = "detail_title_crossfade",
+                        modifier = Modifier.weight(1f)
+                    ) { _ ->
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = doc.title,
+                                color = ScannerGlassPalette.TextPrimary,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (doc.isStarred || doc.isLocked || activeTags.isNotEmpty()) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    if (doc.isStarred) {
+                                        Icon(
+                                            Icons.Default.Star,
+                                            contentDescription = null,
+                                            tint = ScannerGlassPalette.AmberGlow,
+                                            modifier = Modifier.size(11.dp)
+                                        )
+                                    }
+                                    if (doc.isLocked) {
+                                        Icon(
+                                            Icons.Default.Lock,
+                                            contentDescription = null,
+                                            tint = ScannerGlassPalette.EmeraldGlow,
+                                            modifier = Modifier.size(11.dp)
+                                        )
+                                    }
+                                    if (activeTags.isNotEmpty()) {
+                                        Text(
+                                            text = "${activeTags.first()}${if (activeTags.size > 1) " +${activeTags.size - 1}" else ""}",
+                                            color = ScannerGlassPalette.EdgeOverlayCyan,
+                                            fontSize = 10.5.sp,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -973,7 +729,7 @@ fun DocumentDetailEditorScreen(
                                         selected = activeTool == AnnotationTool.HIGHLIGHTER,
                                         onClick = {
                                             activeTool = AnnotationTool.HIGHLIGHTER
-                                            penColorArgb = 0xFFFDE047L
+                                            scannerViewModel.setPenColorArgb(0xFFFDE047L)
                                         }
                                     )
                                     MarkupSubChip(
@@ -1026,54 +782,54 @@ fun DocumentDetailEditorScreen(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(CircleShape)
-                                            .background(Color.Black)
-                                            .border(1.5.dp, if (redactionBlack) ScannerGlassPalette.EdgeOverlayCyan else Color.White.copy(alpha = 0.2f), CircleShape)
-                                            .clickable { redactionBlack = true }
-                                            .padding(horizontal = 12.dp, vertical = 5.dp)
-                                    ) {
-                                        Text(if (isArabic) "طمس أسود" else "Black Redact", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                                    }
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(CircleShape)
-                                            .background(Color.White)
-                                            .border(1.5.dp, if (!redactionBlack) ScannerGlassPalette.EdgeOverlayCyan else Color.Transparent, CircleShape)
-                                            .clickable { redactionBlack = false }
-                                            .padding(horizontal = 12.dp, vertical = 5.dp)
-                                    ) {
-                                        Text(if (isArabic) "طمس أبيض" else "White Redact", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                                    }
-                                }
-                            } else {
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    val palette = if (activeTool == AnnotationTool.HIGHLIGHTER) {
-                                        listOf(0xFFFDE047L, 0xFF34D399L, 0xFF38BDF8L, 0xFFF472B6L)
-                                    } else {
-                                        listOf(0xFF0EA5E9L, 0xFFEF4444L, 0xFF10B981L, 0xFF0F172AL)
-                                    }
-                                    palette.forEach { argb ->
-                                        val isPicked = penColorArgb == argb
                                         Box(
                                             modifier = Modifier
-                                                .size(26.dp)
                                                 .clip(CircleShape)
-                                                .background(Color(argb.toInt()))
-                                                .border(
-                                                    if (isPicked) 2.2.dp else 1.dp,
-                                                    if (isPicked) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.SubtleStroke,
-                                                    CircleShape
-                                                )
-                                                .clickable { penColorArgb = argb }
-                                        )
+                                                .background(Color.Black)
+                                                .border(1.5.dp, if (redactionBlack) ScannerGlassPalette.EdgeOverlayCyan else Color.White.copy(alpha = 0.2f), CircleShape)
+                                                .clickable { scannerViewModel.setRedactionBlack(true) }
+                                                .padding(horizontal = 12.dp, vertical = 5.dp)
+                                        ) {
+                                            Text(if (isArabic) "طمس أسود" else "Black Redact", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(CircleShape)
+                                                .background(Color.White)
+                                                .border(1.5.dp, if (!redactionBlack) ScannerGlassPalette.EdgeOverlayCyan else Color.Transparent, CircleShape)
+                                                .clickable { scannerViewModel.setRedactionBlack(false) }
+                                                .padding(horizontal = 12.dp, vertical = 5.dp)
+                                        ) {
+                                            Text(if (isArabic) "طمس أبيض" else "White Redact", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                        }
+                                    }
+                                } else {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        val palette = if (activeTool == AnnotationTool.HIGHLIGHTER) {
+                                            listOf(0xFFFDE047L, 0xFF34D399L, 0xFF38BDF8L, 0xFFF472B6L)
+                                        } else {
+                                            listOf(0xFF0EA5E9L, 0xFFEF4444L, 0xFF10B981L, 0xFF0F172AL)
+                                        }
+                                        palette.forEach { argb ->
+                                            val isPicked = penColorArgb == argb
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(26.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color(argb.toInt()))
+                                                    .border(
+                                                        if (isPicked) 2.2.dp else 1.dp,
+                                                        if (isPicked) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.SubtleStroke,
+                                                        CircleShape
+                                                    )
+                                                    .clickable { scannerViewModel.setPenColorArgb(argb) }
+                                            )
+                                        }
                                     }
                                 }
-                            }
                         }
                     }
                 }
@@ -1307,7 +1063,7 @@ fun DocumentDetailEditorScreen(
             activePageIndex = safePageIndex,
             isArabic = isArabic,
             onSelectPage = { idx ->
-                activePageIndex = idx
+                activePageIndexMap[doc.id] = idx
                 showPagesSheet = false
             },
             onEditPage = { pg ->
@@ -1318,13 +1074,13 @@ fun DocumentDetailEditorScreen(
             onMoveEarlier = { idx ->
                 if (idx > 0) {
                     scannerViewModel.movePageOrder(doc.id, idx, idx - 1)
-                    activePageIndex = idx - 1
+                    activePageIndexMap[doc.id] = idx - 1
                 }
             },
             onMoveLater = { idx ->
                 if (idx < pages.lastIndex) {
                     scannerViewModel.movePageOrder(doc.id, idx, idx + 1)
-                    activePageIndex = idx + 1
+                    activePageIndexMap[doc.id] = idx + 1
                 }
             },
             onDuplicatePage = { pg ->
@@ -1335,7 +1091,7 @@ fun DocumentDetailEditorScreen(
             },
             onDeletePage = { pg ->
                 scannerViewModel.deletePage(doc.id, pg.id, isArabic)
-                activePageIndex = (safePageIndex - 1).coerceAtLeast(0)
+                activePageIndexMap[doc.id] = (safePageIndex - 1).coerceAtLeast(0)
             },
             onAddPage = {
                 showPagesSheet = false
@@ -1432,6 +1188,12 @@ fun DocumentDetailEditorScreen(
         DocumentExportSheet(
             doc = doc,
             isArabic = isArabic,
+            initialAsImages = exportAsImages,
+            initialPageSize = exportPageSize,
+            initialSearchableOcr = exportSearchableOcr,
+            onAsImagesChange = { scannerViewModel.setPdfExportAsImages(it) },
+            onPageSizeChange = { scannerViewModel.setPdfExportPageSize(it) },
+            onSearchableOcrChange = { scannerViewModel.setPdfExportSearchableOcr(it) },
             onExport = { preset, asImages, searchable, pwd, shareSheet ->
                 scannerViewModel.exportDocument(doc, preset, asImages, searchable, pwd, shareSheet, isArabic)
                 showExportSheet = false
@@ -1747,9 +1509,370 @@ private fun SheetActionTile(
 }
 
 @Composable
+private fun DocumentPagerStageSlot(
+    scannerViewModel: ScannerViewModel,
+    doc: ScannedDocumentEntity,
+    isSlotCurrent: Boolean,
+    isLockedAndProtected: Boolean,
+    activePageIndex: Int,
+    onActivePageIndexChange: (Int) -> Unit,
+    activeTool: AnnotationTool,
+    penColorArgb: Long,
+    redactionBlack: Boolean,
+    activeSignaturePlacementId: String?,
+    savedSignatures: List<com.charfeddine.fluffy.scanner.data.model.SavedSignatureEntity>,
+    isBusy: Boolean,
+    isArabic: Boolean,
+    onSelectSignature: (String?) -> Unit,
+    onZoomStateChanged: (Boolean) -> Unit,
+    onOpenPagesSheet: () -> Unit,
+    onRequestUnlock: () -> Unit
+) {
+    if (isLockedAndProtected) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(
+                modifier = Modifier
+                    .padding(24.dp)
+                    .iosLiquidGlass(RoundedCornerShape(24.dp), glowAccent = true, fillAlpha = 0.78f)
+                    .padding(horizontal = 24.dp, vertical = 22.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = null,
+                    tint = ScannerGlassPalette.EmeraldGlow,
+                    modifier = Modifier.size(34.dp)
+                )
+                Text(
+                    text = doc.title,
+                    color = ScannerGlassPalette.TextPrimary,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Button(
+                    onClick = onRequestUnlock,
+                    colors = ButtonDefaults.buttonColors(containerColor = ScannerGlassPalette.CyanGlow)
+                ) {
+                    Text(
+                        text = if (isArabic) "فتح قفل المستند" else "Unlock Document",
+                        color = ScannerGlassPalette.OnAccent,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+        return
+    }
+
+    val pages by scannerViewModel.observePages(doc.id).collectAsState(initial = emptyList())
+    val safePageIndex = activePageIndex.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
+    val currentPage = pages.getOrNull(safePageIndex)
+
+    val activeAnnotations = remember(currentPage?.annotationsJson) {
+        PageAnnotations.fromJson(currentPage?.annotationsJson)
+    }
+    val activeSignatures = remember(currentPage?.signaturesJson) {
+        SignaturePlacement.listFromJson(currentPage?.signaturesJson)
+    }
+    val activeWatermark = remember(currentPage?.watermarkJson) {
+        WatermarkConfig.fromJson(currentPage?.watermarkJson)
+    }
+
+    val density = LocalDensity.current
+    val uiScope = rememberCoroutineScope()
+    val layoutDirection = LocalLayoutDirection.current
+    val stageDragAnim = remember(doc.id) { Animatable(0f) }
+    val swipeThresholdPx = with(density) { 52.dp.toPx() }
+
+    fun navigatePageByDelta(delta: Int) {
+        val target = safePageIndex + delta
+        if (target in pages.indices) {
+            onSelectSignature(null)
+            onActivePageIndexChange(target)
+        }
+    }
+
+    val canSwipePages = isSlotCurrent && pages.size > 1 && activeTool == AnnotationTool.NONE
+    val onStageSwipeDragDelta: (Float) -> Unit = { totalDx ->
+        val isNextDrag = if (isArabic) totalDx > 0f else totalDx < 0f
+        val canMoveInDir = if (isNextDrag) safePageIndex < pages.lastIndex else safePageIndex > 0
+        val targetDx = if (canMoveInDir) totalDx * 0.58f else totalDx * 0.16f
+        uiScope.launch { stageDragAnim.snapTo(targetDx) }
+    }
+    val onStageSwipeRelease: (Float, Float) -> Unit = { totalDx, totalDy ->
+        uiScope.launch {
+            stageDragAnim.animateTo(
+                targetValue = 0f,
+                animationSpec = spring(dampingRatio = 0.78f, stiffness = 440f)
+            )
+        }
+        if (abs(totalDx) >= swipeThresholdPx && abs(totalDx) > abs(totalDy) * 1.15f) {
+            val delta = if (isArabic) {
+                if (totalDx > 0f) 1 else -1
+            } else {
+                if (totalDx < 0f) 1 else -1
+            }
+            navigatePageByDelta(delta)
+        }
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .clipToBounds(),
+            contentAlignment = Alignment.Center
+        ) {
+            AnimatedContent(
+                targetState = safePageIndex,
+                transitionSpec = {
+                    val dir = (targetState - initialState).coerceIn(-1, 1)
+                    val visualDir = if (layoutDirection == LayoutDirection.Rtl) -dir else dir
+                    if (visualDir == 0) {
+                        (fadeIn(tween(180)) + scaleIn(initialScale = 0.97f, animationSpec = tween(180)))
+                            .togetherWith(fadeOut(tween(150)))
+                    } else {
+                        (slideInHorizontally(
+                            animationSpec = tween(230),
+                            initialOffsetX = { fullWidth -> (visualDir * fullWidth * 0.38f).roundToInt() }
+                        ) + fadeIn(tween(200)) + scaleIn(initialScale = 0.96f, animationSpec = tween(230)))
+                            .togetherWith(
+                                slideOutHorizontally(
+                                    animationSpec = tween(210),
+                                    targetOffsetX = { fullWidth -> (-visualDir * fullWidth * 0.32f).roundToInt() }
+                                ) + fadeOut(tween(170)) + scaleOut(targetScale = 0.95f, animationSpec = tween(210))
+                            )
+                    }
+                },
+                label = "detail_stage_page_transition",
+                modifier = Modifier.fillMaxSize()
+            ) { targetIdx ->
+                val targetPage = pages.getOrNull(targetIdx)
+                val cachedInitial = remember(targetPage?.id, targetPage?.processedImagePath, doc.isLocked) {
+                    targetPage?.let {
+                        scannerViewModel.getCachedPageBitmap(it.id, it.processedImagePath, doc.isLocked)
+                    }
+                }
+                val targetBmp by produceState<Bitmap?>(
+                    initialValue = cachedInitial,
+                    key1 = targetPage?.id,
+                    key2 = targetPage?.processedImagePath,
+                    key3 = doc.isLocked
+                ) {
+                    val pg = targetPage ?: return@produceState
+                    if (value == null || value?.isRecycled == true) {
+                        value = scannerViewModel.loadOrGetCachedPageBitmap(pg.id, pg.processedImagePath, doc.isLocked)
+                    }
+                }
+                LaunchedEffect(targetIdx, pages, doc.isLocked) {
+                    val adjacent = listOfNotNull(pages.getOrNull(targetIdx + 1), pages.getOrNull(targetIdx - 1))
+                    for (adj in adjacent) {
+                        scannerViewModel.loadOrGetCachedPageBitmap(adj.id, adj.processedImagePath, doc.isLocked)
+                    }
+                }
+
+                if (targetBmp == null || targetPage == null) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = ScannerGlassPalette.CyanGlow)
+                    }
+                } else {
+                    val dragPx = stageDragAnim.value
+                    val dragFraction = (abs(dragPx) / 900f).coerceIn(0f, 1f)
+                    val slotAnnotations = remember(targetPage.annotationsJson) {
+                        PageAnnotations.fromJson(targetPage.annotationsJson)
+                    }
+                    val slotSignatures = remember(targetPage.signaturesJson) {
+                        SignaturePlacement.listFromJson(targetPage.signaturesJson)
+                    }
+                    val slotWatermark = remember(targetPage.watermarkJson) {
+                        WatermarkConfig.fromJson(targetPage.watermarkJson)
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                translationX = dragPx
+                                val parallaxScale = 1f - dragFraction * 0.045f
+                                scaleX = parallaxScale
+                                scaleY = parallaxScale
+                                alpha = 1f - dragFraction * 0.14f
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        InteractiveAnnotatedPageCanvas(
+                            pageId = targetPage.id,
+                            bitmap = targetBmp!!,
+                            isActiveDocumentPage = isSlotCurrent && targetIdx == safePageIndex,
+                            annotations = slotAnnotations,
+                            signatures = slotSignatures,
+                            watermark = slotWatermark,
+                            activeTool = if (isSlotCurrent && targetIdx == safePageIndex) activeTool else AnnotationTool.NONE,
+                            penColorArgb = penColorArgb,
+                            redactionColorArgb = if (redactionBlack) 0xFF000000L else 0xFFFFFFFFL,
+                            activeSignaturePlacementId = activeSignaturePlacementId,
+                            canSwipePages = canSwipePages,
+                            loadSignatureBitmap = { sigId ->
+                                savedSignatures.firstOrNull { it.id == sigId }?.let {
+                                    scannerViewModel.repository.loadEncryptedSignatureBitmap(it)
+                                }
+                            },
+                            onSelectSignature = onSelectSignature,
+                            onAnnotationsChanged = { updatedAnn ->
+                                scannerViewModel.updatePageMarkups(targetPage, updatedAnn, slotSignatures, slotWatermark)
+                            },
+                            onSignaturesChanged = { updatedSigs ->
+                                scannerViewModel.updatePageMarkups(targetPage, slotAnnotations, updatedSigs, slotWatermark)
+                            },
+                            onZoomStateChanged = onZoomStateChanged,
+                            onSwipeDragDelta = onStageSwipeDragDelta,
+                            onSwipeRelease = onStageSwipeRelease
+                        )
+                    }
+                }
+            }
+
+            // Selected Placed Signature Floating Resize / Rotate / Delete Pill
+            val p = currentPage
+            val selPlacement = if (isSlotCurrent) {
+                activeSignatures.firstOrNull { it.placementId == activeSignaturePlacementId }
+            } else null
+            if (selPlacement != null && p != null) {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 8.dp)
+                        .shadow(14.dp, CircleShape)
+                        .iosLiquidGlass(CircleShape, glowAccent = true, fillAlpha = 0.85f)
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "S-",
+                        color = ScannerGlassPalette.EdgeOverlayCyan,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clickable {
+                                val next = activeSignatures.map {
+                                    if (it.placementId == selPlacement.placementId) it.copy(scale = (it.scale - 0.15f).coerceAtLeast(0.45f)) else it
+                                }
+                                scannerViewModel.updatePageMarkups(p, activeAnnotations, next, activeWatermark)
+                            }
+                            .padding(6.dp)
+                    )
+                    Text(
+                        "S+",
+                        color = ScannerGlassPalette.EdgeOverlayCyan,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clickable {
+                                val next = activeSignatures.map {
+                                    if (it.placementId == selPlacement.placementId) it.copy(scale = (it.scale + 0.15f).coerceAtMost(2.5f)) else it
+                                }
+                                scannerViewModel.updatePageMarkups(p, activeAnnotations, next, activeWatermark)
+                            }
+                            .padding(6.dp)
+                    )
+                    Text(
+                        "↻15°",
+                        color = ScannerGlassPalette.VioletGlow,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clickable {
+                                val next = activeSignatures.map {
+                                    if (it.placementId == selPlacement.placementId) it.copy(rotationDeg = (it.rotationDeg + 15f) % 360f) else it
+                                }
+                                scannerViewModel.updatePageMarkups(p, activeAnnotations, next, activeWatermark)
+                            }
+                            .padding(6.dp)
+                    )
+                    IconButton(
+                        onClick = {
+                            val next = activeSignatures.filterNot { it.placementId == selPlacement.placementId }
+                            onSelectSignature(null)
+                            scannerViewModel.updatePageMarkups(p, activeAnnotations, next, activeWatermark)
+                        },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.DeleteOutline,
+                            contentDescription = if (isArabic) "حذف التوقيع" else "Remove signature",
+                            tint = ScannerGlassPalette.RoseGlow,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+
+            if (isBusy) {
+                CircularProgressIndicator(
+                    color = ScannerGlassPalette.EdgeOverlayCyan,
+                    modifier = Modifier.align(Alignment.Center)
+                )
+            }
+        }
+
+        if (pages.size > 1 && activeTool == AnnotationTool.NONE) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier
+                    .iosLiquidGlass(CircleShape, fillAlpha = 0.80f)
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                IconButton(
+                    onClick = { navigatePageByDelta(-1) },
+                    enabled = safePageIndex > 0,
+                    modifier = Modifier.size(34.dp)
+                ) {
+                    Icon(
+                        Icons.Default.ArrowBackIosNew,
+                        contentDescription = if (isArabic) "السابق" else "Previous page",
+                        tint = if (safePageIndex > 0) ScannerGlassPalette.TextPrimary else ScannerGlassPalette.TextSecondary.copy(alpha = 0.35f),
+                        modifier = Modifier.size(13.dp)
+                    )
+                }
+                Text(
+                    text = "${safePageIndex + 1} / ${pages.size}",
+                    color = ScannerGlassPalette.EdgeOverlayCyan,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .clickable { onOpenPagesSheet() }
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+                IconButton(
+                    onClick = { navigatePageByDelta(1) },
+                    enabled = safePageIndex < pages.lastIndex,
+                    modifier = Modifier.size(34.dp)
+                ) {
+                    Icon(
+                        Icons.Default.ArrowForwardIos,
+                        contentDescription = if (isArabic) "التالي" else "Next page",
+                        tint = if (safePageIndex < pages.lastIndex) ScannerGlassPalette.TextPrimary else ScannerGlassPalette.TextSecondary.copy(alpha = 0.35f),
+                        modifier = Modifier.size(13.dp)
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(2.dp))
+        }
+    }
+}
+
+@Composable
 private fun InteractiveAnnotatedPageCanvas(
     pageId: String,
     bitmap: Bitmap,
+    isActiveDocumentPage: Boolean,
     annotations: PageAnnotations,
     signatures: List<SignaturePlacement>,
     watermark: WatermarkConfig?,
@@ -1758,15 +1881,13 @@ private fun InteractiveAnnotatedPageCanvas(
     redactionColorArgb: Long,
     activeSignaturePlacementId: String?,
     canSwipePages: Boolean,
-    canSwipeDocuments: Boolean,
     loadSignatureBitmap: (String) -> Bitmap?,
     onSelectSignature: (String?) -> Unit,
     onAnnotationsChanged: (PageAnnotations) -> Unit,
     onSignaturesChanged: (List<SignaturePlacement>) -> Unit,
+    onZoomStateChanged: (Boolean) -> Unit,
     onSwipeDragDelta: (Float) -> Unit,
-    onSwipeRelease: (Float, Float) -> Unit,
-    onVerticalSwipeDragDelta: (Float) -> Unit,
-    onVerticalSwipeRelease: (Float, Float) -> Unit
+    onSwipeRelease: (Float, Float) -> Unit
 ) {
     var boxSize by remember { mutableStateOf(IntSize.Zero) }
     var draftPoints by remember { mutableStateOf<List<PointNorm>>(emptyList()) }
@@ -1780,18 +1901,21 @@ private fun InteractiveAnnotatedPageCanvas(
     val latestZoomScale by rememberUpdatedState(zoomScale)
     val latestPanOffset by rememberUpdatedState(panOffset)
     val latestCanSwipePages by rememberUpdatedState(canSwipePages)
-    val latestCanSwipeDocuments by rememberUpdatedState(canSwipeDocuments)
+    val latestOnZoomStateChanged by rememberUpdatedState(onZoomStateChanged)
     val latestOnSwipeDragDelta by rememberUpdatedState(onSwipeDragDelta)
     val latestOnSwipeRelease by rememberUpdatedState(onSwipeRelease)
-    val latestOnVerticalSwipeDragDelta by rememberUpdatedState(onVerticalSwipeDragDelta)
-    val latestOnVerticalSwipeRelease by rememberUpdatedState(onVerticalSwipeRelease)
 
     // Ensure 1:1 coordinate fidelity whenever user activates any markup tool
     LaunchedEffect(activeTool) {
         if (activeTool != AnnotationTool.NONE) {
             zoomScale = 1f
             panOffset = Offset.Zero
+            latestOnZoomStateChanged(false)
         }
+    }
+
+    LaunchedEffect(zoomScale) {
+        latestOnZoomStateChanged(zoomScale > 1.02f)
     }
 
     val bw = bitmap.width.toFloat().coerceAtLeast(1f)
@@ -1811,7 +1935,7 @@ private fun InteractiveAnnotatedPageCanvas(
                                 val firstDown = awaitFirstDown(requireUnconsumed = false)
                                 val downPos = firstDown.position
                                 var wasMultiTouch = false
-                                var swipeAxis = 0 // 0 = undecided, 1 = horizontal pages, 2 = vertical documents
+                                var swipeActive = false
                                 var swipeDecidedNonSwipe = false
                                 var totalDx = 0f
                                 var totalDy = 0f
@@ -1821,12 +1945,10 @@ private fun InteractiveAnnotatedPageCanvas(
                                     val pressedCount = event.changes.count { it.pressed }
                                     if (pressedCount >= 2) {
                                         wasMultiTouch = true
-                                        if (swipeAxis == 1) {
-                                            swipeAxis = 0
+                                        latestOnZoomStateChanged(true)
+                                        if (swipeActive) {
+                                            swipeActive = false
                                             latestOnSwipeDragDelta(0f)
-                                        } else if (swipeAxis == 2) {
-                                            swipeAxis = 0
-                                            latestOnVerticalSwipeDragDelta(0f)
                                         }
                                         val zoom = event.calculateZoom()
                                         val pan = event.calculatePan()
@@ -1861,12 +1983,9 @@ private fun InteractiveAnnotatedPageCanvas(
                                         // Respect child interactions (e.g. dragging a placed signature)
                                         if (change.isConsumed) {
                                             swipeDecidedNonSwipe = true
-                                            if (swipeAxis == 1) {
-                                                swipeAxis = 0
+                                            if (swipeActive) {
+                                                swipeActive = false
                                                 latestOnSwipeDragDelta(0f)
-                                            } else if (swipeAxis == 2) {
-                                                swipeAxis = 0
-                                                latestOnVerticalSwipeDragDelta(0f)
                                             }
                                             continue
                                         }
@@ -1887,42 +2006,33 @@ private fun InteractiveAnnotatedPageCanvas(
                                                 )
                                                 change.consume()
                                             }
-                                        } else if ((latestCanSwipePages || latestCanSwipeDocuments) && !wasMultiTouch && !swipeDecidedNonSwipe) {
+                                        } else if (latestCanSwipePages && !wasMultiTouch && !swipeDecidedNonSwipe) {
                                             totalDx = change.position.x - downPos.x
                                             totalDy = change.position.y - downPos.y
-                                            if (swipeAxis == 0) {
+                                            if (!swipeActive) {
                                                 val dist = hypot(totalDx.toDouble(), totalDy.toDouble()).toFloat()
                                                 if (dist > swipeSlopPx) {
-                                                    when {
-                                                        latestCanSwipePages && abs(totalDx) > abs(totalDy) * 1.15f -> {
-                                                            swipeAxis = 1
-                                                            change.consume()
-                                                            latestOnSwipeDragDelta(totalDx)
-                                                        }
-                                                        latestCanSwipeDocuments && abs(totalDy) > abs(totalDx) * 1.15f -> {
-                                                            swipeAxis = 2
-                                                            change.consume()
-                                                            latestOnVerticalSwipeDragDelta(totalDy)
-                                                        }
-                                                        else -> {
-                                                            swipeDecidedNonSwipe = true
-                                                        }
+                                                    if (abs(totalDx) > abs(totalDy) * 1.15f) {
+                                                        swipeActive = true
+                                                        change.consume()
+                                                        latestOnSwipeDragDelta(totalDx)
+                                                    } else {
+                                                        swipeDecidedNonSwipe = true
                                                     }
                                                 }
-                                            } else if (swipeAxis == 1) {
+                                            } else {
                                                 change.consume()
                                                 latestOnSwipeDragDelta(totalDx)
-                                            } else if (swipeAxis == 2) {
-                                                change.consume()
-                                                latestOnVerticalSwipeDragDelta(totalDy)
                                             }
                                         }
                                     }
                                 } while (event.changes.any { it.pressed })
 
-                                when (swipeAxis) {
-                                    1 -> latestOnSwipeRelease(totalDx, totalDy)
-                                    2 -> latestOnVerticalSwipeRelease(totalDx, totalDy)
+                                if (wasMultiTouch) {
+                                    latestOnZoomStateChanged(latestZoomScale > 1.02f)
+                                }
+                                if (swipeActive) {
+                                    latestOnSwipeRelease(totalDx, totalDy)
                                 }
                             }
                         }
@@ -1957,7 +2067,7 @@ private fun InteractiveAnnotatedPageCanvas(
 
         Image(
             bitmap = imageBitmap,
-            contentDescription = "Document page",
+            contentDescription = if (isActiveDocumentPage) "Document page" else null,
             contentScale = ContentScale.Fit,
             modifier = Modifier.fillMaxSize()
         )
@@ -2145,13 +2255,19 @@ private fun InteractiveAnnotatedPageCanvas(
 private fun DocumentExportSheet(
     doc: ScannedDocumentEntity,
     isArabic: Boolean,
+    initialAsImages: Boolean,
+    initialPageSize: PdfPageSizePreset,
+    initialSearchableOcr: Boolean,
+    onAsImagesChange: (Boolean) -> Unit,
+    onPageSizeChange: (PdfPageSizePreset) -> Unit,
+    onSearchableOcrChange: (Boolean) -> Unit,
     onExport: (PdfPageSizePreset, asImages: Boolean, searchable: Boolean, password: String?, shareSheet: Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var asImages by remember { mutableStateOf(false) }
-    var pageSize by remember { mutableStateOf(PdfPageSizePreset.A4) }
-    var searchableOcr by remember { mutableStateOf(true) }
+    var asImages by remember { mutableStateOf(initialAsImages) }
+    var pageSize by remember { mutableStateOf(initialPageSize) }
+    var searchableOcr by remember { mutableStateOf(initialSearchableOcr) }
     var usePassword by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
 
@@ -2182,7 +2298,10 @@ private fun DocumentExportSheet(
                         .weight(1f)
                         .height(44.dp)
                         .iosLiquidGlass(RoundedCornerShape(12.dp), glowAccent = !asImages)
-                        .clickable { asImages = false },
+                        .clickable {
+                            asImages = false
+                            onAsImagesChange(false)
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     Text("PDF", color = if (!asImages) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.TextSecondary, fontWeight = FontWeight.Bold)
@@ -2192,7 +2311,10 @@ private fun DocumentExportSheet(
                         .weight(1f)
                         .height(44.dp)
                         .iosLiquidGlass(RoundedCornerShape(12.dp), glowAccent = asImages)
-                        .clickable { asImages = true },
+                        .clickable {
+                            asImages = true
+                            onAsImagesChange(true)
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     Text("JPG / Images", color = if (asImages) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.TextSecondary, fontWeight = FontWeight.Bold)
@@ -2207,7 +2329,10 @@ private fun DocumentExportSheet(
                             modifier = Modifier
                                 .weight(1f)
                                 .iosLiquidGlass(RoundedCornerShape(12.dp), glowAccent = sel)
-                                .clickable { pageSize = preset }
+                                .clickable {
+                                    pageSize = preset
+                                    onPageSizeChange(preset)
+                                }
                                 .padding(vertical = 8.dp),
                             contentAlignment = Alignment.Center
                         ) {
@@ -2234,7 +2359,10 @@ private fun DocumentExportSheet(
                     )
                     Switch(
                         checked = searchableOcr,
-                        onCheckedChange = { searchableOcr = it },
+                        onCheckedChange = {
+                            searchableOcr = it
+                            onSearchableOcrChange(it)
+                        },
                         colors = SwitchDefaults.colors(checkedTrackColor = ScannerGlassPalette.CyanGlow)
                     )
                 }
