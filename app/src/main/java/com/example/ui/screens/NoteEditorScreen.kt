@@ -205,39 +205,41 @@ fun NoteEditorScreen(
     val playbackController = rememberAudioPlaybackController()
     val coroutineScope = rememberCoroutineScope()
 
+    val noteIdentityKey = note.syncId.ifBlank { note.id.toString() }
+
     // New drafts open in Edit/Writing mode; saved notes reopen in View-Only mode
-    var isEditMode by remember { mutableStateOf(isCreatingNew || note.id == 0L) }
+    var isEditMode by remember(noteIdentityKey) { mutableStateOf(isCreatingNew || note.id == 0L) }
 
     // Local mutable state for literal multi-page editing with per-page titles (up to 100 pages or 900 KB)
-    var title by remember { mutableStateOf(note.title) }
-    val initialDraftPages = remember(note.id, note.syncId) {
+    var title by remember(noteIdentityKey) { mutableStateOf(note.title) }
+    val initialDraftPages = remember(noteIdentityKey) {
         NotePagesCodec.decodeDraftPages(note.content, note.pagesJson)
     }
-    val pages = remember(note.id, note.syncId) {
+    val pages = remember(noteIdentityKey) {
         mutableStateListOf<String>().apply {
             addAll(initialDraftPages.map { it.body }.ifEmpty { listOf("") })
         }
     }
-    val pageTitles = remember(note.id, note.syncId) {
+    val pageTitles = remember(noteIdentityKey) {
         mutableStateListOf<String>().apply {
             addAll(initialDraftPages.map { it.title }.ifEmpty { listOf("") })
         }
     }
-    val activeSegmentByPage = remember(note.id, note.syncId) { mutableStateMapOf<Int, Int>() }
-    val segmentSelections = remember(note.id, note.syncId) { mutableStateMapOf<String, TextRange>() }
-    val segmentCompositions = remember(note.id, note.syncId) { mutableStateMapOf<String, TextRange?>() }
-    val pendingStylesByPage = remember(note.id, note.syncId) { mutableStateMapOf<Int, Set<RichFormatAction>>() }
+    val activeSegmentByPage = remember(noteIdentityKey) { mutableStateMapOf<Int, Int>() }
+    val segmentSelections = remember(noteIdentityKey) { mutableStateMapOf<String, TextRange>() }
+    val segmentCompositions = remember(noteIdentityKey) { mutableStateMapOf<String, TextRange?>() }
+    val pendingStylesByPage = remember(noteIdentityKey) { mutableStateMapOf<Int, Set<RichFormatAction>>() }
 
-    var category by remember { mutableStateOf(note.category) }
-    var selectedTint by remember { mutableStateOf(GlassTint.fromId(note.colorPreset)) }
-    var backgroundId by remember { mutableStateOf(note.backgroundId) }
-    var customColorArgb by remember { mutableLongStateOf(note.customColorArgb) }
-    var isPinned by remember { mutableStateOf(note.isPinned) }
-    var isFavorite by remember { mutableStateOf(note.isFavorite) }
-    var audioDurationSec by remember { mutableIntStateOf(note.audioDurationSec) }
-    var audioFilePath by remember { mutableStateOf(note.audioFilePath) }
-    var audioByteSize by remember { mutableLongStateOf(note.audioByteSize) }
-    var reminderAt by remember(note.id, note.syncId) { mutableLongStateOf(note.reminderAt) }
+    var category by remember(noteIdentityKey) { mutableStateOf(note.category) }
+    var selectedTint by remember(noteIdentityKey) { mutableStateOf(GlassTint.fromId(note.colorPreset)) }
+    var backgroundId by remember(noteIdentityKey) { mutableStateOf(note.backgroundId) }
+    var customColorArgb by remember(noteIdentityKey) { mutableLongStateOf(note.customColorArgb) }
+    var isPinned by remember(noteIdentityKey) { mutableStateOf(note.isPinned) }
+    var isFavorite by remember(noteIdentityKey) { mutableStateOf(note.isFavorite) }
+    var audioDurationSec by remember(noteIdentityKey) { mutableIntStateOf(note.audioDurationSec) }
+    var audioFilePath by remember(noteIdentityKey) { mutableStateOf(note.audioFilePath) }
+    var audioByteSize by remember(noteIdentityKey) { mutableLongStateOf(note.audioByteSize) }
+    var reminderAt by remember(noteIdentityKey) { mutableLongStateOf(note.reminderAt) }
 
     LaunchedEffect(note.id, note.audioFilePath, note.audioByteSize) {
         if (note.audioByteSize <= 0L && note.audioFilePath.isNotBlank()) {
@@ -260,7 +262,7 @@ fun NoteEditorScreen(
     var showImageScanDialog by remember { mutableStateOf(false) }
     var isExtractingOcr by remember { mutableStateOf(false) }
     var isFocusMode by remember { mutableStateOf(false) }
-    var editorTextAlign by remember(note.id) { mutableStateOf(TextAlign.Start) }
+    var editorTextAlign by remember(noteIdentityKey) { mutableStateOf(TextAlign.Start) }
     var editingTableTarget by remember { mutableStateOf<MarkdownTableData?>(null) }
     var isRemovingPage by remember { mutableStateOf(false) }
     var limitWarningMessage by remember { mutableStateOf<String?>(null) }
@@ -269,9 +271,9 @@ fun NoteEditorScreen(
     var readZoomScale by remember { mutableFloatStateOf(1f) }
     var readPanOffset by remember { mutableStateOf(Offset.Zero) }
     var readViewportSize by remember { mutableStateOf(IntSize.Zero) }
-    var writingFontSizeSp by remember(note.id) { mutableFloatStateOf(16f) }
+    var writingFontSizeSp by remember(noteIdentityKey) { mutableFloatStateOf(16f) }
 
-    val checklistItems = remember {
+    val checklistItems = remember(noteIdentityKey) {
         mutableStateListOf<ChecklistItem>().apply {
             addAll(ChecklistItem.jsonToList(note.checklistJson))
         }

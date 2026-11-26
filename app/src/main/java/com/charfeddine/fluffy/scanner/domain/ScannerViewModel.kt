@@ -72,6 +72,7 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
 
     // Navigation inside the Scanner Ecosystem
     val currentRoute = MutableStateFlow<ScannerSubRoute>(ScannerSubRoute.Hub)
+    val detailTransitionDirection = MutableStateFlow(0)
 
     private val scannerPrefs = application.getSharedPreferences("fluffy_scanner_prefs", android.content.Context.MODE_PRIVATE)
 
@@ -188,6 +189,7 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
         if (initialMode != null) {
             activeScanMode.value = initialMode
         }
+        detailTransitionDirection.value = 0
         batchFrames.value = emptyList()
         idCardFrontRawPath.value = null
         idCardFrontQuad = null
@@ -195,11 +197,13 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
         currentRoute.value = ScannerSubRoute.Camera(appendToDocId)
     }
 
-    fun openDocumentDetail(docId: String) {
+    fun openDocumentDetail(docId: String, transitionDirection: Int = 0) {
+        detailTransitionDirection.value = transitionDirection
         currentRoute.value = ScannerSubRoute.DocumentDetail(docId)
     }
 
     fun navigateBackToHub() {
+        detailTransitionDirection.value = 0
         batchFrames.value = emptyList()
         idCardFrontRawPath.value = null
         idCardFrontQuad = null

@@ -6,10 +6,14 @@ import android.app.Application
 import android.content.Context
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
@@ -291,5 +295,55 @@ class NoteReminderTest {
         composeRule.waitForIdle()
 
         assertEquals(autoSavedReminderAt, savedReminderAt)
+    }
+
+    @Test
+    fun `switching active note in editor cleanly resets title, category, checklist, and reminder without leaking`() {
+        val draftA = NoteEntity(
+            id = 101L,
+            syncId = "sync-101",
+            title = "Draft Alpha Title",
+            content = "Alpha body",
+            category = "Work",
+            checklistJson = ChecklistItem.listToJson(listOf(ChecklistItem(id = "a1", text = "Alpha task", isDone = false))),
+            reminderAt = 0L
+        )
+        val draftB = NoteEntity(
+            id = 202L,
+            syncId = "sync-202",
+            title = "Draft Beta Title",
+            content = "Beta body",
+            category = "Ideas",
+            checklistJson = "",
+            reminderAt = System.currentTimeMillis() + 3_600_000L
+        )
+        var activeDraft by mutableStateOf(draftA)
+
+        composeRule.setContent {
+            Box(modifier = Modifier.fillMaxSize()) {
+                NoteEditorScreen(
+                    note = activeDraft,
+                    isCreatingNew = false,
+                    isDark = false,
+                    isArabic = false,
+                    onBack = {},
+                    onSave = { _, _, _, _, _, _, _, _, _, _, _, _, _, _ -> },
+                    onDelete = {}
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("Draft Alpha Title").assertIsDisplayed()
+        composeRule.onNodeWithText("Alpha task").assertIsDisplayed()
+
+        composeRule.runOnUiThread {
+            activeDraft = draftB
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("Draft Beta Title").assertIsDisplayed()
+        composeRule.onNodeWithText("Beta body").assertIsDisplayed()
+        composeRule.onNodeWithTag("editor_active_reminder_pill").assertIsDisplayed()
     }
 }

@@ -254,7 +254,7 @@ class MainActivity : FragmentActivity() {
                                             FluffyScreenState.Account -> "account"
                                             FluffyScreenState.ScannerHub -> "scanner_hub"
                                             FluffyScreenState.Vault -> "vault"
-                                            is FluffyScreenState.Editor -> "editor"
+                                            is FluffyScreenState.Editor -> "editor_${screen.note.syncId.ifBlank { screen.note.id }}"
                                         }
                                     },
                                     transitionSpec = {

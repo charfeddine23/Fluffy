@@ -32,7 +32,6 @@ import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -119,6 +118,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -192,7 +192,8 @@ fun DocumentDetailEditorScreen(
     documentId: String,
     isArabic: Boolean,
     onAddMorePages: () -> Unit,
-    onBackToHub: () -> Unit
+    onBackToHub: () -> Unit,
+    onSwitchDocument: ((ScannedDocumentEntity, Int) -> Unit)? = null
 ) {
     val handleBackExit: () -> Unit = {
         scannerViewModel.autoSaveModifiedDocumentOnExit(documentId, isArabic)
@@ -203,29 +204,36 @@ fun DocumentDetailEditorScreen(
     val context = LocalContext.current
     val docState by scannerViewModel.observeDocument(documentId).collectAsState(initial = null)
     val pages by scannerViewModel.observePages(documentId).collectAsState(initial = emptyList())
+    val visibleDocs by scannerViewModel.visibleDocuments.collectAsState()
+    val allActiveDocs by scannerViewModel.allActiveDocs.collectAsState()
     val savedSignatures by scannerViewModel.savedSignatures.collectAsState()
     val isBusy by scannerViewModel.isBusy.collectAsState()
 
     val doc = docState ?: return
-    var activePageIndex by remember { mutableIntStateOf(0) }
+    val navDocs = remember(visibleDocs, allActiveDocs, documentId) {
+        if (visibleDocs.any { it.id == documentId }) visibleDocs else allActiveDocs
+    }
+    val currentDocNavIndex = navDocs.indexOfFirst { it.id == documentId }
+
+    var activePageIndex by remember(documentId) { mutableIntStateOf(0) }
     val safePageIndex = activePageIndex.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
     val currentPage: ScannedPageEntity? = pages.getOrNull(safePageIndex)
 
-    var activeTool by remember { mutableStateOf(AnnotationTool.NONE) }
+    var activeTool by remember(documentId) { mutableStateOf(AnnotationTool.NONE) }
     var penColorArgb by remember { mutableLongStateOf(0xFF0EA5E9L) }
     var redactionBlack by remember { mutableStateOf(true) }
 
-    var showMoreMenu by remember { mutableStateOf(false) }
-    var showRenameDialog by remember { mutableStateOf(false) }
-    var showTagsDialog by remember { mutableStateOf(false) }
-    var showPagesSheet by remember { mutableStateOf(false) }
-    var showSignatureDialog by remember { mutableStateOf(false) }
-    var showWatermarkDialog by remember { mutableStateOf(false) }
-    var showOcrDialog by remember { mutableStateOf(false) }
-    var ocrResultText by remember { mutableStateOf("") }
-    var showExportSheet by remember { mutableStateOf(false) }
+    var showMoreMenu by remember(documentId) { mutableStateOf(false) }
+    var showRenameDialog by remember(documentId) { mutableStateOf(false) }
+    var showTagsDialog by remember(documentId) { mutableStateOf(false) }
+    var showPagesSheet by remember(documentId) { mutableStateOf(false) }
+    var showSignatureDialog by remember(documentId) { mutableStateOf(false) }
+    var showWatermarkDialog by remember(documentId) { mutableStateOf(false) }
+    var showOcrDialog by remember(documentId) { mutableStateOf(false) }
+    var ocrResultText by remember(documentId) { mutableStateOf("") }
+    var showExportSheet by remember(documentId) { mutableStateOf(false) }
 
-    var activeSignaturePlacementId by remember { mutableStateOf<String?>(null) }
+    var activeSignaturePlacementId by remember(documentId) { mutableStateOf<String?>(null) }
 
     val activeAnnotations = remember(currentPage?.annotationsJson) {
         PageAnnotations.fromJson(currentPage?.annotationsJson)
@@ -285,8 +293,9 @@ fun DocumentDetailEditorScreen(
     val density = LocalDensity.current
     val uiScope = rememberCoroutineScope()
     val layoutDirection = LocalLayoutDirection.current
-    val stageDragAnim = remember { Animatable(0f) }
-    var lastNavDirection by remember { mutableIntStateOf(0) }
+    val stageDragAnim = remember(documentId) { Animatable(0f) }
+    val stageVerticalDragAnim = remember(documentId) { Animatable(0f) }
+    var lastNavDirection by remember(documentId) { mutableIntStateOf(0) }
     val swipeThresholdPx = with(density) { 52.dp.toPx() }
 
     fun navigatePageByDelta(delta: Int) {
@@ -298,7 +307,20 @@ fun DocumentDetailEditorScreen(
         }
     }
 
+    fun navigateDocumentByDelta(delta: Int) {
+        if (currentDocNavIndex < 0) return
+        val targetDoc = navDocs.getOrNull(currentDocNavIndex + delta) ?: return
+        activeSignaturePlacementId = null
+        if (onSwitchDocument != null) {
+            onSwitchDocument(targetDoc, delta)
+        } else {
+            scannerViewModel.autoSaveModifiedDocumentOnExit(documentId, isArabic)
+            scannerViewModel.openDocumentDetail(targetDoc.id, transitionDirection = delta)
+        }
+    }
+
     val canSwipePages = pages.size > 1 && activeTool == AnnotationTool.NONE
+    val canSwipeDocuments = navDocs.size > 1 && currentDocNavIndex >= 0 && activeTool == AnnotationTool.NONE
     val onStageSwipeDragDelta: (Float) -> Unit = { totalDx ->
         val isNextDrag = if (isArabic) totalDx > 0f else totalDx < 0f
         val canMoveInDir = if (isNextDrag) safePageIndex < pages.lastIndex else safePageIndex > 0
@@ -319,6 +341,24 @@ fun DocumentDetailEditorScreen(
                 if (totalDx < 0f) 1 else -1
             }
             navigatePageByDelta(delta)
+        }
+    }
+    val onStageVerticalSwipeDragDelta: (Float) -> Unit = { totalDy ->
+        val isNextDocDrag = totalDy < 0f
+        val canMoveInDir = if (isNextDocDrag) currentDocNavIndex < navDocs.lastIndex else currentDocNavIndex > 0
+        val targetDy = if (canMoveInDir) totalDy * 0.52f else totalDy * 0.16f
+        uiScope.launch { stageVerticalDragAnim.snapTo(targetDy) }
+    }
+    val onStageVerticalSwipeRelease: (Float, Float) -> Unit = { totalDx, totalDy ->
+        uiScope.launch {
+            stageVerticalDragAnim.animateTo(
+                targetValue = 0f,
+                animationSpec = spring(dampingRatio = 0.78f, stiffness = 440f)
+            )
+        }
+        if (abs(totalDy) >= swipeThresholdPx && abs(totalDy) > abs(totalDx) * 1.15f) {
+            val delta = if (totalDy < 0f) 1 else -1
+            navigateDocumentByDelta(delta)
         }
     }
 
@@ -391,12 +431,14 @@ fun DocumentDetailEditorScreen(
                             }
                         } else {
                             val dragPx = stageDragAnim.value
-                            val dragFraction = (abs(dragPx) / 900f).coerceIn(0f, 1f)
+                            val vDragPx = stageVerticalDragAnim.value
+                            val dragFraction = (maxOf(abs(dragPx), abs(vDragPx)) / 900f).coerceIn(0f, 1f)
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .graphicsLayer {
                                         translationX = dragPx
+                                        translationY = vDragPx
                                         val parallaxScale = 1f - dragFraction * 0.045f
                                         scaleX = parallaxScale
                                         scaleY = parallaxScale
@@ -415,6 +457,7 @@ fun DocumentDetailEditorScreen(
                                     redactionColorArgb = if (redactionBlack) 0xFF000000L else 0xFFFFFFFFL,
                                     activeSignaturePlacementId = activeSignaturePlacementId,
                                     canSwipePages = canSwipePages,
+                                    canSwipeDocuments = canSwipeDocuments,
                                     loadSignatureBitmap = { sigId ->
                                         savedSignatures.firstOrNull { it.id == sigId }?.let {
                                             scannerViewModel.repository.loadEncryptedSignatureBitmap(it)
@@ -428,7 +471,41 @@ fun DocumentDetailEditorScreen(
                                         scannerViewModel.updatePageMarkups(targetPage, activeAnnotations, updatedSigs, activeWatermark)
                                     },
                                     onSwipeDragDelta = onStageSwipeDragDelta,
-                                    onSwipeRelease = onStageSwipeRelease
+                                    onSwipeRelease = onStageSwipeRelease,
+                                    onVerticalSwipeDragDelta = onStageVerticalSwipeDragDelta,
+                                    onVerticalSwipeRelease = onStageVerticalSwipeRelease
+                                )
+                            }
+                        }
+                    }
+
+                    val vDragVal = stageVerticalDragAnim.value
+                    if (canSwipeDocuments && abs(vDragVal) > swipeThresholdPx * 0.25f) {
+                        val previewDelta = if (vDragVal < 0f) 1 else -1
+                        val adjacentDoc = navDocs.getOrNull(currentDocNavIndex + previewDelta)
+                        if (adjacentDoc != null) {
+                            Row(
+                                modifier = Modifier
+                                    .align(if (previewDelta > 0) Alignment.BottomCenter else Alignment.TopCenter)
+                                    .padding(vertical = 10.dp, horizontal = 12.dp)
+                                    .shadow(12.dp, CircleShape)
+                                    .iosLiquidGlass(CircleShape, glowAccent = true, fillAlpha = 0.88f)
+                                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = if (previewDelta > 0) {
+                                        if (isArabic) "↑ التالي: ${adjacentDoc.title}" else "↑ Next: ${adjacentDoc.title}"
+                                    } else {
+                                        if (isArabic) "↓ السابق: ${adjacentDoc.title}" else "↓ Prev: ${adjacentDoc.title}"
+                                    },
+                                    color = ScannerGlassPalette.EdgeOverlayCyan,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.widthIn(max = 240.dp)
                                 )
                             }
                         }
@@ -608,42 +685,37 @@ fun DocumentDetailEditorScreen(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text(
-                                text = if (isArabic) "${pages.size} صفحة" else "${pages.size} page${if (pages.size == 1) "" else "s"}",
-                                color = ScannerGlassPalette.TextSecondary,
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                softWrap = false
-                            )
-                            if (doc.isStarred) {
-                                Icon(
-                                    Icons.Default.Star,
-                                    contentDescription = null,
-                                    tint = ScannerGlassPalette.AmberGlow,
-                                    modifier = Modifier.size(11.dp)
-                                )
-                            }
-                            if (doc.isLocked) {
-                                Icon(
-                                    Icons.Default.Lock,
-                                    contentDescription = null,
-                                    tint = ScannerGlassPalette.EmeraldGlow,
-                                    modifier = Modifier.size(11.dp)
-                                )
-                            }
-                            if (activeTags.isNotEmpty()) {
-                                Text(
-                                    text = "• ${activeTags.first()}${if (activeTags.size > 1) " +${activeTags.size - 1}" else ""}",
-                                    color = ScannerGlassPalette.EdgeOverlayCyan,
-                                    fontSize = 10.5.sp,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                        if (doc.isStarred || doc.isLocked || activeTags.isNotEmpty()) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                if (doc.isStarred) {
+                                    Icon(
+                                        Icons.Default.Star,
+                                        contentDescription = null,
+                                        tint = ScannerGlassPalette.AmberGlow,
+                                        modifier = Modifier.size(11.dp)
+                                    )
+                                }
+                                if (doc.isLocked) {
+                                    Icon(
+                                        Icons.Default.Lock,
+                                        contentDescription = null,
+                                        tint = ScannerGlassPalette.EmeraldGlow,
+                                        modifier = Modifier.size(11.dp)
+                                    )
+                                }
+                                if (activeTags.isNotEmpty()) {
+                                    Text(
+                                        text = "${activeTags.first()}${if (activeTags.size > 1) " +${activeTags.size - 1}" else ""}",
+                                        color = ScannerGlassPalette.EdgeOverlayCyan,
+                                        fontSize = 10.5.sp,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
                         }
                     }
@@ -1686,12 +1758,15 @@ private fun InteractiveAnnotatedPageCanvas(
     redactionColorArgb: Long,
     activeSignaturePlacementId: String?,
     canSwipePages: Boolean,
+    canSwipeDocuments: Boolean,
     loadSignatureBitmap: (String) -> Bitmap?,
     onSelectSignature: (String?) -> Unit,
     onAnnotationsChanged: (PageAnnotations) -> Unit,
     onSignaturesChanged: (List<SignaturePlacement>) -> Unit,
     onSwipeDragDelta: (Float) -> Unit,
-    onSwipeRelease: (Float, Float) -> Unit
+    onSwipeRelease: (Float, Float) -> Unit,
+    onVerticalSwipeDragDelta: (Float) -> Unit,
+    onVerticalSwipeRelease: (Float, Float) -> Unit
 ) {
     var boxSize by remember { mutableStateOf(IntSize.Zero) }
     var draftPoints by remember { mutableStateOf<List<PointNorm>>(emptyList()) }
@@ -1705,8 +1780,11 @@ private fun InteractiveAnnotatedPageCanvas(
     val latestZoomScale by rememberUpdatedState(zoomScale)
     val latestPanOffset by rememberUpdatedState(panOffset)
     val latestCanSwipePages by rememberUpdatedState(canSwipePages)
+    val latestCanSwipeDocuments by rememberUpdatedState(canSwipeDocuments)
     val latestOnSwipeDragDelta by rememberUpdatedState(onSwipeDragDelta)
     val latestOnSwipeRelease by rememberUpdatedState(onSwipeRelease)
+    val latestOnVerticalSwipeDragDelta by rememberUpdatedState(onVerticalSwipeDragDelta)
+    val latestOnVerticalSwipeRelease by rememberUpdatedState(onVerticalSwipeRelease)
 
     // Ensure 1:1 coordinate fidelity whenever user activates any markup tool
     LaunchedEffect(activeTool) {
@@ -1728,41 +1806,12 @@ private fun InteractiveAnnotatedPageCanvas(
                 if (activeTool == AnnotationTool.NONE) {
                     Modifier
                         .pointerInput(pageId, bw, bh) {
-                            detectTapGestures(
-                                onDoubleTap = { tapOffset ->
-                                    val stageW = size.width.toFloat().coerceAtLeast(1f)
-                                    val stageH = size.height.toFloat().coerceAtLeast(1f)
-                                    val stageScale = minOf(stageW / bw, stageH / bh)
-                                    val imgW = bw * stageScale
-                                    val imgH = bh * stageScale
-                                    if (zoomScale > 1.05f) {
-                                        zoomScale = 1f
-                                        panOffset = Offset.Zero
-                                    } else {
-                                        val oldScale = zoomScale
-                                        val targetScale = 2.4f
-                                        val zoomFactor = targetScale / oldScale
-                                        val center = Offset(stageW / 2f, stageH / 2f)
-                                        val focal = tapOffset - center
-                                        val candidatePan = (panOffset - focal) * zoomFactor + focal
-                                        val maxPanX = ((imgW * targetScale - stageW).coerceAtLeast(0f)) / 2f
-                                        val maxPanY = ((imgH * targetScale - stageH).coerceAtLeast(0f)) / 2f
-                                        zoomScale = targetScale
-                                        panOffset = Offset(
-                                            x = candidatePan.x.coerceIn(-maxPanX, maxPanX),
-                                            y = candidatePan.y.coerceIn(-maxPanY, maxPanY)
-                                        )
-                                    }
-                                }
-                            )
-                        }
-                        .pointerInput(pageId, bw, bh) {
                             val swipeSlopPx = viewConfiguration.touchSlop
                             awaitEachGesture {
                                 val firstDown = awaitFirstDown(requireUnconsumed = false)
                                 val downPos = firstDown.position
                                 var wasMultiTouch = false
-                                var swipeActive = false
+                                var swipeAxis = 0 // 0 = undecided, 1 = horizontal pages, 2 = vertical documents
                                 var swipeDecidedNonSwipe = false
                                 var totalDx = 0f
                                 var totalDy = 0f
@@ -1772,9 +1821,12 @@ private fun InteractiveAnnotatedPageCanvas(
                                     val pressedCount = event.changes.count { it.pressed }
                                     if (pressedCount >= 2) {
                                         wasMultiTouch = true
-                                        if (swipeActive) {
-                                            swipeActive = false
+                                        if (swipeAxis == 1) {
+                                            swipeAxis = 0
                                             latestOnSwipeDragDelta(0f)
+                                        } else if (swipeAxis == 2) {
+                                            swipeAxis = 0
+                                            latestOnVerticalSwipeDragDelta(0f)
                                         }
                                         val zoom = event.calculateZoom()
                                         val pan = event.calculatePan()
@@ -1809,9 +1861,12 @@ private fun InteractiveAnnotatedPageCanvas(
                                         // Respect child interactions (e.g. dragging a placed signature)
                                         if (change.isConsumed) {
                                             swipeDecidedNonSwipe = true
-                                            if (swipeActive) {
-                                                swipeActive = false
+                                            if (swipeAxis == 1) {
+                                                swipeAxis = 0
                                                 latestOnSwipeDragDelta(0f)
+                                            } else if (swipeAxis == 2) {
+                                                swipeAxis = 0
+                                                latestOnVerticalSwipeDragDelta(0f)
                                             }
                                             continue
                                         }
@@ -1832,30 +1887,42 @@ private fun InteractiveAnnotatedPageCanvas(
                                                 )
                                                 change.consume()
                                             }
-                                        } else if (latestCanSwipePages && !wasMultiTouch && !swipeDecidedNonSwipe) {
+                                        } else if ((latestCanSwipePages || latestCanSwipeDocuments) && !wasMultiTouch && !swipeDecidedNonSwipe) {
                                             totalDx = change.position.x - downPos.x
                                             totalDy = change.position.y - downPos.y
-                                            if (!swipeActive) {
+                                            if (swipeAxis == 0) {
                                                 val dist = hypot(totalDx.toDouble(), totalDy.toDouble()).toFloat()
                                                 if (dist > swipeSlopPx) {
-                                                    if (abs(totalDx) > abs(totalDy) * 1.15f) {
-                                                        swipeActive = true
-                                                        change.consume()
-                                                        latestOnSwipeDragDelta(totalDx)
-                                                    } else {
-                                                        swipeDecidedNonSwipe = true
+                                                    when {
+                                                        latestCanSwipePages && abs(totalDx) > abs(totalDy) * 1.15f -> {
+                                                            swipeAxis = 1
+                                                            change.consume()
+                                                            latestOnSwipeDragDelta(totalDx)
+                                                        }
+                                                        latestCanSwipeDocuments && abs(totalDy) > abs(totalDx) * 1.15f -> {
+                                                            swipeAxis = 2
+                                                            change.consume()
+                                                            latestOnVerticalSwipeDragDelta(totalDy)
+                                                        }
+                                                        else -> {
+                                                            swipeDecidedNonSwipe = true
+                                                        }
                                                     }
                                                 }
-                                            } else {
+                                            } else if (swipeAxis == 1) {
                                                 change.consume()
                                                 latestOnSwipeDragDelta(totalDx)
+                                            } else if (swipeAxis == 2) {
+                                                change.consume()
+                                                latestOnVerticalSwipeDragDelta(totalDy)
                                             }
                                         }
                                     }
                                 } while (event.changes.any { it.pressed })
 
-                                if (swipeActive) {
-                                    latestOnSwipeRelease(totalDx, totalDy)
+                                when (swipeAxis) {
+                                    1 -> latestOnSwipeRelease(totalDx, totalDy)
+                                    2 -> latestOnVerticalSwipeRelease(totalDx, totalDy)
                                 }
                             }
                         }
@@ -2004,11 +2071,16 @@ private fun InteractiveAnnotatedPageCanvas(
 
         // Draggable Placed E-Signatures
         signatures.forEach { placement ->
-            val sigBmp = remember(placement.signatureId) { loadSignatureBitmap(placement.signatureId) }
-            if (sigBmp != null && boxSize.width > 0) {
-                val sigImg = remember(sigBmp) { sigBmp.asImageBitmap() }
+            val sigBmp by produceState<Bitmap?>(initialValue = null, placement.signatureId) {
+                value = withContext(Dispatchers.IO) {
+                    loadSignatureBitmap(placement.signatureId)
+                }
+            }
+            val loadedSigBmp = sigBmp
+            if (loadedSigBmp != null && boxSize.width > 0) {
+                val sigImg = remember(loadedSigBmp) { loadedSigBmp.asImageBitmap() }
                 val targetW = drawW * 0.28f * placement.scale
-                val aspect = sigBmp.height.toFloat() / sigBmp.width.coerceAtLeast(1).toFloat()
+                val aspect = loadedSigBmp.height.toFloat() / loadedSigBmp.width.coerceAtLeast(1).toFloat()
                 val targetH = targetW * aspect
                 val leftPx = offsetX + placement.centerXNorm * drawW - targetW / 2f
                 val topPx = offsetY + placement.centerYNorm * drawH - targetH / 2f

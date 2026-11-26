@@ -4,11 +4,15 @@ import android.app.Activity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -110,8 +114,23 @@ fun ScannerRootHost(
         AnimatedContent(
             targetState = route,
             transitionSpec = {
-                (slideInHorizontally { if (isArabic) -it / 3 else it / 3 } + fadeIn())
-                    .togetherWith(slideOutHorizontally { if (isArabic) it / 3 else -it / 3 } + fadeOut())
+                val dir = scannerViewModel.detailTransitionDirection.value
+                if (initialState is ScannerSubRoute.DocumentDetail &&
+                    targetState is ScannerSubRoute.DocumentDetail &&
+                    dir != 0
+                ) {
+                    (slideInVertically(animationSpec = tween(260)) { fullHeight ->
+                        (dir * fullHeight * 0.38f).roundToInt()
+                    } + fadeIn(tween(220)))
+                        .togetherWith(
+                            slideOutVertically(animationSpec = tween(230)) { fullHeight ->
+                                (-dir * fullHeight * 0.30f).roundToInt()
+                            } + fadeOut(tween(180))
+                        )
+                } else {
+                    (slideInHorizontally { if (isArabic) -it / 3 else it / 3 } + fadeIn())
+                        .togetherWith(slideOutHorizontally { if (isArabic) it / 3 else -it / 3 } + fadeOut())
+                }
             },
             label = "scanner_sub_route"
         ) { current ->
@@ -177,6 +196,19 @@ fun ScannerRootHost(
                         isArabic = isArabic,
                         onAddMorePages = {
                             launchGoogleScanner(appendToDocId = current.documentId)
+                        },
+                        onSwitchDocument = { targetDoc, dir ->
+                            val unlocked = scannerViewModel.unlockedProtectedIds.value
+                            if (targetDoc.isLocked && targetDoc.id !in unlocked) {
+                                pendingUnlockTarget = targetDoc.id to {
+                                    scannerViewModel.markProtectedUnlocked(targetDoc.id)
+                                    scannerViewModel.autoSaveModifiedDocumentOnExit(current.documentId, isArabic)
+                                    scannerViewModel.openDocumentDetail(targetDoc.id, transitionDirection = dir)
+                                }
+                            } else {
+                                scannerViewModel.autoSaveModifiedDocumentOnExit(current.documentId, isArabic)
+                                scannerViewModel.openDocumentDetail(targetDoc.id, transitionDirection = dir)
+                            }
                         },
                         onBackToHub = { scannerViewModel.navigateBackToHub() }
                     )

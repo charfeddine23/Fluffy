@@ -325,7 +325,7 @@ private fun ConstellationCornerMenu(
 
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
             Box(modifier = Modifier.fillMaxSize()) {
-                if (expandProgress > 0.01f) {
+                if (isExpanded || expandProgress > 0.01f) {
                     val infiniteTransition = rememberInfiniteTransition(label = "prism_constellation_anim")
                     val orbitSpinDeg by infiniteTransition.animateFloat(
                         initialValue = 0f,

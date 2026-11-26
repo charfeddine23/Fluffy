@@ -87,6 +87,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
@@ -104,8 +105,6 @@ import com.example.ui.glass.liquidGlass
 import com.example.ui.theme.LocalAppThemePreset
 import com.example.ui.theme.tr
 import com.example.update.UpdateUiState
-import kotlin.math.cos
-import kotlin.math.sin
 
 @Composable
 fun FluffyTopBar(
@@ -886,6 +885,26 @@ private fun LuxuryUpdateArrowAction(
     val sweepBrush = remember(primary, secondary, tertiary) {
         Brush.sweepGradient(listOf(primary, secondary, tertiary, primary))
     }
+    val borderSweepBrush = remember(primary, secondary, tertiary) {
+        Brush.sweepGradient(
+            listOf(
+                primary.copy(alpha = 0.92f),
+                Color.White.copy(alpha = 0.82f),
+                secondary.copy(alpha = 0.92f),
+                tertiary.copy(alpha = 0.85f),
+                primary.copy(alpha = 0.92f)
+            )
+        )
+    }
+    val haloBrush = remember(primary, secondary) {
+        Brush.radialGradient(
+            colors = listOf(
+                primary.copy(alpha = 0.36f),
+                secondary.copy(alpha = 0.18f),
+                Color.Transparent
+            )
+        )
+    }
     val trackColor = activePreset.onBackground.copy(alpha = 0.18f)
     val trayPath = remember { Path() }
     val headPath = remember { Path() }
@@ -915,25 +934,16 @@ private fun LuxuryUpdateArrowAction(
                 .clip(pillShape)
                 .background(brush = bgBrush)
                 .drawBehind {
-                    val angleRad = Math.toRadians(shimmerAngle.toDouble())
-                    val dirX = cos(angleRad).toFloat()
-                    val dirY = sin(angleRad).toFloat()
                     val strokePx = 1.4.dp.toPx()
                     val radiusPx = 19.dp.toPx()
-                    drawRoundRect(
-                        brush = Brush.linearGradient(
-                            colors = listOf(
-                                primary.copy(alpha = 0.92f),
-                                Color.White.copy(alpha = haloPulse),
-                                secondary.copy(alpha = 0.92f),
-                                tertiary.copy(alpha = 0.85f)
-                            ),
-                            start = Offset(40f + 40f * dirX, 19f + 19f * dirY),
-                            end = Offset(40f - 40f * dirX, 19f - 19f * dirY)
-                        ),
-                        cornerRadius = CornerRadius(radiusPx, radiusPx),
-                        style = Stroke(width = strokePx)
-                    )
+                    rotate(degrees = shimmerAngle, pivot = center) {
+                        drawRoundRect(
+                            brush = borderSweepBrush,
+                            cornerRadius = CornerRadius(radiusPx, radiusPx),
+                            alpha = 0.65f + haloPulse * 0.35f,
+                            style = Stroke(width = strokePx)
+                        )
+                    }
                 }
                 .padding(horizontal = 10.dp),
             contentAlignment = Alignment.Center
@@ -953,17 +963,10 @@ private fun LuxuryUpdateArrowAction(
 
                         // Soft radial jewel halo
                         drawCircle(
-                            brush = Brush.radialGradient(
-                                colors = listOf(
-                                    primary.copy(alpha = 0.34f * haloPulse),
-                                    secondary.copy(alpha = 0.16f * haloPulse),
-                                    Color.Transparent
-                                ),
-                                center = Offset(cx, cy),
-                                radius = r
-                            ),
+                            brush = haloBrush,
                             radius = r,
-                            center = Offset(cx, cy)
+                            center = Offset(cx, cy),
+                            alpha = haloPulse
                         )
 
                         if (isDownloading) {

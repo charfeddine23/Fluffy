@@ -173,5 +173,93 @@ class ScannerHubBatchSelectionTest {
         composeRule.onNodeWithTag("doc_ocr_btn").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("doc_pages_btn").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("doc_add_page_btn").assertIsDisplayed()
+        assertTrue(
+            composeRule.onAllNodes(androidx.compose.ui.test.hasText("1 page"))
+                .fetchSemanticsNodes()
+                .isEmpty()
+        )
+    }
+
+    @Test
+    fun verticalSwipeSwitchesBetweenScannerDocuments() {
+        val doc1 = insertDoc("doc-a", "First Document", sortOrder = 1000L)
+        val doc2 = insertDoc("doc-b", "Second Document", sortOrder = 2000L)
+        val imgFile1 = File(viewModel.repository.docsRootDir, "test_swipe_1.jpg")
+        val imgFile2 = File(viewModel.repository.docsRootDir, "test_swipe_2.jpg")
+        val bmp = Bitmap.createBitmap(240, 320, Bitmap.Config.ARGB_8888)
+        DocumentImageProcessor.saveBitmapAsJpeg(bmp, imgFile1, 90)
+        DocumentImageProcessor.saveBitmapAsJpeg(bmp, imgFile2, 90)
+        bmp.recycle()
+
+        runBlocking(Dispatchers.IO) {
+            viewModel.repository.upsertPage(
+                ScannedPageEntity(
+                    id = "page-swipe-1",
+                    documentId = doc1.id,
+                    pageOrder = 0,
+                    originalImagePath = imgFile1.absolutePath,
+                    processedImagePath = imgFile1.absolutePath
+                )
+            )
+            viewModel.repository.upsertPage(
+                ScannedPageEntity(
+                    id = "page-swipe-2",
+                    documentId = doc2.id,
+                    pageOrder = 0,
+                    originalImagePath = imgFile2.absolutePath,
+                    processedImagePath = imgFile2.absolutePath
+                )
+            )
+        }
+        viewModel.setSortOption(com.charfeddine.fluffy.scanner.data.model.SortOption.CUSTOM)
+        viewModel.openDocumentDetail(doc1.id)
+
+        composeRule.setContent {
+            com.charfeddine.fluffy.scanner.ui.components.ScannerRootHost(
+                isArabic = false,
+                onTriggerBiometricPrompt = { _, _, onSuccess, _ -> onSuccess() },
+                onSaveQrAsFluffyNote = { _, _ -> },
+                onExitScanner = {},
+                scannerViewModel = viewModel
+            )
+        }
+
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            composeRule.onAllNodes(androidx.compose.ui.test.hasText("First Document"))
+                .fetchSemanticsNodes().isNotEmpty() &&
+                composeRule.onAllNodes(androidx.compose.ui.test.hasContentDescription("Document page"))
+                    .fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // Swipe up -> switches to Second Document
+        composeRule.onNode(androidx.compose.ui.test.hasContentDescription("Document page"))
+            .performTouchInput {
+                down(center)
+                moveBy(androidx.compose.ui.geometry.Offset(0f, -260f))
+                up()
+            }
+
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            viewModel.currentRoute.value == com.charfeddine.fluffy.scanner.domain.ScannerSubRoute.DocumentDetail(doc2.id)
+        }
+
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            composeRule.onAllNodes(androidx.compose.ui.test.hasText("Second Document"))
+                .fetchSemanticsNodes().isNotEmpty() &&
+                composeRule.onAllNodes(androidx.compose.ui.test.hasContentDescription("Document page"))
+                    .fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // Swipe down -> switches back to First Document
+        composeRule.onNode(androidx.compose.ui.test.hasContentDescription("Document page"))
+            .performTouchInput {
+                down(center)
+                moveBy(androidx.compose.ui.geometry.Offset(0f, 260f))
+                up()
+            }
+
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            viewModel.currentRoute.value == com.charfeddine.fluffy.scanner.domain.ScannerSubRoute.DocumentDetail(doc1.id)
+        }
     }
 }

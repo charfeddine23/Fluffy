@@ -7,6 +7,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,15 +43,21 @@ internal class FabDragSelectionController {
     var pointerRootOffset by mutableStateOf<Offset?>(null)
         private set
 
+    var boundsVersion by mutableIntStateOf(0)
+        private set
+
     private val actionBounds = mutableStateMapOf<String, Rect>()
     private var cancelBounds: Rect? = null
 
     fun registerActionBounds(tag: String, rect: Rect) {
         actionBounds[tag] = rect
+        boundsVersion++
     }
 
     fun unregisterActionBounds(tag: String) {
-        actionBounds.remove(tag)
+        if (actionBounds.remove(tag) != null) {
+            boundsVersion++
+        }
     }
 
     fun registerCancelBounds(rect: Rect) {
@@ -79,28 +86,6 @@ internal class FabDragSelectionController {
             return null
         }
 
-        val cancelRect = cancelBounds
-        if (cancelRect != null) {
-            val distToCancel = hypot(
-                (rootOffset.x - cancelRect.center.x).toDouble(),
-                (rootOffset.y - cancelRect.center.y).toDouble()
-            ).toFloat()
-            val cancelRadius = maxOf(cancelRect.width, cancelRect.height) * 0.54f
-            if (distToCancel <= cancelRadius) {
-                val closerActionExists = actionBounds.values.any { rect ->
-                    val d = hypot(
-                        (rootOffset.x - rect.center.x).toDouble(),
-                        (rootOffset.y - rect.center.y).toDouble()
-                    ).toFloat()
-                    d < distToCancel * 0.85f
-                }
-                if (!closerActionExists) {
-                    hoveredActionTag = null
-                    return null
-                }
-            }
-        }
-
         var bestTag: String? = null
         var bestDist = Float.MAX_VALUE
         actionBounds.forEach { (tag, rect) ->
@@ -121,6 +106,26 @@ internal class FabDragSelectionController {
                 }
             }
         }
+
+        val cancelRect = cancelBounds
+        if (cancelRect != null) {
+            val distToCancel = hypot(
+                (rootOffset.x - cancelRect.center.x).toDouble(),
+                (rootOffset.y - cancelRect.center.y).toDouble()
+            ).toFloat()
+            val cancelRadius = maxOf(cancelRect.width, cancelRect.height) * 0.44f
+            val directlyInsideBestRect = bestTag?.let { tag ->
+                actionBounds[tag]?.contains(rootOffset) == true
+            } ?: false
+            if (distToCancel <= cancelRadius && !directlyInsideBestRect) {
+                val closerActionExists = bestTag != null && bestDist < distToCancel * 0.85f
+                if (!closerActionExists) {
+                    hoveredActionTag = null
+                    return null
+                }
+            }
+        }
+
         hoveredActionTag = bestTag
         return bestTag
     }
@@ -186,13 +191,12 @@ internal fun Modifier.fabPressAndDragAnchor(
     isExpanded: Boolean,
     expandProgress: Float,
     actions: List<FabActionItem>,
-    hitSlopDp: Dp = 18.dp,
-    topExtraSlopDp: Dp = 22.dp,
+    hitSlopDp: Dp = 22.dp,
+    topExtraSlopDp: Dp = 26.dp,
     onExpand: () -> Unit,
     onCollapse: () -> Unit
 ): Modifier = composed {
     val isExpandedState by rememberUpdatedState(isExpanded)
-    val expandProgressState by rememberUpdatedState(expandProgress)
     val actionsState by rememberUpdatedState(actions)
     val onExpandState by rememberUpdatedState(onExpand)
     val onCollapseState by rememberUpdatedState(onCollapse)
@@ -205,6 +209,7 @@ internal fun Modifier.fabPressAndDragAnchor(
     LaunchedEffect(
         controller.isDragSessionActive,
         controller.pointerRootOffset,
+        controller.boundsVersion,
         expandProgress
     ) {
         if (controller.isDragSessionActive) {
@@ -213,7 +218,7 @@ internal fun Modifier.fabPressAndDragAnchor(
                 rootOffset = controller.pointerRootOffset,
                 hitSlopPx = hitSlopPx,
                 topExtraSlopPx = topExtraSlopPx,
-                allowSelection = expandProgress >= 0.20f
+                allowSelection = true
             )
             if (newTag != null && newTag != prevTag) {
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -302,14 +307,12 @@ internal fun Modifier.fabPressAndDragAnchor(
                                 rootOffset = rootPos ?: controller.pointerRootOffset,
                                 hitSlopPx = hitSlopPx,
                                 topExtraSlopPx = topExtraSlopPx,
-                                allowSelection = expandProgressState >= 0.15f
-                            )
+                                allowSelection = true
+                            ) ?: controller.hoveredActionTag
                             val matchedAction = actionsState.firstOrNull { it.testTag == finalTag }
                             if (matchedAction != null) {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                 matchedAction.onClick()
-                            } else if (maxDragDistance < touchSlop * 2.2f) {
-                                // Long-press without dragging keeps the menu open for tapping.
                             } else {
                                 onCollapseState()
                             }
@@ -322,7 +325,7 @@ internal fun Modifier.fabPressAndDragAnchor(
                             rootOffset = rootPos,
                             hitSlopPx = hitSlopPx,
                             topExtraSlopPx = topExtraSlopPx,
-                            allowSelection = expandProgressState >= 0.20f
+                            allowSelection = true
                         )
                         if (newTag != null && newTag != prevTag) {
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)

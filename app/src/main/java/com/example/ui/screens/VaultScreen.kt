@@ -255,26 +255,6 @@ fun VaultScreen(
     val textColor = activePreset.onSurface
     val metaColor = activePreset.onSurfaceVariant
 
-    val infiniteTransition = rememberInfiniteTransition(label = "vault_pulse")
-    val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 0.94f,
-        targetValue = 1.06f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2000, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "vault_halo_scale"
-    )
-    val floatOffset by infiniteTransition.animateFloat(
-        initialValue = -3f,
-        targetValue = 3f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1800, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "vault_float"
-    )
-
     LaunchedEffect(vaultSessionId, isVaultActive, isVaultLockEnabled, isVaultUnlocked) {
         if (isVaultActive && isVaultLockEnabled && !isVaultUnlocked && promptedSessionId != vaultSessionId) {
             promptedSessionId = vaultSessionId
@@ -958,6 +938,35 @@ fun VaultScreen(
                 Spacer(modifier = Modifier.height(10.dp))
 
                 if (vaultItems.isEmpty()) {
+                    val emptyTransition = rememberInfiniteTransition(label = "vault_pulse")
+                    val pulseScale by emptyTransition.animateFloat(
+                        initialValue = 0.94f,
+                        targetValue = 1.06f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(durationMillis = 2000, easing = FastOutSlowInEasing),
+                            repeatMode = RepeatMode.Reverse
+                        ),
+                        label = "vault_halo_scale"
+                    )
+                    val floatOffset by emptyTransition.animateFloat(
+                        initialValue = -3f,
+                        targetValue = 3f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(durationMillis = 1800, easing = FastOutSlowInEasing),
+                            repeatMode = RepeatMode.Reverse
+                        ),
+                        label = "vault_float"
+                    )
+                    val ringSweepBrush = remember {
+                        Brush.sweepGradient(
+                            colors = listOf(
+                                Color(0xFF38BDF8).copy(alpha = 0.75f),
+                                Color(0xFFC084FC).copy(alpha = 0.85f),
+                                Color(0xFFF472B6).copy(alpha = 0.75f),
+                                Color(0xFF38BDF8).copy(alpha = 0.75f)
+                            )
+                        )
+                    }
                     // Empty Vault Emblem
                     Box(
                         modifier = Modifier
@@ -1016,14 +1025,7 @@ fun VaultScreen(
                                         )
 
                                         drawCircle(
-                                            brush = Brush.sweepGradient(
-                                                colors = listOf(
-                                                    Color(0xFF38BDF8).copy(alpha = 0.75f),
-                                                    Color(0xFFC084FC).copy(alpha = 0.85f),
-                                                    Color(0xFFF472B6).copy(alpha = 0.75f),
-                                                    Color(0xFF38BDF8).copy(alpha = 0.75f)
-                                                )
-                                            ),
+                                            brush = ringSweepBrush,
                                             radius = outerRadius * 0.80f,
                                             center = center,
                                             style = Stroke(width = 2.dp.toPx())

@@ -172,4 +172,87 @@ class FabDragSelectionTest {
                 .isEmpty()
         )
     }
+
+    @Test
+    fun longPressOnPlusWithoutDraggingShowsMenuThenCollapsesOnRelease() {
+        var anyTriggered = false
+        composeRule.setContent {
+            Box(modifier = Modifier.fillMaxSize()) {
+                FluffyBottomBar(
+                    isDark = false,
+                    isArabic = false,
+                    onNewNote = { anyTriggered = true },
+                    onNewChecklist = { anyTriggered = true },
+                    onNewVoiceNote = { anyTriggered = true },
+                    onOpenScanner = { anyTriggered = true },
+                    fabMenuStyle = FabMenuStyle.VERTICAL_STACK
+                )
+            }
+        }
+
+        val plusNode = composeRule.onNodeWithTag("floating_new_note_button")
+        plusNode.performTouchInput {
+            down(center)
+        }
+        composeRule.mainClock.advanceTimeBy(220L)
+        composeRule.waitForIdle()
+
+        // Menu is open while holding
+        composeRule.onNodeWithTag("action_doc_scanner_btn").assertIsDisplayed()
+
+        // Releasing without sliding to any action collapses the menu
+        composeRule.onNodeWithTag("action_collapse_dock_btn").performTouchInput {
+            up()
+        }
+        composeRule.waitForIdle()
+
+        assertFalse(anyTriggered)
+        assertTrue(
+            composeRule.onAllNodes(androidx.compose.ui.test.hasTestTag("action_doc_scanner_btn"))
+                .fetchSemanticsNodes()
+                .isEmpty()
+        )
+    }
+
+    @Test
+    fun immediateSlideToScannerAndInstantReleaseTriggersWithoutWaiting() {
+        var scannerOpened = 0
+        composeRule.setContent {
+            Box(modifier = Modifier.fillMaxSize()) {
+                FluffyBottomBar(
+                    isDark = false,
+                    isArabic = false,
+                    onNewNote = {},
+                    onNewChecklist = {},
+                    onNewVoiceNote = {},
+                    onOpenScanner = { scannerOpened++ },
+                    fabMenuStyle = FabMenuStyle.ORIGINAL
+                )
+            }
+        }
+
+        val dockNode = composeRule.onNodeWithTag("morphing_action_dock")
+        dockNode.performTouchInput {
+            down(center)
+            // Drag left past touchSlop to enter drag mode and expand dock
+            moveBy(Offset(-55f, 0f))
+        }
+        // Only advance 30ms (early in spring animation) before moving to target and releasing immediately
+        composeRule.mainClock.advanceTimeBy(30L)
+        composeRule.waitForIdle()
+
+        val targetBounds = composeRule.onNodeWithTag("action_doc_scanner_btn")
+            .fetchSemanticsNode()
+            .boundsInRoot
+        val dockBounds = dockNode.fetchSemanticsNode().boundsInRoot
+        val localTarget = targetBounds.center - dockBounds.topLeft
+
+        dockNode.performTouchInput {
+            moveTo(localTarget)
+            up()
+        }
+        composeRule.waitForIdle()
+
+        assertEquals(1, scannerOpened)
+    }
 }

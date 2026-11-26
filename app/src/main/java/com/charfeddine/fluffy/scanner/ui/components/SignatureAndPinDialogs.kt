@@ -46,6 +46,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -70,6 +71,8 @@ import com.charfeddine.fluffy.scanner.data.model.SavedSignatureEntity
 import com.charfeddine.fluffy.scanner.data.model.WatermarkConfig
 import com.charfeddine.fluffy.scanner.ui.theme.ScannerGlassPalette
 import com.charfeddine.fluffy.scanner.ui.theme.scannerGlassSurface
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 fun SignatureStudioDialog(
@@ -121,7 +124,11 @@ fun SignatureStudioDialog(
                 )
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(savedSignatures, key = { it.id }) { sig ->
-                        val bmp = remember(sig.id) { loadSignatureBitmap(sig) }
+                        val bmp by produceState<Bitmap?>(initialValue = null, sig.id) {
+                            value = withContext(Dispatchers.IO) {
+                                loadSignatureBitmap(sig)
+                            }
+                        }
                         Row(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(14.dp))
@@ -133,9 +140,10 @@ fun SignatureStudioDialog(
                                 .padding(horizontal = 8.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            if (bmp != null) {
+                            val loadedBmp = bmp
+                            if (loadedBmp != null) {
                                 Image(
-                                    bitmap = bmp.asImageBitmap(),
+                                    bitmap = loadedBmp.asImageBitmap(),
                                     contentDescription = sig.name,
                                     modifier = Modifier.size(width = 76.dp, height = 34.dp)
                                 )

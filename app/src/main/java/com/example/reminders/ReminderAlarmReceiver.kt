@@ -15,6 +15,8 @@ import com.example.MainActivity
 import com.example.R
 import com.example.data.local.FluffyDatabase
 import com.example.data.model.NotePagesCodec
+import com.example.data.repository.FirebaseSyncRepository
+import com.example.data.storage.LocalDeviceStorageManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -34,8 +36,17 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
             try {
                 if (action == NoteReminderScheduler.ACTION_DISMISS_REMINDER) {
                     val dao = FluffyDatabase.getDatabase(appContext).noteDao()
-                    dao.updateNoteReminder(noteId, 0L, System.currentTimeMillis())
+                    val now = System.currentTimeMillis()
+                    dao.updateNoteReminder(noteId, 0L, now)
                     NoteReminderScheduler.cancelReminder(appContext, noteId)
+                    runCatching {
+                        LocalDeviceStorageManager.saveNotesLiteralSnapshot(appContext, dao.getAllNotesOnce())
+                    }
+                    val updatedNote = dao.getNoteByIdOnce(noteId)
+                    val uid = FirebaseSyncRepository.currentUser(appContext)?.uid
+                    if (updatedNote != null && uid != null) {
+                        runCatching { FirebaseSyncRepository.upsertNote(appContext, uid, updatedNote) }
+                    }
                     return@launch
                 }
 

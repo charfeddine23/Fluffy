@@ -251,7 +251,7 @@ internal fun OriginalCapsuleMenu(
                         isExpanded = isExpanded,
                         expandProgress = expandProgress,
                         actions = actions,
-                        hitSlopDp = 12.dp,
+                        hitSlopDp = 18.dp,
                         topExtraSlopDp = 34.dp,
                         onExpand = onExpand,
                         onCollapse = onCollapse
@@ -276,7 +276,7 @@ internal fun OriginalCapsuleMenu(
                     .clip(RoundedCornerShape(32.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                if (!isExpanded && expandProgress < 0.25f) {
+                if (!isExpanded && expandProgress < 0.05f) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -305,7 +305,7 @@ internal fun OriginalCapsuleMenu(
                             .fillMaxSize()
                             .padding(horizontal = 10.dp)
                             .graphicsLayer {
-                                alpha = ((expandProgress - 0.15f) / 0.85f).coerceIn(0f, 1f)
+                                alpha = (expandProgress / 0.65f).coerceIn(0f, 1f)
                             },
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically
@@ -467,7 +467,7 @@ internal fun VerticalGlassStackMenu(
             horizontalAlignment = horizontalAlign,
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            if (expandProgress > 0.02f) {
+            if (isExpanded || expandProgress > 0.01f) {
                 val activeHoveredTag = dragController.hoveredActionTag
                 val isAnyHovered = dragController.isDragSessionActive && activeHoveredTag != null
                 val ordered = actions.reversed()
@@ -645,7 +645,7 @@ internal fun OrbitalRadialDialMenu(
 
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
             Box(modifier = Modifier.fillMaxSize()) {
-                if (expandProgress > 0.01f) {
+                if (isExpanded || expandProgress > 0.01f) {
                     val infiniteTransition = rememberInfiniteTransition(label = "orbital_dial_anim")
                     val sweepPhase by infiniteTransition.animateFloat(
                         initialValue = 0f,
@@ -1034,7 +1034,7 @@ internal fun DiamondMosaicBentoMenu(
             horizontalAlignment = horizontalAlign,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            if (expandProgress > 0.02f) {
+            if (isExpanded || expandProgress > 0.01f) {
                 val activeHoveredTag = dragController.hoveredActionTag
                 val isAnyHovered = dragController.isDragSessionActive && activeHoveredTag != null
                 val topRow = listOfNotNull(actions.getOrNull(0), actions.getOrNull(1))
