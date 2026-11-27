@@ -141,8 +141,11 @@ import com.example.ui.components.EditorPageTitleField
 import com.example.ui.components.EditorTopAppBar
 import com.example.ui.components.InsertFeaturesBottomSheet
 import com.example.ui.components.NoteReminderDialog
+import com.example.ui.components.ProgressBarPickerDialog
 import com.example.ui.components.RichContentView
 import com.example.ui.components.SegmentedRichPageEditor
+import com.example.ui.components.StarRatingPickerDialog
+import com.example.ui.components.StatusBadgePickerDialog
 import com.example.ui.components.TableEditorDialog
 import com.example.ui.components.UnifiedWritingBottomBar
 import com.example.ui.components.VoiceRecorderDialog
@@ -272,6 +275,9 @@ fun NoteEditorScreen(
     var showPagePickerDialog by remember { mutableStateOf(false) }
     var showInsertSheet by remember { mutableStateOf(false) }
     var showTableDialog by remember { mutableStateOf(false) }
+    var showStarRatingDialog by remember { mutableStateOf(false) }
+    var showProgressBarDialog by remember { mutableStateOf(false) }
+    var showStatusBadgeDialog by remember { mutableStateOf(false) }
     var showImageScanDialog by remember { mutableStateOf(false) }
     var isExtractingOcr by remember { mutableStateOf(false) }
     var isFocusMode by remember { mutableStateOf(false) }
@@ -571,34 +577,14 @@ fun NoteEditorScreen(
         pendingStylesByPage[pageIndex] = result.updatedPendingStyles
     }
 
-    fun applyInsertFeatureToPage(pageIndex: Int, feature: InsertFeatureType) {
+    fun applySnippetToPage(pageIndex: Int, snippet: String, ensureNewLinePrefix: Boolean) {
         if (pageIndex !in pages.indices) return
-        val snippet = RichTextCodec.buildInsertSnippet(feature, isArabic)
-        if (feature == InsertFeatureType.PROS_CONS_TABLE) {
-            val updatedPageText = insertTableInSegmentedPage(
-                pageText = pages[pageIndex],
-                preferredSegmentIndex = activeSegmentByPage[pageIndex] ?: 0,
-                segmentSelections = pageSegmentSelections(pageIndex),
-                tableMarkdown = snippet.trimEnd('\n')
-            )
-            updatePageTextBounded(pageIndex, updatedPageText)
-            val latestSegments = RichTextCodec.splitPageIntoEditorSegments(pages[pageIndex])
-            clearPageSegments(pageIndex)
-            val tailIdx = latestSegments.indexOfLast { it is EditorPageSegment.TextSegment }.coerceAtLeast(0)
-            activeSegmentByPage[pageIndex] = tailIdx
-            segmentSelections["$pageIndex:$tailIdx"] = TextRange(0)
-            pendingStylesByPage.remove(pageIndex)
-            return
-        }
-        val needNewLine = feature == InsertFeatureType.DAILY_HEADER ||
-            feature == InsertFeatureType.PROGRESS_BAR ||
-            feature == InsertFeatureType.MEETING_TEMPLATE
         val result = insertSnippetInSegmentedPage(
             pageText = pages[pageIndex],
             preferredSegmentIndex = activeSegmentByPage[pageIndex] ?: 0,
             segmentSelections = pageSegmentSelections(pageIndex),
             snippet = snippet,
-            ensureNewLinePrefix = needNewLine
+            ensureNewLinePrefix = ensureNewLinePrefix
         )
         val truncated = updatePageTextBounded(pageIndex, result.updatedPageText)
         val latestSegments = RichTextCodec.splitPageIntoEditorSegments(pages[pageIndex])
@@ -614,6 +600,15 @@ fun NoteEditorScreen(
         }
         segmentCompositions["$pageIndex:${result.targetSegmentIndex}"] = null
         pendingStylesByPage.remove(pageIndex)
+    }
+
+    fun applyInsertFeatureToPage(pageIndex: Int, feature: InsertFeatureType) {
+        if (pageIndex !in pages.indices) return
+        val snippet = RichTextCodec.buildInsertSnippet(feature, isArabic)
+        val needNewLine = feature == InsertFeatureType.DAILY_HEADER ||
+            feature == InsertFeatureType.PROGRESS_BAR ||
+            feature == InsertFeatureType.MEETING_TEMPLATE
+        applySnippetToPage(pageIndex, snippet, needNewLine)
     }
 
     fun triggerImmediateSaveIfViewMode() {
@@ -1744,6 +1739,9 @@ fun NoteEditorScreen(
                             editingTableTarget = null
                             showTableDialog = true
                         }
+                        InsertFeatureType.STAR_RATING -> showStarRatingDialog = true
+                        InsertFeatureType.PROGRESS_BAR -> showProgressBarDialog = true
+                        InsertFeatureType.STATUS_BADGE -> showStatusBadgeDialog = true
                         InsertFeatureType.VOICE_MEMO -> showVoiceRecorderDialog = true
                         InsertFeatureType.NEW_PAGE -> addPageAndNavigate()
                         InsertFeatureType.CHECKLIST_CARD -> {
@@ -2018,6 +2016,66 @@ fun NoteEditorScreen(
                         editingTableTarget = null
                     }
                 } else null
+            )
+        }
+
+        if (showStarRatingDialog) {
+            val activeIdx = pagerState.currentPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
+            StarRatingPickerDialog(
+                isDark = effectiveDark,
+                isArabic = isArabic,
+                accentColor = accentColor,
+                textColor = textColor,
+                metaColor = metaColor,
+                onDismiss = { showStarRatingDialog = false },
+                onConfirmStars = { stars ->
+                    applySnippetToPage(
+                        pageIndex = activeIdx,
+                        snippet = RichTextCodec.buildStarRatingSnippet(stars),
+                        ensureNewLinePrefix = false
+                    )
+                    showStarRatingDialog = false
+                }
+            )
+        }
+
+        if (showProgressBarDialog) {
+            val activeIdx = pagerState.currentPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
+            ProgressBarPickerDialog(
+                isDark = effectiveDark,
+                isArabic = isArabic,
+                accentColor = accentColor,
+                textColor = textColor,
+                metaColor = metaColor,
+                onDismiss = { showProgressBarDialog = false },
+                onConfirmProgress = { percent, label ->
+                    applySnippetToPage(
+                        pageIndex = activeIdx,
+                        snippet = RichTextCodec.buildProgressBarSnippet(percent, isArabic, label),
+                        ensureNewLinePrefix = true
+                    )
+                    showProgressBarDialog = false
+                }
+            )
+        }
+
+        if (showStatusBadgeDialog) {
+            val activeIdx = pagerState.currentPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
+            StatusBadgePickerDialog(
+                isDark = effectiveDark,
+                isArabic = isArabic,
+                accentColor = accentColor,
+                textColor = textColor,
+                metaColor = metaColor,
+                onDismiss = { showStatusBadgeDialog = false },
+                onConfirmBadge = { emoji, label ->
+                    applySnippetToPage(
+                        pageIndex = activeIdx,
+                        snippet = RichTextCodec.buildStatusBadgeSnippet(emoji, label),
+                        ensureNewLinePrefix = false
+                    )
+                    showStatusBadgeDialog = false
+                }
             )
         }
 

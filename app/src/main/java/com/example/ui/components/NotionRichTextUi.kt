@@ -8,6 +8,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
@@ -16,14 +17,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -44,7 +47,6 @@ import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.DataObject
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.DocumentScanner
@@ -66,6 +68,7 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.Button
@@ -78,12 +81,15 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -134,6 +140,7 @@ import com.example.data.model.RichTextCodec
 import java.io.File
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.theme.LocalAppFontOption
+import kotlin.math.roundToInt
 
 /**
  * Sleek Liquid Glass formatting bar for Writing Mode containing:
@@ -613,7 +620,7 @@ private val insertFeatureDescriptors: List<InsertMenuDescriptor> = listOf(
         tint = Color(0xFFEC4899)
     ),
 
-    // 3: Smart Templates (2 items -> total 20!)
+    // 3: Smart Templates (1 item -> total 19!)
     InsertMenuDescriptor(
         type = InsertFeatureType.MEETING_TEMPLATE,
         categoryIdx = 3,
@@ -623,21 +630,11 @@ private val insertFeatureDescriptors: List<InsertMenuDescriptor> = listOf(
         subtitleEn = "Topic, attendees & action list",
         icon = Icons.Default.Groups,
         tint = Color(0xFF6366F1)
-    ),
-    InsertMenuDescriptor(
-        type = InsertFeatureType.PROS_CONS_TABLE,
-        categoryIdx = 3,
-        titleAr = "جدول إيجابيات وسلبيات",
-        titleEn = "Pros & Cons Table",
-        subtitleAr = "جدول مقارنة جاهز بعمودين",
-        subtitleEn = "Ready 2-column comparison",
-        icon = Icons.Default.CompareArrows,
-        tint = Color(0xFFF97316)
     )
 )
 
 /**
- * Interactive Modal Bottom Sheet presenting 20 categorized insertion tools for Writing Mode.
+ * Interactive Modal Bottom Sheet presenting categorized insertion tools for Writing Mode.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -712,7 +709,11 @@ fun InsertFeaturesBottomSheet(
                         color = textColor
                     )
                     Text(
-                        text = if (isArabic) "اختر من بين 20 ميزة وأداة كتابة ذكية" else "Choose from 20 rich writing tools",
+                        text = if (isArabic) {
+                            "اختر من بين ${insertFeatureDescriptors.size} ميزة وأداة كتابة ذكية"
+                        } else {
+                            "Choose from ${insertFeatureDescriptors.size} rich writing tools"
+                        },
                         fontSize = 12.sp,
                         color = metaColor
                     )
@@ -847,7 +848,7 @@ fun InsertFeaturesBottomSheet(
                 }
             }
 
-            // 20 Categorized Insert Tools in 2-Column Rows
+            // Categorized Insert Tools in 2-Column Rows
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1075,11 +1076,19 @@ fun TableEditorDialog(
             decorFitsSystemWindows = false
         )
     ) {
+        val backdropInteraction = remember { MutableInteractionSource() }
+        val cardInteraction = remember { MutableInteractionSource() }
         Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .imePadding()
-                .navigationBarsPadding()
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.36f))
+                .clickable(
+                    interactionSource = backdropInteraction,
+                    indication = null,
+                    onClick = onDismiss
+                )
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             contentAlignment = Alignment.Center
         ) {
@@ -1091,6 +1100,11 @@ fun TableEditorDialog(
                 modifier = Modifier
                     .fillMaxWidth()
                     .widthIn(max = 520.dp)
+                    .clickable(
+                        interactionSource = cardInteraction,
+                        indication = null,
+                        onClick = {}
+                    )
                     .testTag("table_editor_dialog")
             ) {
                 Column(
@@ -1174,18 +1188,27 @@ fun TableEditorDialog(
                         )
                     }
 
-                    // Interactive Scrollable Grid Table — shrinks cleanly when IME opens so buttons never overlap
-                    Box(
+                    // Interactive Scrollable Grid Table — centered cleanly & shrinks gracefully when IME opens
+                    BoxWithConstraints(
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f, fill = false)
-                            .heightIn(min = 120.dp, max = 300.dp)
+                            .heightIn(min = 88.dp, max = 300.dp)
                             .clip(RoundedCornerShape(16.dp))
                             .border(1.dp, metaColor.copy(alpha = 0.28f), RoundedCornerShape(16.dp))
-                            .verticalScroll(rememberScrollState())
-                            .horizontalScroll(rememberScrollState())
                     ) {
-                        Column {
+                        val gridMinWidth = maxWidth
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState())
+                                .horizontalScroll(rememberScrollState())
+                        ) {
+                            Box(
+                                modifier = Modifier.widthIn(min = gridMinWidth),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column {
                             gridRows.forEachIndexed { rIdx, rowCells ->
                                 val isHeader = rIdx == 0
                                 Row(
@@ -1255,6 +1278,8 @@ fun TableEditorDialog(
                             }
                         }
                     }
+                }
+            }
 
                     // Bottom Action Buttons — compact padding & non-wrapping labels so 3 buttons never collide
                     Row(
@@ -1392,6 +1417,559 @@ private fun DimensionStepperPill(
                 tint = if (canPlus) accentColor else textColor.copy(alpha = 0.3f),
                 modifier = Modifier.size(15.dp)
             )
+        }
+    }
+}
+
+@Composable
+fun StarRatingPickerDialog(
+    isDark: Boolean,
+    isArabic: Boolean,
+    accentColor: Color,
+    textColor: Color,
+    metaColor: Color,
+    initialStars: Int = 4,
+    onDismiss: () -> Unit,
+    onConfirmStars: (Int) -> Unit
+) {
+    var selectedStars by remember { mutableIntStateOf(initialStars.coerceIn(1, 5)) }
+    val starGold = Color(0xFFF59E0B)
+    val backdropInteraction = remember { MutableInteractionSource() }
+    val cardInteraction = remember { MutableInteractionSource() }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.36f))
+                .clickable(
+                    interactionSource = backdropInteraction,
+                    indication = null,
+                    onClick = onDismiss
+                )
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .windowInsetsPadding(WindowInsets.navigationBars)
+                .padding(horizontal = 20.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            LiquidGlassCard(
+                isDark = isDark,
+                tint = GlassTint.FROST,
+                shape = RoundedCornerShape(26.dp),
+                borderWidth = 1.4.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 380.dp)
+                    .clickable(
+                        interactionSource = cardInteraction,
+                        indication = null,
+                        onClick = {}
+                    )
+                    .testTag("star_rating_dialog")
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Text(
+                        text = if (isArabic) "تقييم بالنجوم" else "Star Rating",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = textColor
+                    )
+                    Text(
+                        text = if (isArabic) "اختر عدد النجوم قبل الإضافة" else "Select how many stars to insert",
+                        fontSize = 12.5.sp,
+                        color = metaColor
+                    )
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        for (star in 1..5) {
+                            val active = star <= selectedStars
+                            Box(
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (active) starGold.copy(alpha = if (isDark) 0.18f else 0.14f)
+                                        else Color.Transparent
+                                    )
+                                    .clickable { selectedStars = star }
+                                    .testTag("star_rating_option_$star"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = if (active) Icons.Default.Star else Icons.Default.StarBorder,
+                                    contentDescription = if (isArabic) "$star نجوم" else "$star stars",
+                                    tint = if (active) starGold else metaColor.copy(alpha = 0.55f),
+                                    modifier = Modifier.size(30.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Text(
+                        text = RichTextCodec.buildStarRatingSnippet(selectedStars).trim(),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = starGold
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .defaultMinSize(minHeight = 46.dp)
+                        ) {
+                            Text(
+                                text = if (isArabic) "إلغاء" else "Cancel",
+                                color = metaColor,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Button(
+                            onClick = { onConfirmStars(selectedStars) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = accentColor,
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .defaultMinSize(minHeight = 46.dp)
+                                .testTag("star_rating_confirm_btn")
+                        ) {
+                            Text(
+                                text = if (isArabic) "إدراج" else "Insert",
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ProgressBarPickerDialog(
+    isDark: Boolean,
+    isArabic: Boolean,
+    accentColor: Color,
+    textColor: Color,
+    metaColor: Color,
+    initialPercent: Int = 60,
+    onDismiss: () -> Unit,
+    onConfirmProgress: (percent: Int, label: String) -> Unit
+) {
+    var selectedPercent by remember { mutableIntStateOf(initialPercent.coerceIn(0, 100)) }
+    var customLabel by remember { mutableStateOf("") }
+    val presets = remember { listOf(0, 25, 50, 75, 100) }
+    val backdropInteraction = remember { MutableInteractionSource() }
+    val cardInteraction = remember { MutableInteractionSource() }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.36f))
+                .clickable(
+                    interactionSource = backdropInteraction,
+                    indication = null,
+                    onClick = onDismiss
+                )
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
+                .padding(horizontal = 20.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            LiquidGlassCard(
+                isDark = isDark,
+                tint = GlassTint.FROST,
+                shape = RoundedCornerShape(26.dp),
+                borderWidth = 1.4.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 400.dp)
+                    .clickable(
+                        interactionSource = cardInteraction,
+                        indication = null,
+                        onClick = {}
+                    )
+                    .testTag("progress_bar_dialog")
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = if (isArabic) "شريط التقدم" else "Progress Bar",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = textColor
+                    )
+                    Text(
+                        text = if (isArabic) "حدد نسبة الإنجاز قبل الإضافة" else "Choose progress percentage to insert",
+                        fontSize = 12.5.sp,
+                        color = metaColor
+                    )
+
+                    Text(
+                        text = "$selectedPercent%",
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.Black,
+                        color = accentColor
+                    )
+
+                    Slider(
+                        value = selectedPercent.toFloat(),
+                        onValueChange = { selectedPercent = (it.roundToInt() / 5) * 5 },
+                        valueRange = 0f..100f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = accentColor,
+                            activeTrackColor = accentColor,
+                            inactiveTrackColor = accentColor.copy(alpha = 0.24f)
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("progress_slider")
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        presets.forEach { pct ->
+                            val isSelected = selectedPercent == pct
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .defaultMinSize(minHeight = 40.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(
+                                        if (isSelected) accentColor
+                                        else accentColor.copy(alpha = if (isDark) 0.14f else 0.10f)
+                                    )
+                                    .border(
+                                        width = 1.dp,
+                                        color = if (isSelected) accentColor else accentColor.copy(alpha = 0.25f),
+                                        shape = RoundedCornerShape(12.dp)
+                                    )
+                                    .clickable { selectedPercent = pct }
+                                    .testTag("progress_preset_$pct"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "$pct%",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isSelected) Color.White else textColor
+                                )
+                            }
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = customLabel,
+                        onValueChange = { if (it.length <= 28) customLabel = it },
+                        singleLine = true,
+                        placeholder = {
+                            Text(
+                                text = if (isArabic) "عنوان اختياري (افتراضي: التقدم)" else "Optional label (default: Progress)",
+                                fontSize = 12.5.sp,
+                                color = metaColor.copy(alpha = 0.7f)
+                            )
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = textColor,
+                            unfocusedTextColor = textColor,
+                            focusedBorderColor = accentColor,
+                            unfocusedBorderColor = metaColor.copy(alpha = 0.25f)
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("progress_label_input")
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(if (isDark) Color.White.copy(alpha = 0.06f) else Color.Black.copy(alpha = 0.04f))
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = RichTextCodec.buildProgressBarSnippet(selectedPercent, isArabic, customLabel).trim(),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = textColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .defaultMinSize(minHeight = 46.dp)
+                        ) {
+                            Text(
+                                text = if (isArabic) "إلغاء" else "Cancel",
+                                color = metaColor,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Button(
+                            onClick = { onConfirmProgress(selectedPercent, customLabel) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = accentColor,
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .defaultMinSize(minHeight = 46.dp)
+                                .testTag("progress_confirm_btn")
+                        ) {
+                            Text(
+                                text = if (isArabic) "إدراج" else "Insert",
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun StatusBadgePickerDialog(
+    isDark: Boolean,
+    isArabic: Boolean,
+    accentColor: Color,
+    textColor: Color,
+    metaColor: Color,
+    onDismiss: () -> Unit,
+    onConfirmBadge: (emoji: String, label: String) -> Unit
+) {
+    val presets = RichTextCodec.statusBadgePresets
+    var selectedPreset by remember { mutableStateOf(presets.first()) }
+    var customStatusLabel by remember { mutableStateOf("") }
+    val activeLabel = customStatusLabel.trim().ifBlank {
+        if (isArabic) selectedPreset.labelAr else selectedPreset.labelEn
+    }
+    val backdropInteraction = remember { MutableInteractionSource() }
+    val cardInteraction = remember { MutableInteractionSource() }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.36f))
+                .clickable(
+                    interactionSource = backdropInteraction,
+                    indication = null,
+                    onClick = onDismiss
+                )
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
+                .padding(horizontal = 20.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            LiquidGlassCard(
+                isDark = isDark,
+                tint = GlassTint.FROST,
+                shape = RoundedCornerShape(26.dp),
+                borderWidth = 1.4.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 420.dp)
+                    .clickable(
+                        interactionSource = cardInteraction,
+                        indication = null,
+                        onClick = {}
+                    )
+                    .testTag("status_badge_dialog")
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = if (isArabic) "شارة الحالة" else "Status Badge",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = textColor
+                    )
+                    Text(
+                        text = if (isArabic) "اختر شارة الحالة قبل الإضافة" else "Choose a status badge to insert",
+                        fontSize = 12.5.sp,
+                        color = metaColor
+                    )
+
+                    presets.chunked(2).forEach { pair ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            pair.forEach { preset ->
+                                val isSelected = selectedPreset.id == preset.id
+                                val presetLabel = if (isArabic) preset.labelAr else preset.labelEn
+                                Row(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .defaultMinSize(minHeight = 46.dp)
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(
+                                            if (isSelected) accentColor.copy(alpha = if (isDark) 0.24f else 0.16f)
+                                            else if (isDark) Color.White.copy(alpha = 0.05f) else Color.Black.copy(alpha = 0.04f)
+                                        )
+                                        .border(
+                                            width = if (isSelected) 1.5.dp else 1.dp,
+                                            color = if (isSelected) accentColor else metaColor.copy(alpha = 0.22f),
+                                            shape = RoundedCornerShape(14.dp)
+                                        )
+                                        .clickable { selectedPreset = preset }
+                                        .padding(horizontal = 10.dp, vertical = 8.dp)
+                                        .testTag("status_badge_option_${preset.id}"),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(text = preset.emoji, fontSize = 15.sp)
+                                    Text(
+                                        text = presetLabel,
+                                        fontSize = 12.5.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = textColor,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = customStatusLabel,
+                        onValueChange = { if (it.length <= 28) customStatusLabel = it },
+                        singleLine = true,
+                        placeholder = {
+                            Text(
+                                text = if (isArabic) "أو اكتب نص حالة مخصص..." else "Or type custom status...",
+                                fontSize = 12.5.sp,
+                                color = metaColor.copy(alpha = 0.7f)
+                            )
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = textColor,
+                            unfocusedTextColor = textColor,
+                            focusedBorderColor = accentColor,
+                            unfocusedBorderColor = metaColor.copy(alpha = 0.25f)
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("status_badge_custom_input")
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(if (isDark) Color.White.copy(alpha = 0.06f) else Color.Black.copy(alpha = 0.04f))
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = RichTextCodec.buildStatusBadgeSnippet(selectedPreset.emoji, activeLabel).trim(),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = textColor
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .defaultMinSize(minHeight = 46.dp)
+                        ) {
+                            Text(
+                                text = if (isArabic) "إلغاء" else "Cancel",
+                                color = metaColor,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Button(
+                            onClick = { onConfirmBadge(selectedPreset.emoji, activeLabel) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = accentColor,
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .defaultMinSize(minHeight = 46.dp)
+                                .testTag("status_badge_confirm_btn")
+                        ) {
+                            Text(
+                                text = if (isArabic) "إدراج" else "Insert",
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -2218,14 +2796,23 @@ fun StyledMarkdownTable(
             (96 + (maxChars - 6).coerceAtLeast(0) * 6).coerceIn(96, 200).dp
         }
     }
-    Box(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .border(1.dp, metaColor.copy(alpha = 0.30f), RoundedCornerShape(12.dp))
-            .horizontalScroll(rememberScrollState())
     ) {
-        Column {
+        val tableMinWidth = maxWidth
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+        ) {
+            Box(
+                modifier = Modifier.widthIn(min = tableMinWidth),
+                contentAlignment = Alignment.Center
+            ) {
+                Column {
             table.rows.forEachIndexed { rIdx, row ->
                 val isHeader = rIdx == 0
                 Row(
@@ -2268,6 +2855,8 @@ fun StyledMarkdownTable(
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
+                    }
+                }
                     }
                 }
             }

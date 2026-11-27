@@ -194,8 +194,8 @@ class NoteDraftAndRichTextTest {
     }
 
     @Test
-    fun `writing mode formatting toggles strikethrough highlight H3 and 20 insert features cleanly`() {
-        assertEquals(20, InsertFeatureType.entries.size)
+    fun `writing mode formatting toggles strikethrough highlight H3 and 19 insert features cleanly`() {
+        assertEquals(19, InsertFeatureType.entries.size)
 
         val strike = RichTextCodec.applyRichAction(
             TextFieldValue("تشطيب", TextRange(0, 5)),
@@ -215,13 +215,11 @@ class NoteDraftAndRichTextTest {
         assertEquals("### فرعي", h3.text)
         assertTrue(RichFormatAction.H3 in RichTextCodec.inspectActiveStyles(h3.text, h3.selection))
 
-        val prosCons = RichTextCodec.buildInsertSnippet(InsertFeatureType.PROS_CONS_TABLE, isArabic = true)
-        val inserted = RichTextCodec.insertSnippetAtSelection(
-            TextFieldValue("مقارنة:", TextRange(7)),
-            prosCons,
-            ensureNewLinePrefix = true
-        )
-        assertEquals(1, RichTextCodec.parseAllTables(inserted.text).size)
+        val progress = RichTextCodec.buildProgressBarSnippet(80, isArabic = true, label = "الإنجاز")
+        assertTrue(progress.contains("80%"))
+        assertTrue(progress.contains("الإنجاز"))
+        val badge = RichTextCodec.buildStatusBadgeSnippet("✅", "مكتمل")
+        assertEquals("【✅ مكتمل】 ", badge)
         assertTrue(RichTextCodec.buildInsertSnippet(InsertFeatureType.DATE_STAMP, isArabic = true, nowMillis = 0L).startsWith("📅"))
         assertTrue(RichTextCodec.buildInsertSnippet(InsertFeatureType.MEETING_TEMPLATE, isArabic = false).contains("Meeting Notes"))
     }
@@ -488,5 +486,83 @@ class NoteDraftAndRichTextTest {
         )
         assertTrue(safeReplaced.text.startsWith("top\n| X | Y |"))
         assertTrue(safeReplaced.text.endsWith("| 9 | 8 |\nbottom"))
+    }
+
+    @Test
+    fun `todo bullet and numbered lists auto-continue on Enter and exit with single Backspace`() {
+        // 1. Todo box: pressing Enter on a todo item adds "- [ ] " on the next line
+        val todoEnter = RichTextCodec.applyPendingStylesOnEdit(
+            prevText = "- [ ] Buy milk",
+            nextVal = TextFieldValue("- [ ] Buy milk\n", TextRange(15)),
+            pendingStyles = emptySet()
+        )
+        assertEquals("- [ ] Buy milk\n- [ ] ", todoEnter.fieldValue.text)
+        assertEquals(21, todoEnter.fieldValue.selection.start)
+
+        // Pressing Enter immediately after inserting a single empty Todo Box also adds the 2nd box
+        val emptyTodoEnter = RichTextCodec.applyPendingStylesOnEdit(
+            prevText = "- [ ] ",
+            nextVal = TextFieldValue("- [ ] \n", TextRange(7)),
+            pendingStyles = emptySet()
+        )
+        assertEquals("- [ ] \n- [ ] ", emptyTodoEnter.fieldValue.text)
+        assertEquals(13, emptyTodoEnter.fieldValue.selection.start)
+
+        // Single Backspace on the newly created "- [ ] " removes the whole box prefix in one tap
+        val todoSingleBackspace = RichTextCodec.applyPendingStylesOnEdit(
+            prevText = "- [ ] Buy milk\n- [ ] ",
+            nextVal = TextFieldValue("- [ ] Buy milk\n- [ ]", TextRange(20)),
+            pendingStyles = emptySet()
+        )
+        assertEquals("- [ ] Buy milk\n", todoSingleBackspace.fieldValue.text)
+        assertEquals(15, todoSingleBackspace.fieldValue.selection.start)
+
+        // Pressing Enter again from that cleared plain line does NOT add another todo box
+        val plainEnterAfterDelete = RichTextCodec.applyPendingStylesOnEdit(
+            prevText = "- [ ] Buy milk\n",
+            nextVal = TextFieldValue("- [ ] Buy milk\n\n", TextRange(16)),
+            pendingStyles = emptySet()
+        )
+        assertEquals("- [ ] Buy milk\n\n", plainEnterAfterDelete.fieldValue.text)
+        assertEquals(16, plainEnterAfterDelete.fieldValue.selection.start)
+
+        // 2. Bullet list: pressing Enter adds "- " and single Backspace removes it
+        val bulletEnter = RichTextCodec.applyPendingStylesOnEdit(
+            prevText = "- First point",
+            nextVal = TextFieldValue("- First point\n", TextRange(14)),
+            pendingStyles = emptySet()
+        )
+        assertEquals("- First point\n- ", bulletEnter.fieldValue.text)
+        assertEquals(16, bulletEnter.fieldValue.selection.start)
+
+        val bulletBackspace = RichTextCodec.applyPendingStylesOnEdit(
+            prevText = "- First point\n- ",
+            nextVal = TextFieldValue("- First point\n-", TextRange(15)),
+            pendingStyles = emptySet()
+        )
+        assertEquals("- First point\n", bulletBackspace.fieldValue.text)
+
+        // 3. Numbered list: pressing Enter increments the number ("1. " -> "2. "), single Backspace clears it
+        val numEnter = RichTextCodec.applyPendingStylesOnEdit(
+            prevText = "1. Step one",
+            nextVal = TextFieldValue("1. Step one\n", TextRange(12)),
+            pendingStyles = emptySet()
+        )
+        assertEquals("1. Step one\n2. ", numEnter.fieldValue.text)
+        assertEquals(15, numEnter.fieldValue.selection.start)
+
+        val numBackspace = RichTextCodec.applyPendingStylesOnEdit(
+            prevText = "1. Step one\n2. ",
+            nextVal = TextFieldValue("1. Step one\n2.", TextRange(14)),
+            pendingStyles = emptySet()
+        )
+        assertEquals("1. Step one\n", numBackspace.fieldValue.text)
+    }
+
+    @Test
+    fun `buildStarRatingSnippet formats chosen star counts cleanly`() {
+        assertEquals("★☆☆☆☆ (1/5) ", RichTextCodec.buildStarRatingSnippet(1))
+        assertEquals("★★★☆☆ (3/5) ", RichTextCodec.buildStarRatingSnippet(3))
+        assertEquals("★★★★★ (5/5) ", RichTextCodec.buildStarRatingSnippet(5))
     }
 }

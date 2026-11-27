@@ -56,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -71,6 +72,7 @@ import com.example.data.storage.AudioCloudPolicy
 import com.example.data.storage.AudioStorageManager
 import com.example.ui.glass.LiquidGlassCard
 import com.example.ui.glass.liquidGlass
+import com.example.ui.theme.LocalAppThemePreset
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Locale
@@ -233,8 +235,13 @@ fun VoiceRecorderDialog(
         }
     }
 
-    val textColor = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
-    val metaColor = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
+    val themePreset = LocalAppThemePreset.current
+    val primaryAccent = themePreset.primary
+    val secondaryAccent = themePreset.secondary
+    val tertiaryAccent = themePreset.tertiary
+    val onAccentColor = if (primaryAccent.luminance() > 0.52f) Color(0xFF0F172A) else Color.White
+    val textColor = themePreset.onSurface
+    val metaColor = themePreset.onSurfaceVariant
     val isPreviewPlaying = playbackController.activeTrackId == "preview" && playbackController.isPlaying
     val isOverCloudLimit = AudioCloudPolicy.isAudioOverCloudLimit(recordedByteSize)
 
@@ -247,9 +254,9 @@ fun VoiceRecorderDialog(
     ) {
         LiquidGlassCard(
             isDark = isDark,
-            tint = GlassTint.ROSE,
+            tint = GlassTint.FROST,
             shape = RoundedCornerShape(28.dp),
-            borderWidth = 2.dp,
+            borderWidth = 1.8.dp,
             testTag = "voice_recorder_dialog"
         ) {
             Column(
@@ -304,7 +311,7 @@ fun VoiceRecorderDialog(
                     text = String.format(Locale.US, "%02d:%02d", mins, secs),
                     fontSize = 36.sp,
                     fontWeight = FontWeight.ExtraBold,
-                    color = if (isRecording) Color(0xFFEC4899) else textColor
+                    color = if (isRecording) primaryAccent else textColor
                 )
 
                 Text(
@@ -388,7 +395,7 @@ fun VoiceRecorderDialog(
                         Text(
                             text = if (isArabic) "فتح إعدادات صلاحية الميكروفون" else "Open App Mic Settings",
                             fontSize = 11.5.sp,
-                            color = Color(0xFF38BDF8)
+                            color = secondaryAccent
                         )
                     }
                 }
@@ -398,7 +405,8 @@ fun VoiceRecorderDialog(
                 // Reactive Live Waveform Visualizer
                 ReactiveWaveform(
                     isActive = isRecording || isPreviewPlaying,
-                    levels = waveLevels
+                    levels = waveLevels,
+                    waveColors = listOf(tertiaryAccent, primaryAccent, secondaryAccent)
                 )
 
                 Spacer(modifier = Modifier.height(20.dp))
@@ -414,7 +422,7 @@ fun VoiceRecorderDialog(
                                 .size(64.dp)
                                 .testTag("stop_recording_button")
                                 .clip(CircleShape)
-                                .background(Color(0xFFEC4899))
+                                .background(primaryAccent)
                                 .clickable {
                                     scope.launch { stopAndFinalizeRecording(saveAfterFinalize = false) }
                                 },
@@ -423,7 +431,7 @@ fun VoiceRecorderDialog(
                             Icon(
                                 imageVector = Icons.Default.Stop,
                                 contentDescription = "Stop Recording",
-                                tint = Color.White,
+                                tint = onAccentColor,
                                 modifier = Modifier.size(32.dp)
                             )
                         }
@@ -437,7 +445,7 @@ fun VoiceRecorderDialog(
                                     .clip(CircleShape)
                                     .liquidGlass(
                                         isDark = isDark,
-                                        tint = GlassTint.ROSE,
+                                        tint = GlassTint.FROST,
                                         shape = CircleShape,
                                         borderWidth = 1.5.dp
                                     )
@@ -453,7 +461,7 @@ fun VoiceRecorderDialog(
                                 Icon(
                                     imageVector = if (isPreviewPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                                     contentDescription = if (isArabic) "تشغيل المعاينة" else "Preview",
-                                    tint = Color(0xFFEC4899),
+                                    tint = primaryAccent,
                                     modifier = Modifier.size(28.dp)
                                 )
                             }
@@ -465,7 +473,7 @@ fun VoiceRecorderDialog(
                                 .size(56.dp)
                                 .testTag("start_recording_button")
                                 .clip(CircleShape)
-                                .background(Color(0xFFEC4899).copy(alpha = if (hasRecordedOrImported) 0.16f else 1f))
+                                .background(primaryAccent.copy(alpha = if (hasRecordedOrImported) 0.16f else 1f))
                                 .clickable(enabled = !isFinalizing && !isImporting) {
                                     val grantedNow = ContextCompat.checkSelfPermission(
                                         context,
@@ -483,7 +491,7 @@ fun VoiceRecorderDialog(
                             Icon(
                                 imageVector = Icons.Default.Mic,
                                 contentDescription = if (isArabic) "تسجيل صوتي" else "Record Audio",
-                                tint = if (hasRecordedOrImported) Color(0xFFEC4899) else Color.White,
+                                tint = if (hasRecordedOrImported) primaryAccent else onAccentColor,
                                 modifier = Modifier.size(26.dp)
                             )
                         }
@@ -508,7 +516,7 @@ fun VoiceRecorderDialog(
                         Icon(
                             imageVector = Icons.Default.FolderOpen,
                             contentDescription = null,
-                            tint = Color(0xFF38BDF8),
+                            tint = secondaryAccent,
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
@@ -550,14 +558,14 @@ fun VoiceRecorderDialog(
                         .testTag("save_voice_note_button"),
                     shape = RoundedCornerShape(24.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFEC4899)
+                        containerColor = primaryAccent
                     )
                 ) {
                     if (isFinalizing) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(18.dp),
                             strokeWidth = 2.dp,
-                            color = Color.White
+                            color = onAccentColor
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                     }
@@ -565,7 +573,7 @@ fun VoiceRecorderDialog(
                         text = if (isArabic) "حفظ التسجيل في الملاحظة ✨" else "Save Recording to Note ✨",
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp,
-                        color = Color.White
+                        color = onAccentColor
                     )
                 }
             }
@@ -576,7 +584,8 @@ fun VoiceRecorderDialog(
 @Composable
 private fun ReactiveWaveform(
     isActive: Boolean,
-    levels: List<Float>
+    levels: List<Float>,
+    waveColors: List<Color>
 ) {
     Row(
         modifier = Modifier
@@ -603,13 +612,7 @@ private fun ReactiveWaveform(
                     .height(animatedHeight)
                     .clip(CircleShape)
                     .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                Color(0xFFF472B6),
-                                Color(0xFFEC4899),
-                                Color(0xFF8B5CF6)
-                            )
-                        )
+                        Brush.verticalGradient(colors = waveColors)
                     )
             )
         }

@@ -55,6 +55,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.RotateLeft
 import androidx.compose.material.icons.automirrored.filled.RotateRight
 import androidx.compose.material.icons.filled.AutoFixHigh
@@ -170,7 +172,7 @@ fun CropAndFilterScreen(
     val uiScope = rememberCoroutineScope()
     val density = LocalDensity.current
     val pageStripState = rememberLazyListState()
-    var isCropPhase by rememberSaveable(frame.id, editPageId) { mutableStateOf(true) }
+    var isCropPhase by rememberSaveable(editDocumentId, editPageId, appendToDocId) { mutableStateOf(true) }
     var docTitle by remember { mutableStateOf("") }
     var showAdjustSliders by remember { mutableStateOf(false) }
     var activeToneMetric by remember { mutableIntStateOf(0) } // 0=Brightness, 1=Contrast, 2=Sharpness
@@ -262,6 +264,7 @@ fun CropAndFilterScreen(
 
     LaunchedEffect(
         isCropPhase,
+        frame.id,
         rawBitmap,
         frame.detectedQuad,
         frame.rotationDeg,
@@ -348,6 +351,7 @@ fun CropAndFilterScreen(
     // Recompute warped + enhanced preview when moving into Enhance phase or tweaking filters
     LaunchedEffect(
         isCropPhase,
+        frame.id,
         rawBitmap,
         frame.detectedQuad,
         frame.filter,
@@ -635,37 +639,102 @@ fun CropAndFilterScreen(
                 }
             }
 
-            // Batch page selector strip (when scanning or importing multiple pages)
+            // Batch page selector strip with direct Prev / Next step controls (works seamlessly in both Crop and Enhance)
             if (batchFrames.size > 1) {
-                LazyRow(
-                    state = pageStripState,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
+                val canPrevPage = activeIdx > 0
+                val canNextPage = activeIdx < batchFrames.lastIndex
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    itemsIndexed(batchFrames) { idx, item ->
-                        val selected = idx == activeIdx
-                        val pillLabel = when (item.idCardSide) {
-                            IdCardSide.FRONT -> if (isArabic) "الوجه الأمامي" else "ID Front"
-                            IdCardSide.BACK -> if (isArabic) "الوجه الخلفي" else "ID Back"
-                            IdCardSide.NONE -> if (isArabic) "صفحة ${idx + 1}" else "Page ${idx + 1}"
-                        }
-                        Box(
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .iosLiquidGlass(CircleShape, glowAccent = selected, fillAlpha = if (selected) 0.86f else 0.56f)
-                                .clickable {
-                                    lastNavDirection = if (idx > activeIdx) 1 else if (idx < activeIdx) -1 else 0
-                                    scannerViewModel.activeCropIndex.value = idx
-                                }
-                                .padding(horizontal = 13.dp, vertical = 7.dp)
-                        ) {
-                            Text(
-                                text = pillLabel,
-                                color = if (selected) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.TextSecondary,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .iosLiquidGlass(
+                                shape = CircleShape,
+                                glowAccent = canPrevPage,
+                                fillAlpha = if (canPrevPage) 0.78f else 0.42f
                             )
+                            .clickable(enabled = canPrevPage) { navigateBatchPageByDelta(-1) }
+                            .testTag("batch_prev_page_btn"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                            contentDescription = if (isArabic) "الصفحة السابقة" else "Previous page",
+                            tint = if (canPrevPage) ScannerGlassPalette.TextPrimary else ScannerGlassPalette.TextSecondary.copy(alpha = 0.4f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    LazyRow(
+                        state = pageStripState,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        itemsIndexed(batchFrames) { idx, item ->
+                            val selected = idx == activeIdx
+                            val pillLabel = when (item.idCardSide) {
+                                IdCardSide.FRONT -> if (isArabic) "الوجه الأمامي" else "ID Front"
+                                IdCardSide.BACK -> if (isArabic) "الوجه الخلفي" else "ID Back"
+                                IdCardSide.NONE -> if (isArabic) "صفحة ${idx + 1}" else "Page ${idx + 1}"
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .iosLiquidGlass(CircleShape, glowAccent = selected, fillAlpha = if (selected) 0.86f else 0.56f)
+                                    .clickable {
+                                        lastNavDirection = if (idx > activeIdx) 1 else if (idx < activeIdx) -1 else 0
+                                        scannerViewModel.activeCropIndex.value = idx
+                                    }
+                                    .padding(horizontal = 13.dp, vertical = 7.dp)
+                                    .testTag("batch_page_pill_$idx")
+                            ) {
+                                Text(
+                                    text = pillLabel,
+                                    color = if (selected) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.TextSecondary,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp
+                                )
+                            }
                         }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .iosLiquidGlass(CircleShape, glowAccent = false, fillAlpha = 0.68f)
+                            .padding(horizontal = 9.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "${activeIdx + 1}/${batchFrames.size}",
+                            color = ScannerGlassPalette.TextPrimary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .iosLiquidGlass(
+                                shape = CircleShape,
+                                glowAccent = canNextPage,
+                                fillAlpha = if (canNextPage) 0.78f else 0.42f
+                            )
+                            .clickable(enabled = canNextPage) { navigateBatchPageByDelta(1) }
+                            .testTag("batch_next_page_btn"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = if (isArabic) "الصفحة التالية" else "Next page",
+                            tint = if (canNextPage) ScannerGlassPalette.TextPrimary else ScannerGlassPalette.TextSecondary.copy(alpha = 0.4f),
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
             }

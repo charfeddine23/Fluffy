@@ -92,7 +92,10 @@ import com.example.data.storage.AudioStorageManager
 import com.example.ui.components.AudioPlayerCard
 import com.example.ui.components.DocumentStyleBottomSheet
 import com.example.ui.components.InsertFeaturesBottomSheet
+import com.example.ui.components.ProgressBarPickerDialog
 import com.example.ui.components.SegmentedRichPageEditor
+import com.example.ui.components.StarRatingPickerDialog
+import com.example.ui.components.StatusBadgePickerDialog
 import com.example.ui.components.TableEditorDialog
 import com.example.ui.components.VoiceRecorderDialog
 import com.example.ui.components.WritingFormattingBar
@@ -197,6 +200,9 @@ fun VaultNoteEditorSheet(
     }
     var showInsertSheet by remember { mutableStateOf(false) }
     var showTableDialog by remember { mutableStateOf(false) }
+    var showStarRatingDialog by remember { mutableStateOf(false) }
+    var showProgressBarDialog by remember { mutableStateOf(false) }
+    var showStatusBadgeDialog by remember { mutableStateOf(false) }
     var editingTableTarget by remember { mutableStateOf<MarkdownTableData?>(null) }
 
     val checklist = remember(existingItem?.id) {
@@ -320,34 +326,14 @@ fun VaultNoteEditorSheet(
         pendingStylesByPage[pageIdx] = result.updatedPendingStyles
     }
 
-    fun applyInsertFeatureToPage(pageIdx: Int, feature: InsertFeatureType) {
+    fun applySnippetToPage(pageIdx: Int, snippet: String, ensureNewLinePrefix: Boolean) {
         if (pageIdx !in pages.indices) return
-        val snippet = RichTextCodec.buildInsertSnippet(feature, isArabic)
-        if (feature == InsertFeatureType.PROS_CONS_TABLE) {
-            val updatedPageText = insertTableInSegmentedPage(
-                pageText = pages[pageIdx],
-                preferredSegmentIndex = activeSegmentByPage[pageIdx] ?: 0,
-                segmentSelections = pageSegmentSelections(pageIdx),
-                tableMarkdown = snippet.trimEnd('\n')
-            )
-            pages[pageIdx] = updatedPageText
-            val latestSegments = RichTextCodec.splitPageIntoEditorSegments(pages[pageIdx])
-            clearPageSegments(pageIdx)
-            val tailIdx = latestSegments.indexOfLast { it is EditorPageSegment.TextSegment }.coerceAtLeast(0)
-            activeSegmentByPage[pageIdx] = tailIdx
-            segmentSelections["$pageIdx:$tailIdx"] = TextRange(0)
-            pendingStylesByPage.remove(pageIdx)
-            return
-        }
-        val needNewLine = feature == InsertFeatureType.DAILY_HEADER ||
-            feature == InsertFeatureType.PROGRESS_BAR ||
-            feature == InsertFeatureType.MEETING_TEMPLATE
         val result = insertSnippetInSegmentedPage(
             pageText = pages[pageIdx],
             preferredSegmentIndex = activeSegmentByPage[pageIdx] ?: 0,
             segmentSelections = pageSegmentSelections(pageIdx),
             snippet = snippet,
-            ensureNewLinePrefix = needNewLine
+            ensureNewLinePrefix = ensureNewLinePrefix
         )
         pages[pageIdx] = result.updatedPageText
         val latestSegments = RichTextCodec.splitPageIntoEditorSegments(pages[pageIdx])
@@ -359,6 +345,15 @@ fun VaultNoteEditorSheet(
         )
         segmentCompositions["$pageIdx:${result.targetSegmentIndex}"] = null
         pendingStylesByPage.remove(pageIdx)
+    }
+
+    fun applyInsertFeatureToPage(pageIdx: Int, feature: InsertFeatureType) {
+        if (pageIdx !in pages.indices) return
+        val snippet = RichTextCodec.buildInsertSnippet(feature, isArabic)
+        val needNewLine = feature == InsertFeatureType.DAILY_HEADER ||
+            feature == InsertFeatureType.PROGRESS_BAR ||
+            feature == InsertFeatureType.MEETING_TEMPLATE
+        applySnippetToPage(pageIdx, snippet, needNewLine)
     }
 
     fun removePageAt(index: Int) {
@@ -1073,6 +1068,9 @@ fun VaultNoteEditorSheet(
                         editingTableTarget = null
                         showTableDialog = true
                     }
+                    InsertFeatureType.STAR_RATING -> showStarRatingDialog = true
+                    InsertFeatureType.PROGRESS_BAR -> showProgressBarDialog = true
+                    InsertFeatureType.STATUS_BADGE -> showStatusBadgeDialog = true
                     InsertFeatureType.VOICE_MEMO -> {
                         playbackController.stop()
                         showVoiceRecorder = true
@@ -1163,6 +1161,63 @@ fun VaultNoteEditorSheet(
                     editingTableTarget = null
                 }
             } else null
+        )
+    }
+
+    if (showStarRatingDialog) {
+        StarRatingPickerDialog(
+            isDark = effectiveDark,
+            isArabic = isArabic,
+            accentColor = accentColor,
+            textColor = textColor,
+            metaColor = metaColor,
+            onDismiss = { showStarRatingDialog = false },
+            onConfirmStars = { stars ->
+                applySnippetToPage(
+                    pageIdx = safePageIdx,
+                    snippet = RichTextCodec.buildStarRatingSnippet(stars),
+                    ensureNewLinePrefix = false
+                )
+                showStarRatingDialog = false
+            }
+        )
+    }
+
+    if (showProgressBarDialog) {
+        ProgressBarPickerDialog(
+            isDark = effectiveDark,
+            isArabic = isArabic,
+            accentColor = accentColor,
+            textColor = textColor,
+            metaColor = metaColor,
+            onDismiss = { showProgressBarDialog = false },
+            onConfirmProgress = { percent, label ->
+                applySnippetToPage(
+                    pageIdx = safePageIdx,
+                    snippet = RichTextCodec.buildProgressBarSnippet(percent, isArabic, label),
+                    ensureNewLinePrefix = true
+                )
+                showProgressBarDialog = false
+            }
+        )
+    }
+
+    if (showStatusBadgeDialog) {
+        StatusBadgePickerDialog(
+            isDark = effectiveDark,
+            isArabic = isArabic,
+            accentColor = accentColor,
+            textColor = textColor,
+            metaColor = metaColor,
+            onDismiss = { showStatusBadgeDialog = false },
+            onConfirmBadge = { emoji, label ->
+                applySnippetToPage(
+                    pageIdx = safePageIdx,
+                    snippet = RichTextCodec.buildStatusBadgeSnippet(emoji, label),
+                    ensureNewLinePrefix = false
+                )
+                showStatusBadgeDialog = false
+            }
         )
     }
 

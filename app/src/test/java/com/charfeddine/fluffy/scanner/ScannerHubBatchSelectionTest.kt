@@ -262,4 +262,200 @@ class ScannerHubBatchSelectionTest {
             viewModel.currentRoute.value == com.charfeddine.fluffy.scanner.domain.ScannerSubRoute.DocumentDetail(doc1.id)
         }
     }
+
+    @Test
+    fun shortVerticalNudgeDoesNotSwitchScannerDocument() {
+        val doc1 = insertDoc("doc-short-a", "Doc Alpha", sortOrder = 1000L)
+        val doc2 = insertDoc("doc-short-b", "Doc Beta", sortOrder = 2000L)
+        val imgFile1 = File(viewModel.repository.docsRootDir, "test_nudge_1.jpg")
+        val imgFile2 = File(viewModel.repository.docsRootDir, "test_nudge_2.jpg")
+        val bmp = Bitmap.createBitmap(240, 320, Bitmap.Config.ARGB_8888)
+        DocumentImageProcessor.saveBitmapAsJpeg(bmp, imgFile1, 90)
+        DocumentImageProcessor.saveBitmapAsJpeg(bmp, imgFile2, 90)
+        bmp.recycle()
+
+        runBlocking(Dispatchers.IO) {
+            viewModel.repository.upsertPage(
+                ScannedPageEntity(
+                    id = "page-nudge-1",
+                    documentId = doc1.id,
+                    pageOrder = 0,
+                    originalImagePath = imgFile1.absolutePath,
+                    processedImagePath = imgFile1.absolutePath
+                )
+            )
+            viewModel.repository.upsertPage(
+                ScannedPageEntity(
+                    id = "page-nudge-2",
+                    documentId = doc2.id,
+                    pageOrder = 0,
+                    originalImagePath = imgFile2.absolutePath,
+                    processedImagePath = imgFile2.absolutePath
+                )
+            )
+        }
+        viewModel.setSortOption(com.charfeddine.fluffy.scanner.data.model.SortOption.CUSTOM)
+        viewModel.openDocumentDetail(doc1.id)
+
+        composeRule.setContent {
+            com.charfeddine.fluffy.scanner.ui.components.ScannerRootHost(
+                isArabic = false,
+                onTriggerBiometricPrompt = { _, _, onSuccess, _ -> onSuccess() },
+                onSaveQrAsFluffyNote = { _, _ -> },
+                onExitScanner = {},
+                scannerViewModel = viewModel
+            )
+        }
+
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            composeRule.onAllNodes(androidx.compose.ui.test.hasText("Doc Alpha"))
+                .fetchSemanticsNodes().isNotEmpty() &&
+                composeRule.onAllNodes(androidx.compose.ui.test.hasContentDescription("Document page"))
+                    .fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // Short vertical nudge (-120px) stays on Doc Alpha instead of switching documents
+        composeRule.onNode(androidx.compose.ui.test.hasContentDescription("Document page"))
+            .performTouchInput {
+                down(center)
+                moveBy(androidx.compose.ui.geometry.Offset(0f, -120f))
+                up()
+            }
+        composeRule.waitForIdle()
+
+        assertEquals(
+            com.charfeddine.fluffy.scanner.domain.ScannerSubRoute.DocumentDetail(doc1.id),
+            viewModel.currentRoute.value
+        )
+    }
+
+    @Test
+    fun horizontalSwipeSmoothlyNavigatesPagesWithinSameDocument() {
+        val doc = ScannedDocumentEntity(
+            id = "doc-multipage",
+            title = "Multi Page Doc",
+            pageCount = 3,
+            totalSizeBytes = 2048L,
+            sortOrder = 1000L
+        )
+        val bmp = Bitmap.createBitmap(240, 320, Bitmap.Config.ARGB_8888)
+        val files = (1..3).map { idx ->
+            File(viewModel.repository.docsRootDir, "multi_page_$idx.jpg").also {
+                DocumentImageProcessor.saveBitmapAsJpeg(bmp, it, 90)
+            }
+        }
+        bmp.recycle()
+
+        runBlocking(Dispatchers.IO) {
+            viewModel.repository.upsertDocument(doc)
+            files.forEachIndexed { idx, file ->
+                viewModel.repository.upsertPage(
+                    ScannedPageEntity(
+                        id = "mp-page-$idx",
+                        documentId = doc.id,
+                        pageOrder = idx,
+                        originalImagePath = file.absolutePath,
+                        processedImagePath = file.absolutePath
+                    )
+                )
+            }
+        }
+
+        composeRule.setContent {
+            DocumentDetailEditorScreen(
+                scannerViewModel = viewModel,
+                documentId = doc.id,
+                isArabic = false,
+                onAddMorePages = {},
+                onBackToHub = {}
+            )
+        }
+
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            composeRule.onAllNodes(androidx.compose.ui.test.hasText("1 / 3"))
+                .fetchSemanticsNodes().isNotEmpty() &&
+                composeRule.onAllNodes(androidx.compose.ui.test.hasContentDescription("Document page"))
+                    .fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // Horizontal swipe left -> moves smoothly to page 2 / 3
+        composeRule.onNode(androidx.compose.ui.test.hasContentDescription("Document page"))
+            .performTouchInput {
+                down(center)
+                moveBy(androidx.compose.ui.geometry.Offset(-220f, 0f))
+                up()
+            }
+
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            composeRule.onAllNodes(androidx.compose.ui.test.hasText("2 / 3"))
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // Next page button -> moves smoothly to page 3 / 3
+        composeRule.onNode(androidx.compose.ui.test.hasContentDescription("Next page"))
+            .performClick()
+
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            composeRule.onAllNodes(androidx.compose.ui.test.hasText("3 / 3"))
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    @Test
+    fun enhancePhaseKeepsModeWhileNavigatingPagesWithoutReturningToCrop() {
+        val bmp = Bitmap.createBitmap(240, 320, Bitmap.Config.ARGB_8888)
+        val file1 = File(viewModel.repository.docsRootDir, "enhance_p1.jpg").also {
+            DocumentImageProcessor.saveBitmapAsJpeg(bmp, it, 90)
+        }
+        val file2 = File(viewModel.repository.docsRootDir, "enhance_p2.jpg").also {
+            DocumentImageProcessor.saveBitmapAsJpeg(bmp, it, 90)
+        }
+        bmp.recycle()
+
+        viewModel.batchFrames.value = listOf(
+            com.charfeddine.fluffy.scanner.data.model.BatchCapturedFrame(
+                id = "enh-f1",
+                rawImagePath = file1.absolutePath
+            ),
+            com.charfeddine.fluffy.scanner.data.model.BatchCapturedFrame(
+                id = "enh-f2",
+                rawImagePath = file2.absolutePath
+            )
+        )
+        viewModel.activeCropIndex.value = 0
+
+        composeRule.setContent {
+            com.charfeddine.fluffy.scanner.ui.screens.CropAndFilterScreen(
+                scannerViewModel = viewModel,
+                appendToDocId = null,
+                isArabic = false,
+                onBackToCamera = {}
+            )
+        }
+
+        // Move to Enhance phase
+        composeRule.onNode(androidx.compose.ui.test.hasTestTag("crop_apply_next_btn")).performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            composeRule.onAllNodes(androidx.compose.ui.test.hasTestTag("crop_save_document_btn"))
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // Navigate to next page directly inside Enhance via Next button
+        composeRule.onNode(androidx.compose.ui.test.hasTestTag("batch_next_page_btn")).performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            viewModel.activeCropIndex.value == 1
+        }
+        composeRule.waitForIdle()
+
+        // Confirm we remained in Enhance phase without reverting to Crop
+        composeRule.onNode(androidx.compose.ui.test.hasTestTag("crop_save_document_btn")).assertExists()
+        composeRule.onNode(androidx.compose.ui.test.hasText("2/2")).assertExists()
+
+        // Navigate back to first page directly via Prev button and still remain in Enhance
+        composeRule.onNode(androidx.compose.ui.test.hasTestTag("batch_prev_page_btn")).performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            viewModel.activeCropIndex.value == 0
+        }
+        composeRule.onNode(androidx.compose.ui.test.hasTestTag("crop_save_document_btn")).assertExists()
+    }
 }

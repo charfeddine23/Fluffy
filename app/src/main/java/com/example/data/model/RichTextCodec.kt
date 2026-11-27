@@ -40,8 +40,7 @@ enum class InsertFeatureType {
     STAR_RATING,
     PROGRESS_BAR,
     STATUS_BADGE,
-    MEETING_TEMPLATE,
-    PROS_CONS_TABLE
+    MEETING_TEMPLATE
 }
 
 enum class RichFormatAction {
@@ -181,6 +180,49 @@ object RichTextCodec {
         return TextFieldValue(updated, TextRange(nextCursor))
     }
 
+    data class StatusBadgePreset(
+        val id: String,
+        val emoji: String,
+        val labelAr: String,
+        val labelEn: String
+    )
+
+    val statusBadgePresets: List<StatusBadgePreset> = listOf(
+        StatusBadgePreset("in_progress", "🟢", "قيد التنفيذ", "In Progress"),
+        StatusBadgePreset("completed", "✅", "مكتمل", "Completed"),
+        StatusBadgePreset("pending", "🟡", "قيد الانتظار", "Pending"),
+        StatusBadgePreset("urgent", "🔴", "عاجل", "Urgent"),
+        StatusBadgePreset("review", "🔵", "قيد المراجعة", "In Review"),
+        StatusBadgePreset("paused", "⏸️", "متوقف مؤقتاً", "On Hold"),
+        StatusBadgePreset("idea", "💡", "فكرة", "Idea"),
+        StatusBadgePreset("cancelled", "⛔", "ملغي", "Cancelled")
+    )
+
+    fun buildStarRatingSnippet(stars: Int): String {
+        val count = stars.coerceIn(1, 5)
+        val filled = "★".repeat(count)
+        val empty = "☆".repeat(5 - count)
+        return "$filled$empty ($count/5) "
+    }
+
+    fun buildProgressBarSnippet(
+        percent: Int,
+        isArabic: Boolean,
+        label: String = ""
+    ): String {
+        val clamped = percent.coerceIn(0, 100)
+        val filledCount = ((clamped + 5) / 10).coerceIn(0, 10)
+        val bar = "█".repeat(filledCount) + "░".repeat(10 - filledCount)
+        val cleanLabel = label.trim().ifBlank { if (isArabic) "التقدم" else "Progress" }
+        return "📊 $cleanLabel: [$bar] $clamped%\n"
+    }
+
+    fun buildStatusBadgeSnippet(emoji: String, label: String): String {
+        val cleanLabel = label.trim().ifBlank { "Status" }
+        val cleanEmoji = emoji.trim()
+        return if (cleanEmoji.isNotEmpty()) "【$cleanEmoji $cleanLabel】 " else "【$cleanLabel】 "
+    }
+
     fun buildInsertSnippet(
         type: InsertFeatureType,
         isArabic: Boolean,
@@ -197,20 +239,12 @@ object RichTextCodec {
             } else {
                 "## 📅 Entry $dateStr • $timeStr\n"
             }
-            InsertFeatureType.STAR_RATING -> if (isArabic) {
-                "★★★★☆ (4/5) "
-            } else {
-                "★★★★☆ (4/5) "
-            }
-            InsertFeatureType.PROGRESS_BAR -> if (isArabic) {
-                "📊 التقدم: [██████░░░░] 60%\n"
-            } else {
-                "📊 Progress: [██████░░░░] 60%\n"
-            }
+            InsertFeatureType.STAR_RATING -> buildStarRatingSnippet(4)
+            InsertFeatureType.PROGRESS_BAR -> buildProgressBarSnippet(60, isArabic)
             InsertFeatureType.STATUS_BADGE -> if (isArabic) {
-                "【🟢 قيد التنفيذ】 "
+                buildStatusBadgeSnippet("🟢", "قيد التنفيذ")
             } else {
-                "【🟢 In Progress】 "
+                buildStatusBadgeSnippet("🟢", "In Progress")
             }
             InsertFeatureType.MEETING_TEMPLATE -> if (isArabic) {
                 """
@@ -227,21 +261,6 @@ object RichTextCodec {
                 - **Attendees:** 
                 - **Key Points:** 
                 - [ ] Action items
-                """.trimIndent() + "\n"
-            }
-            InsertFeatureType.PROS_CONS_TABLE -> if (isArabic) {
-                """
-                | ✅ الإيجابيات | ⚠️ السلبيات |
-                | --- | --- |
-                |  |  |
-                |  |  |
-                """.trimIndent() + "\n"
-            } else {
-                """
-                | ✅ Pros | ⚠️ Cons |
-                | --- | --- |
-                |  |  |
-                |  |  |
                 """.trimIndent() + "\n"
             }
             else -> ""
@@ -465,8 +484,38 @@ object RichTextCodec {
             return EditorFormatOutcome(repaired, pendingStyles)
         }
 
-        // Pressing Enter finishes inline typing styles
+        // Pressing Enter finishes inline typing styles & auto-continues Todo / Bullet / Numbered lists
         if (inserted.contains('\n')) {
+            if (inserted == "\n" && deletedLen == 0) {
+                val prevLineStart = lineOffsetOf(prevText, prefix)
+                val lineBeforeCursor = prevText.substring(prevLineStart, prefix)
+                val continuationPrefix = when {
+                    lineBeforeCursor.startsWith("- [ ] ") ||
+                        lineBeforeCursor.startsWith("- [x] ") ||
+                        lineBeforeCursor.startsWith("- [X] ") -> "- [ ] "
+                    lineBeforeCursor.startsWith("- ") -> "- "
+                    lineBeforeCursor.startsWith("* ") -> "* "
+                    lineBeforeCursor.startsWith("• ") -> "• "
+                    else -> {
+                        val numMatch = numberedPrefixRegex.find(lineBeforeCursor)
+                        if (numMatch != null && numMatch.range.first == 0) {
+                            val currentNum = numMatch.groupValues[1].toIntOrNull() ?: 1
+                            "${currentNum + 1}. "
+                        } else {
+                            null
+                        }
+                    }
+                }
+                if (continuationPrefix != null) {
+                    val continuedText = nextText.substring(0, insertEnd) +
+                        continuationPrefix +
+                        nextText.substring(insertEnd)
+                    val continuedCursor = (insertEnd + continuationPrefix.length)
+                        .coerceIn(0, continuedText.length)
+                    val cleaned = cleanupOrphanInlineMarkers(continuedText, continuedCursor)
+                    return EditorFormatOutcome(cleaned, emptySet())
+                }
+            }
             val cleaned = cleanupOrphanInlineMarkers(nextText, nextVal.selection.max)
             return EditorFormatOutcome(cleaned, emptySet())
         }
