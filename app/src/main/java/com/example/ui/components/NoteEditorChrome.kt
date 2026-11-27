@@ -56,6 +56,7 @@ import androidx.compose.material.icons.filled.FormatUnderlined
 import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsActive
@@ -110,6 +111,7 @@ fun EditorTopAppBar(
     reminderAt: Long = 0L,
     canArchiveOrDelete: Boolean,
     isFocusMode: Boolean,
+    isVaultNote: Boolean = false,
     isDark: Boolean,
     isArabic: Boolean,
     selectedTint: GlassTint,
@@ -393,16 +395,20 @@ fun EditorTopAppBar(
                         ),
                         text = {
                             Text(
-                                text = if (isArabic) "قفل في الخزنة (Vault)" else "Lock / Move to Vault",
+                                text = if (isVaultNote) {
+                                    if (isArabic) "إخراج من الخزنة إلى الملاحظات" else "Move out of Vault"
+                                } else {
+                                    if (isArabic) "قفل في الخزنة (Vault)" else "Lock / Move to Vault"
+                                },
                                 color = textColor,
                                 fontWeight = FontWeight.Medium
                             )
                         },
                         leadingIcon = {
                             Icon(
-                                imageVector = Icons.Default.Lock,
+                                imageVector = if (isVaultNote) Icons.Default.LockOpen else Icons.Default.Lock,
                                 contentDescription = null,
-                                tint = Color(0xFFC084FC)
+                                tint = if (isVaultNote) Color(0xFF10B981) else Color(0xFFC084FC)
                             )
                         },
                         onClick = {
@@ -515,7 +521,7 @@ fun EditorTopAppBar(
                         }
                     )
 
-                    if (canArchiveOrDelete) {
+                    if (canArchiveOrDelete && !isVaultNote) {
                         DropdownMenuItem(
                             text = {
                                 Text(
@@ -540,11 +546,18 @@ fun EditorTopAppBar(
                                 onToggleArchive()
                             }
                         )
+                    }
 
+                    if (canArchiveOrDelete || isVaultNote) {
                         DropdownMenuItem(
+                            modifier = Modifier.testTag("editor_menu_delete"),
                             text = {
                                 Text(
-                                    text = if (isArabic) "نقل إلى سلة المهملات" else "Move to Trash",
+                                    text = if (isVaultNote) {
+                                        if (isArabic) "حذف من الخزنة" else "Delete from Vault"
+                                    } else {
+                                        if (isArabic) "نقل إلى سلة المهملات" else "Move to Trash"
+                                    },
                                     color = Color(0xFFEF4444),
                                     fontWeight = FontWeight.SemiBold
                                 )

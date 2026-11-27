@@ -525,7 +525,9 @@ object LocalDeviceStorageManager {
         checklist: List<ChecklistItem>,
         audioDurationSec: Int,
         audioFilePath: String,
-        audioByteSize: Long
+        audioByteSize: Long,
+        isFavorite: Boolean = existingMeta?.isFavorite ?: false,
+        reminderAt: Long = existingMeta?.reminderAt ?: 0L
     ): VaultItemEntity = withContext(Dispatchers.IO) {
         val id = existingItem.id
         val now = System.currentTimeMillis()
@@ -541,6 +543,8 @@ object LocalDeviceStorageManager {
             backgroundId = backgroundId,
             customColorArgb = customColorArgb,
             isPinned = isPinned,
+            isFavorite = isFavorite,
+            reminderAt = reminderAt,
             createdAt = existingItem.createdAt,
             updatedAt = now,
             syncId = id
@@ -555,6 +559,8 @@ object LocalDeviceStorageManager {
             backgroundId = backgroundId,
             customColorArgb = customColorArgb,
             isPinned = isPinned,
+            isFavorite = isFavorite,
+            reminderAt = reminderAt,
             checklistJson = checklistJson,
             audioDurationSec = audioDurationSec,
             audioFilePath = audioFilePath,
@@ -685,6 +691,17 @@ object LocalDeviceStorageManager {
                     val audioDir = AudioStorageManager.audioDir(context)
                     if (srcFile.parentFile?.absolutePath == audioDir.absolutePath) {
                         runCatching { srcFile.delete() }
+                    }
+                } else if (existingItem.localFilePath.isNotBlank() && File(existingItem.localFilePath).exists()) {
+                    // Temp audio source was already moved to vault/raw on a preceding auto-save
+                    val existingFile = File(existingItem.localFilePath)
+                    resolvedFileName = existingItem.fileName.ifBlank { existingFile.name }
+                    resolvedMimeType = existingItem.mimeType.ifBlank { guessAudioMimeType(resolvedFileName) }
+                    resolvedLocalPath = existingItem.localFilePath
+                    resolvedByteSize = existingFile.length()
+                    resolvedSha256 = existingItem.sha256.ifBlank { computeFileSha256(existingFile) }
+                    if (resolvedDuration <= 0) {
+                        resolvedDuration = AudioStorageManager.computeDurationSec(context, resolvedLocalPath)
                     }
                 } else {
                     resolvedLocalPath = audioFilePath

@@ -2077,7 +2077,10 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         checklist: List<ChecklistItem>,
         audioDurationSec: Int,
         audioFilePath: String,
-        audioByteSize: Long
+        audioByteSize: Long,
+        isFavorite: Boolean = existingMeta?.isFavorite ?: false,
+        reminderAt: Long = existingMeta?.reminderAt ?: 0L,
+        showFeedback: Boolean = true
     ) {
         viewModelScope.launch {
             try {
@@ -2098,7 +2101,9 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                         checklist = checklist,
                         audioDurationSec = audioDurationSec,
                         audioFilePath = audioFilePath,
-                        audioByteSize = audioByteSize
+                        audioByteSize = audioByteSize,
+                        isFavorite = isFavorite,
+                        reminderAt = reminderAt
                     )
                     vaultDao.upsertEditedVaultItem(saved)
                     saved
@@ -2112,21 +2117,25 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
                         }
                     }
                 }
-                val isAudio = audioDurationSec > 0 || audioFilePath.isNotBlank()
-                showSnackbar(
-                    translateText(
-                        appLanguage.value,
-                        ar = if (isAudio) "تم تحديث التسجيل الصوتي في الـ Vault ✓" else "تم تحديث المدونة في الـ Vault ✓",
-                        fr = if (isAudio) "Note vocale mise à jour dans le Vault ✓" else "Note mise à jour dans le Vault ✓",
-                        en = if (isAudio) "Voice note updated in Vault ✓" else "Note updated in Vault ✓",
-                        tzm = if (isAudio) "Tira n yimesli ttwaseqdec deg Vault ✓" else "Tira ttwaseqdec deg Vault ✓"
+                if (showFeedback) {
+                    val isAudio = audioDurationSec > 0 || audioFilePath.isNotBlank()
+                    showSnackbar(
+                        translateText(
+                            appLanguage.value,
+                            ar = if (isAudio) "تم تحديث التسجيل الصوتي في الـ Vault ✓" else "تم تحديث المدونة في الـ Vault ✓",
+                            fr = if (isAudio) "Note vocale mise à jour dans le Vault ✓" else "Note mise à jour dans le Vault ✓",
+                            en = if (isAudio) "Voice note updated in Vault ✓" else "Note updated in Vault ✓",
+                            tzm = if (isAudio) "Tira n yimesli ttwaseqdec deg Vault ✓" else "Tira ttwaseqdec deg Vault ✓"
+                        )
                     )
-                )
+                }
             } catch (e: Exception) {
-                showSnackbar(
-                    if (isArabic.value) "تعذر التحديث: ${e.localizedMessage}"
-                    else "Update failed: ${e.localizedMessage}"
-                )
+                if (showFeedback) {
+                    showSnackbar(
+                        if (isArabic.value) "تعذر التحديث: ${e.localizedMessage}"
+                        else "Update failed: ${e.localizedMessage}"
+                    )
+                }
             }
         }
     }
@@ -2291,23 +2300,47 @@ class FluffyViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun moveVaultItemToNotes(item: VaultItemEntity) {
+    fun moveVaultItemToNotes(item: VaultItemEntity, editedNote: NoteEntity? = null) {
         viewModelScope.launch {
             try {
                 val app = getApplication<Application>()
                 val savedNote = withContext(Dispatchers.IO) {
+                    val sourceItem = if (editedNote != null) {
+                        val existingMeta = LocalDeviceStorageManager.loadVaultNoteMetadata(app, item.id)
+                        LocalDeviceStorageManager.updateVaultNoteAndAudioItem(
+                            context = app,
+                            existingItem = item,
+                            existingMeta = existingMeta,
+                            title = editedNote.title,
+                            content = editedNote.content,
+                            pagesJson = editedNote.pagesJson,
+                            category = editedNote.category,
+                            colorPreset = editedNote.colorPreset,
+                            backgroundId = editedNote.backgroundId,
+                            customColorArgb = editedNote.customColorArgb,
+                            isPinned = editedNote.isPinned,
+                            checklist = ChecklistItem.jsonToList(editedNote.checklistJson),
+                            audioDurationSec = editedNote.audioDurationSec,
+                            audioFilePath = editedNote.audioFilePath,
+                            audioByteSize = editedNote.audioByteSize,
+                            isFavorite = editedNote.isFavorite,
+                            reminderAt = editedNote.reminderAt
+                        )
+                    } else {
+                        item
+                    }
                     val minOrder = repository.getMinSortOrder() - 1000L
                     val restoredNote = LocalDeviceStorageManager.buildNoteFromVaultItem(
                         context = app,
-                        item = item,
+                        item = sourceItem,
                         isArabic = isArabic.value,
                         targetSortOrder = minOrder
                     )
                     val insertedId = repository.insertOrUpdate(restoredNote)
                     val persisted = if (insertedId > 0L) restoredNote.copy(id = insertedId) else restoredNote
-                    markVaultIdDeleted(item.id)
-                    vaultDao.deleteVaultItemById(item.id)
-                    LocalDeviceStorageManager.deleteVaultItemFromDisk(app, item)
+                    markVaultIdDeleted(sourceItem.id)
+                    vaultDao.deleteVaultItemById(sourceItem.id)
+                    LocalDeviceStorageManager.deleteVaultItemFromDisk(app, sourceItem)
                     persisted
                 }
                 syncNoteUpsertIfSignedIn(savedNote)

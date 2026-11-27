@@ -452,7 +452,7 @@ class MainActivity : FragmentActivity() {
                                                         audioByteSize = audioByteSize
                                                     )
                                                 },
-                                                onUpdateVaultNote = { existingItem, existingMeta, title, content, pagesJson, category, colorPreset, backgroundId, customColorArgb, isPinned, checklist, audioDurationSec, audioFilePath, audioByteSize ->
+                                                onUpdateVaultNoteFull = { existingItem, existingMeta, title, content, pagesJson, category, colorPreset, backgroundId, customColorArgb, isPinned, isFavorite, checklist, audioDurationSec, audioFilePath, audioByteSize, reminderAt, showFeedback ->
                                                     viewModel.updateVaultNoteItem(
                                                         existingItem = existingItem,
                                                         existingMeta = existingMeta,
@@ -467,7 +467,10 @@ class MainActivity : FragmentActivity() {
                                                         checklist = checklist,
                                                         audioDurationSec = audioDurationSec,
                                                         audioFilePath = audioFilePath,
-                                                        audioByteSize = audioByteSize
+                                                        audioByteSize = audioByteSize,
+                                                        isFavorite = isFavorite,
+                                                        reminderAt = reminderAt,
+                                                        showFeedback = showFeedback
                                                     )
                                                 },
                                                 onSaveFileUri = { uri ->
@@ -478,6 +481,9 @@ class MainActivity : FragmentActivity() {
                                                 },
                                                 onMoveToNotes = { item ->
                                                     viewModel.moveVaultItemToNotes(item)
+                                                },
+                                                onMoveOutOfVaultWithEdits = { item, updatedNote ->
+                                                    viewModel.moveVaultItemToNotes(item, updatedNote)
                                                 },
                                                 onDeleteItem = { item ->
                                                     viewModel.deleteVaultItem(item)
@@ -531,7 +537,27 @@ class MainActivity : FragmentActivity() {
                                                 onVerifyPasskey = { passkey ->
                                                     viewModel.verifyVaultPasskey(passkey)
                                                 },
-                                                editorFontSizeSp = editorFontSizeSp
+                                                editorFontSizeSp = editorFontSizeSp,
+                                                editorTextAlign = when (editorTextAlign.lowercase()) {
+                                                    "center" -> androidx.compose.ui.text.style.TextAlign.Center
+                                                    "end" -> androidx.compose.ui.text.style.TextAlign.End
+                                                    else -> androidx.compose.ui.text.style.TextAlign.Start
+                                                },
+                                                onEditorFontSizeChanged = { sizeSp ->
+                                                    viewModel.setEditorFontSizeSp(sizeSp)
+                                                },
+                                                onEditorTextAlignChanged = { align ->
+                                                    val key = when (align) {
+                                                        androidx.compose.ui.text.style.TextAlign.Center -> "center"
+                                                        androidx.compose.ui.text.style.TextAlign.End -> "end"
+                                                        else -> "start"
+                                                    }
+                                                    viewModel.setEditorTextAlign(key)
+                                                },
+                                                onOpenScanner = {
+                                                    viewModel.closeVault()
+                                                    viewModel.openScannerHub()
+                                                }
                                             )
                                         }
                                         is FluffyScreenState.Editor -> {

@@ -170,6 +170,8 @@ import kotlinx.coroutines.withContext
 fun NoteEditorScreen(
     note: NoteEntity,
     isCreatingNew: Boolean = note.id == 0L,
+    initialEditMode: Boolean = isCreatingNew || note.id == 0L,
+    isVaultNote: Boolean = false,
     isDark: Boolean,
     isArabic: Boolean,
     isPremium: Boolean = false,
@@ -223,8 +225,8 @@ fun NoteEditorScreen(
 
     val noteIdentityKey = note.syncId.ifBlank { note.id.toString() }
 
-    // New drafts open in Edit/Writing mode; saved notes reopen in View-Only mode
-    var isEditMode by remember(noteIdentityKey) { mutableStateOf(isCreatingNew || note.id == 0L) }
+    // New drafts open in Edit/Writing mode; saved notes (and Vault notes opened for reading) open in View-Only mode unless requested otherwise
+    var isEditMode by remember(noteIdentityKey) { mutableStateOf(initialEditMode) }
 
     // Local mutable state for literal multi-page editing with per-page titles (up to 100 pages or 900 KB)
     var title by remember(noteIdentityKey) { mutableStateOf(note.title) }
@@ -783,6 +785,7 @@ fun NoteEditorScreen(
             )
         } else {
             if (isPinned != note.isPinned ||
+                isFavorite != note.isFavorite ||
                 selectedTint.id != note.colorPreset ||
                 backgroundId != note.backgroundId ||
                 customColorArgb != note.customColorArgb ||
@@ -872,6 +875,7 @@ fun NoteEditorScreen(
                 reminderAt = reminderAt,
                 canArchiveOrDelete = note.id != 0L,
                 isFocusMode = isFocusMode,
+                isVaultNote = isVaultNote,
                 isDark = effectiveDark,
                 isArabic = isArabic,
                 selectedTint = selectedTint,
@@ -890,6 +894,7 @@ fun NoteEditorScreen(
                         )
                     } else {
                         if (isPinned != note.isPinned ||
+                            isFavorite != note.isFavorite ||
                             selectedTint.id != note.colorPreset ||
                             backgroundId != note.backgroundId ||
                             customColorArgb != note.customColorArgb ||
