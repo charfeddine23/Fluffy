@@ -426,8 +426,12 @@ object RichTextCodec {
         return EditorFormatOutcome(value, updatedPending)
     }
 
-    private fun lineOffsetOf(text: String, cursor: Int): Int =
-        text.lastIndexOf('\n', (cursor - 1).coerceAtLeast(0)).let { if (it < 0) 0 else it + 1 }
+    private fun lineOffsetOf(text: String, cursor: Int): Int {
+        if (cursor <= 0 || text.isEmpty()) return 0
+        val searchFrom = (cursor - 1).coerceIn(0, text.length - 1)
+        val nl = text.lastIndexOf('\n', searchFrom)
+        return if (nl < 0) 0 else nl + 1
+    }
 
     private fun findSpanEndingAtCursor(text: String, cursor: Int, kind: InlineKind): InlineSpan? {
         val lineStart = lineOffsetOf(text, cursor)
@@ -476,10 +480,9 @@ object RichTextCodec {
         if (inserted.isEmpty() && deletedLen > 0) {
             val repaired = repairTextAfterDeletion(
                 prevText = prevText,
-                nextText = nextText,
+                nextVal = nextVal,
                 delStart = prefix,
-                delEndPrev = prevText.length - suffix,
-                rawCursor = nextVal.selection.max
+                delEndPrev = prevText.length - suffix
             )
             return EditorFormatOutcome(repaired, pendingStyles)
         }
@@ -575,7 +578,7 @@ object RichTextCodec {
         }
 
         if (pendingStyles.isEmpty()) {
-            val cleaned = if (deletedLen > 0) cleanupOrphanInlineMarkers(workingText, workingVal.selection.max) else workingVal
+            val cleaned = if (deletedLen > 0) cleanupOrphanInlineMarkers(workingVal) else workingVal
             return EditorFormatOutcome(cleaned, emptySet())
         }
 
@@ -638,17 +641,19 @@ object RichTextCodec {
 
     private fun repairTextAfterDeletion(
         prevText: String,
-        nextText: String,
+        nextVal: TextFieldValue,
         delStart: Int,
-        delEndPrev: Int,
-        rawCursor: Int
+        delEndPrev: Int
     ): TextFieldValue {
+        val nextText = nextVal.text
+        val rawCursor = nextVal.selection.max.coerceIn(0, nextText.length)
         val delLen = delEndPrev - delStart
 
         // A. Check if Backspace clipped an inline tag's opening or closing marker in prevText
         if (delLen in 1..4) {
             val prevLineStart = lineOffsetOf(prevText, delStart)
             val prevLineEnd = prevText.indexOf('\n', delStart).let { if (it < 0) prevText.length else it }
+                .coerceAtLeast(prevLineStart)
             if (delEndPrev <= prevLineEnd) {
                 val prevLine = prevText.substring(prevLineStart, prevLineEnd)
                 val spans = parseInlineSpans(prevLine)
@@ -682,10 +687,12 @@ object RichTextCodec {
         // B. Check if Backspace clipped a block prefix (`- [ ] `, `## `, `> `, etc.), divider (`---`), or code fence (```)
         val prevLineStart = lineOffsetOf(prevText, delStart)
         val prevLineEnd = prevText.indexOf('\n', delStart).let { if (it < 0) prevText.length else it }
+            .coerceAtLeast(prevLineStart)
         val prevLine = prevText.substring(prevLineStart, prevLineEnd)
 
-        val nextLineStart = lineOffsetOf(nextText, rawCursor.coerceIn(0, nextText.length))
+        val nextLineStart = lineOffsetOf(nextText, rawCursor)
         val nextLineEnd = nextText.indexOf('\n', nextLineStart).let { if (it < 0) nextText.length else it }
+            .coerceAtLeast(nextLineStart)
         val nextLine = nextText.substring(nextLineStart, nextLineEnd)
 
         if (prevLine.trim() == "---" || prevLine.trim() == "***" || prevLine.trim().startsWith("```")) {
@@ -698,12 +705,21 @@ object RichTextCodec {
         val prevPrefixMatch = linePrefixRegex.find(prevLine)
         if (prevPrefixMatch != null && prevPrefixMatch.range.first == 0) {
             val prefixLen = prevPrefixMatch.value.length
-            if (delStart < prevLineStart + prefixLen && delEndPrev <= prevLineEnd) {
-                val stillHasSamePrefix = linePrefixRegex.find(nextLine)?.value == prevPrefixMatch.value
+            // Only unwrap when deletion was strictly within the prefix itself (e.g. Backspace on "- [ ] "),
+            // never when the user selected and deleted the prefix + line content together.
+            if (delStart >= prevLineStart &&
+                delStart < prevLineStart + prefixLen &&
+                delEndPrev <= prevLineStart + prefixLen
+            ) {
+                val targetLineStart = lineOffsetOf(nextText, delStart.coerceIn(0, nextText.length))
+                val targetLineEnd = nextText.indexOf('\n', targetLineStart).let { if (it < 0) nextText.length else it }
+                    .coerceAtLeast(targetLineStart)
+                val targetLine = nextText.substring(targetLineStart, targetLineEnd)
+                val stillHasSamePrefix = linePrefixRegex.find(targetLine)?.value == prevPrefixMatch.value
                 if (!stillHasSamePrefix) {
                     val cleanRemainder = prevLine.substring(prefixLen)
-                    val rebuilt = nextText.substring(0, nextLineStart) + cleanRemainder + nextText.substring(nextLineEnd)
-                    return cleanupOrphanInlineMarkers(rebuilt, nextLineStart)
+                    val rebuilt = nextText.substring(0, targetLineStart) + cleanRemainder + nextText.substring(targetLineEnd)
+                    return cleanupOrphanInlineMarkers(rebuilt, targetLineStart)
                 }
             }
         }
@@ -713,6 +729,7 @@ object RichTextCodec {
             val endTouchOffset = (delEndPrev - 1).coerceIn(0, prevText.length)
             val endPrevLineStart = lineOffsetOf(prevText, endTouchOffset)
             val endPrevLineEnd = prevText.indexOf('\n', endTouchOffset).let { if (it < 0) prevText.length else it }
+                .coerceAtLeast(endPrevLineStart)
             val endPrevLine = prevText.substring(endPrevLineStart, endPrevLineEnd)
             val endPrefixMatch = linePrefixRegex.find(endPrevLine)
             if (endPrefixMatch != null && endPrefixMatch.range.first == 0) {
@@ -720,16 +737,15 @@ object RichTextCodec {
                 val clipEndInEndPrefix = (delEndPrev - endPrevLineStart).coerceIn(0, pLen)
                 if (clipEndInEndPrefix in 1 until pLen) {
                     val brokenPrefixTail = endPrevLine.substring(clipEndInEndPrefix, pLen)
+                    val safeDelStart = delStart.coerceIn(0, nextText.length)
                     if (brokenPrefixTail.isNotEmpty() &&
-                        nextText.startsWith(brokenPrefixTail, delStart.coerceIn(0, nextText.length))
+                        safeDelStart + brokenPrefixTail.length <= nextText.length &&
+                        nextText.startsWith(brokenPrefixTail, safeDelStart)
                     ) {
-                        val safeDelStart = delStart.coerceIn(0, nextText.length)
                         val rebuilt = nextText.removeRange(safeDelStart, safeDelStart + brokenPrefixTail.length)
                         return sanitizeDamagedLineMarkers(
                             prevText = prevText,
-                            nextText = rebuilt,
-                            editLineStart = lineOffsetOf(rebuilt, safeDelStart),
-                            cursor = safeDelStart
+                            nextVal = TextFieldValue(rebuilt, TextRange(safeDelStart))
                         )
                     }
                 }
@@ -738,23 +754,20 @@ object RichTextCodec {
 
         return sanitizeDamagedLineMarkers(
             prevText = prevText,
-            nextText = nextText,
-            editLineStart = nextLineStart,
-            cursor = rawCursor
+            nextVal = nextVal
         )
     }
 
     private fun sanitizeDamagedLineMarkers(
         prevText: String,
-        nextText: String,
-        editLineStart: Int,
-        cursor: Int
+        nextVal: TextFieldValue
     ): TextFieldValue {
-        val baseCleaned = cleanupOrphanInlineMarkers(nextText, cursor)
+        val baseCleaned = cleanupOrphanInlineMarkers(nextVal)
         val text = baseCleaned.text
         var cur = baseCleaned.selection.max.coerceIn(0, text.length)
-        val lineStart = lineOffsetOf(text, editLineStart.coerceIn(0, text.length))
+        val lineStart = lineOffsetOf(text, cur)
         val lineEnd = text.indexOf('\n', lineStart).let { if (it < 0) text.length else it }
+            .coerceAtLeast(lineStart)
         var line = text.substring(lineStart, lineEnd)
         var lineCur = (cur - lineStart).coerceIn(0, line.length)
 
@@ -875,6 +888,9 @@ object RichTextCodec {
         }
 
         val out = text.substring(0, lineStart) + line + text.substring(lineEnd)
+        if (out == nextVal.text) {
+            return nextVal
+        }
         cur = (lineStart + lineCur).coerceIn(0, out.length)
         return cleanupOrphanInlineMarkers(out, cur)
     }
@@ -962,6 +978,11 @@ object RichTextCodec {
         return combined to cursor
     }
 
+    private fun cleanupOrphanInlineMarkers(value: TextFieldValue): TextFieldValue {
+        val cleaned = cleanupOrphanInlineMarkers(value.text, value.selection.max)
+        return if (cleaned.text == value.text) value else cleaned
+    }
+
     private fun cleanupOrphanInlineMarkers(text: String, cursor: Int): TextFieldValue {
         var out = text
         var cur = cursor
@@ -992,10 +1013,12 @@ object RichTextCodec {
     }
 
     private fun isCursorInsideInlineKind(text: String, cursor: Int, kind: InlineKind): Boolean {
-        val lineStart = text.lastIndexOf('\n', (cursor - 1).coerceAtLeast(0)).let { if (it < 0) 0 else it + 1 }
-        val lineEnd = text.indexOf('\n', cursor).let { if (it < 0) text.length else it }
-        if (cursor < lineStart || cursor > lineEnd) return false
-        val lineCursor = cursor - lineStart
+        val safeCursor = cursor.coerceIn(0, text.length)
+        val lineStart = lineOffsetOf(text, safeCursor)
+        val lineEnd = text.indexOf('\n', safeCursor).let { if (it < 0) text.length else it }
+            .coerceAtLeast(lineStart)
+        if (safeCursor < lineStart || safeCursor > lineEnd) return false
+        val lineCursor = safeCursor - lineStart
         val spans = parseInlineSpans(text.substring(lineStart, lineEnd))
         return spans.any { matchesInlineKind(it.kind, kind) && lineCursor in it.innerStart..it.innerEnd }
     }
@@ -1375,14 +1398,16 @@ object RichTextCodec {
         closeTag: String,
         isBold: Boolean
     ): Pair<Int, Int>? {
-        val lineStart = text.lastIndexOf('\n', (cursor - 1).coerceAtLeast(0)).let { if (it < 0) 0 else it + 1 }
-        val lineEnd = text.indexOf('\n', cursor).let { if (it < 0) text.length else it }
-        if (cursor < lineStart || cursor > lineEnd) return null
+        val safeCursor = cursor.coerceIn(0, text.length)
+        val lineStart = lineOffsetOf(text, safeCursor)
+        val lineEnd = text.indexOf('\n', safeCursor).let { if (it < 0) text.length else it }
+            .coerceAtLeast(lineStart)
+        if (safeCursor < lineStart || safeCursor > lineEnd) return null
         val spans = parseInlineSpans(text.substring(lineStart, lineEnd))
         for (span in spans) {
             val absInnerStart = lineStart + span.innerStart
             val absInnerEnd = lineStart + span.innerEnd
-            if (cursor in absInnerStart..absInnerEnd) {
+            if (safeCursor in absInnerStart..absInnerEnd) {
                 if (span.openTag == openTag && span.closeTag == closeTag && (!isBold || openTag == "**")) {
                     return (lineStart + span.rawStart) to (lineStart + span.rawEnd)
                 }
@@ -1395,15 +1420,17 @@ object RichTextCodec {
     }
 
     private fun findEnclosingSingleAsteriskSpan(text: String, cursor: Int): Pair<Int, Int>? {
-        val lineStart = text.lastIndexOf('\n', (cursor - 1).coerceAtLeast(0)).let { if (it < 0) 0 else it + 1 }
-        val lineEnd = text.indexOf('\n', cursor).let { if (it < 0) text.length else it }
-        if (cursor < lineStart || cursor > lineEnd) return null
+        val safeCursor = cursor.coerceIn(0, text.length)
+        val lineStart = lineOffsetOf(text, safeCursor)
+        val lineEnd = text.indexOf('\n', safeCursor).let { if (it < 0) text.length else it }
+            .coerceAtLeast(lineStart)
+        if (safeCursor < lineStart || safeCursor > lineEnd) return null
         val spans = parseInlineSpans(text.substring(lineStart, lineEnd))
         for (span in spans) {
             if (span.kind == InlineKind.ITALIC || span.kind == InlineKind.BOLD_ITALIC) {
                 val absInnerStart = lineStart + span.innerStart
                 val absInnerEnd = lineStart + span.innerEnd
-                if (cursor in absInnerStart..absInnerEnd) {
+                if (safeCursor in absInnerStart..absInnerEnd) {
                     return (lineStart + span.rawStart) to (lineStart + span.rawEnd)
                 }
             }
@@ -1633,8 +1660,9 @@ object RichTextCodec {
         val active = mutableSetOf<RichFormatAction>()
         if (text.isEmpty()) return active
         val cursor = selection.max.coerceIn(0, text.length)
-        val lineStart = text.lastIndexOf('\n', (cursor - 1).coerceAtLeast(0)).let { if (it < 0) 0 else it + 1 }
+        val lineStart = lineOffsetOf(text, cursor)
         val lineEnd = text.indexOf('\n', cursor).let { if (it < 0) text.length else it }
+            .coerceAtLeast(lineStart)
         val currentLine = text.substring(lineStart, lineEnd)
 
         when {

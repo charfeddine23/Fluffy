@@ -224,10 +224,10 @@ object NotePagesCodec {
      * Fast zero-allocation UTF-8 byte counter so keystroke byte-budget checks in Compose
      * never allocate heap ByteArrays or trigger GC pauses on large multi-page notes.
      */
-    fun utf8ByteLength(seq: CharSequence): Long {
+    fun utf8ByteLength(seq: CharSequence, start: Int = 0, end: Int = seq.length): Long {
         var count = 0L
-        var i = 0
-        val len = seq.length
+        var i = start.coerceIn(0, seq.length)
+        val len = end.coerceIn(i, seq.length)
         while (i < len) {
             val c = seq[i]
             when {
@@ -282,8 +282,7 @@ object NotePagesCodec {
         candidate: String,
         maxCandidateBytes: Long
     ): Pair<String, Boolean> {
-        val rawBytes = candidate.toByteArray(Charsets.UTF_8)
-        if (rawBytes.size.toLong() <= maxCandidateBytes) {
+        if (utf8ByteLength(candidate) <= maxCandidateBytes) {
             return candidate to false
         }
         if (maxCandidateBytes <= 0L) {
@@ -294,7 +293,7 @@ object NotePagesCodec {
         var high = candidate.length
         while (low < high) {
             val mid = (low + high + 1) / 2
-            val sliceBytes = candidate.substring(0, mid).toByteArray(Charsets.UTF_8).size.toLong()
+            val sliceBytes = utf8ByteLength(candidate, 0, mid)
             if (sliceBytes <= maxCandidateBytes) {
                 low = mid
             } else {

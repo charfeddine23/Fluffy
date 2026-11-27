@@ -565,4 +565,112 @@ class NoteDraftAndRichTextTest {
         assertEquals("★★★☆☆ (3/5) ", RichTextCodec.buildStarRatingSnippet(3))
         assertEquals("★★★★★ (5/5) ", RichTextCodec.buildStarRatingSnippet(5))
     }
+
+    @Test
+    fun `deleting line 1 leaving leading newline and cursor at zero never crashes`() {
+        val prev = "كلمة أولى\nالسطر الثاني"
+        val next = TextFieldValue("\nالسطر الثاني", TextRange(0))
+
+        // Must never throw StringIndexOutOfBoundsException in applyPendingStylesOnEdit or inspectActiveStyles
+        val editResult = RichTextCodec.applyPendingStylesOnEdit(
+            prevText = prev,
+            nextVal = next,
+            pendingStyles = emptySet()
+        )
+        assertEquals("\nالسطر الثاني", editResult.fieldValue.text)
+        assertEquals(TextRange(0), editResult.fieldValue.selection)
+
+        val stylesAtZero = RichTextCodec.inspectActiveStyles(
+            text = editResult.fieldValue.text,
+            selection = TextRange(0)
+        )
+        assertTrue(stylesAtZero.isEmpty())
+
+        // Deleting everything to empty string must also succeed cleanly
+        val cleared = RichTextCodec.applyPendingStylesOnEdit(
+            prevText = "\nالسطر الثاني",
+            nextVal = TextFieldValue("", TextRange(0)),
+            pendingStyles = emptySet()
+        )
+        assertEquals("", cleared.fieldValue.text)
+        assertEquals(TextRange(0), cleared.fieldValue.selection)
+        assertTrue(RichTextCodec.inspectActiveStyles("", TextRange(0)).isEmpty())
+    }
+
+    @Test
+    fun `deleting words with active IME composition preserves composition verbatim when no markers changed`() {
+        val nextWithComp = TextFieldValue(
+            text = "مرحبا بالعالم\nسطر ثاني",
+            selection = TextRange(5),
+            composition = TextRange(0, 5)
+        )
+        val outcome = RichTextCodec.applyPendingStylesOnEdit(
+            prevText = "مرحبا بالعالم الجميل\nسطر ثاني",
+            nextVal = nextWithComp,
+            pendingStyles = emptySet()
+        )
+        assertEquals(nextWithComp.text, outcome.fieldValue.text)
+        assertEquals(nextWithComp.selection, outcome.fieldValue.selection)
+        assertEquals(nextWithComp.composition, outcome.fieldValue.composition)
+    }
+
+    @Test
+    fun `selecting and deleting entire prefixed line does not resurrect deleted text`() {
+        val todoResult = RichTextCodec.applyPendingStylesOnEdit(
+            prevText = "- [ ] مهمة للحذف\nالسطر التالي",
+            nextVal = TextFieldValue("\nالسطر التالي", TextRange(0)),
+            pendingStyles = emptySet()
+        )
+        assertEquals("\nالسطر التالي", todoResult.fieldValue.text)
+        assertFalse(todoResult.fieldValue.text.contains("مهمة للحذف"))
+
+        val bulletResult = RichTextCodec.applyPendingStylesOnEdit(
+            prevText = "- نقطة أولى\nنقطة ثانية",
+            nextVal = TextFieldValue("\nنقطة ثانية", TextRange(0)),
+            pendingStyles = emptySet()
+        )
+        assertEquals("\nنقطة ثانية", bulletResult.fieldValue.text)
+        assertFalse(bulletResult.fieldValue.text.contains("نقطة أولى"))
+
+        val numberedResult = RichTextCodec.applyPendingStylesOnEdit(
+            prevText = "1. البند الأول\n2. البند الثاني",
+            nextVal = TextFieldValue("\n2. البند الثاني", TextRange(0)),
+            pendingStyles = emptySet()
+        )
+        assertEquals("\n2. البند الثاني", numberedResult.fieldValue.text)
+        assertFalse(numberedResult.fieldValue.text.contains("البند الأول"))
+    }
+
+    @Test
+    fun `transformForEditor remains monotonic on leading newline arabic emoji and damaged markers`() {
+        val edgeSamples = listOf(
+            "\nالسطر الثاني",
+            "\n\n",
+            "👍🎉\n**عريض**",
+            "- [ ] مهمة\n"
+        )
+        for (raw in edgeSamples) {
+            val transformed = RichTextCodec.transformForEditor(
+                raw = raw,
+                accentColor = Color(0xFF8B5CF6),
+                metaColor = Color(0xFF94A3B8),
+                isDark = true
+            )
+            val transLen = transformed.text.length
+            val mapping = transformed.offsetMapping
+            var prevT = 0
+            for (o in 0..raw.length) {
+                val t = mapping.originalToTransformed(o)
+                assertTrue(t in prevT..transLen)
+                prevT = t
+            }
+            var prevO = 0
+            for (t in 0..transLen) {
+                val o = mapping.transformedToOriginal(t)
+                assertTrue(o in prevO..raw.length)
+                prevO = o
+            }
+        }
+    }
 }
+

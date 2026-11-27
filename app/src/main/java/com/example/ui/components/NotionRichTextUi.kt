@@ -2007,8 +2007,8 @@ fun applyActionToSegmentedPage(
     val localSel = (segmentSelections[segIdx] ?: TextRange(seg.text.length)).let {
         TextRange(it.start.coerceIn(0, seg.text.length), it.end.coerceIn(0, seg.text.length))
     }
-    val localComp = segmentCompositions[segIdx]?.let { comp ->
-        if (comp.start in 0..seg.text.length && comp.end in 0..seg.text.length) comp else null
+    val localComp = segmentCompositions[segIdx]?.takeIf { comp ->
+        !comp.collapsed && comp.min >= 0 && comp.max <= seg.text.length
     }
     val curVal = TextFieldValue(seg.text, localSel, localComp)
     val outcome = RichTextCodec.toggleFormatForEditor(curVal, action, pendingStyles)
@@ -2140,8 +2140,8 @@ fun SegmentedRichPageEditor(
                     val localSel = (segmentSelections[segIdx] ?: TextRange(seg.text.length)).let {
                         TextRange(it.start.coerceIn(0, seg.text.length), it.end.coerceIn(0, seg.text.length))
                     }
-                    val localComp = segmentCompositions[segIdx]?.let { comp ->
-                        if (comp.start in 0..seg.text.length && comp.end in 0..seg.text.length) comp else null
+                    val localComp = segmentCompositions[segIdx]?.takeIf { comp ->
+                        !comp.collapsed && comp.min >= 0 && comp.max <= seg.text.length
                     }
                     val fieldValue = TextFieldValue(
                         text = seg.text,

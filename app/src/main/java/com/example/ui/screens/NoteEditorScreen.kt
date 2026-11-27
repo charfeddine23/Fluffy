@@ -482,7 +482,7 @@ fun NoteEditorScreen(
     }
 
     fun updateTitleBounded(newTitle: String) {
-        val currentBytesWithoutTitle = totalNoteBytes - title.toByteArray(Charsets.UTF_8).size.toLong()
+        val currentBytesWithoutTitle = totalNoteBytes - NotePagesCodec.utf8ByteLength(title)
         val budget = (NotePagesCodec.MAX_NOTE_BYTES - currentBytesWithoutTitle).coerceAtLeast(0L)
         val (fitted, truncated) = NotePagesCodec.fitWithinByteBudget(newTitle, budget)
         title = fitted
@@ -494,14 +494,14 @@ fun NoteEditorScreen(
         while (pageTitles.size < pages.size) pageTitles.add("")
         val cleanNew = newPageTitle.replace("\n", " ").replace("\r", "")
         val currentRaw = NotePagesCodec.encodePageEntry(pageTitles[pageIndex], pages[pageIndex])
-        val otherBytes = totalNoteBytes - currentRaw.toByteArray(Charsets.UTF_8).size.toLong()
+        val otherBytes = totalNoteBytes - NotePagesCodec.utf8ByteLength(currentRaw)
         val safetyMargin = if (pageIndex > 0) 8L else 0L
         val candidateRaw = NotePagesCodec.encodePageEntry(cleanNew, pages[pageIndex])
         val budget = (NotePagesCodec.MAX_NOTE_BYTES - otherBytes - safetyMargin).coerceAtLeast(0L)
-        if (candidateRaw.toByteArray(Charsets.UTF_8).size.toLong() <= budget) {
+        if (NotePagesCodec.utf8ByteLength(candidateRaw) <= budget) {
             pageTitles[pageIndex] = cleanNew
         } else {
-            val existingBodyBytes = pages[pageIndex].toByteArray(Charsets.UTF_8).size.toLong() + 36L
+            val existingBodyBytes = NotePagesCodec.utf8ByteLength(pages[pageIndex]) + 36L
             val titleBudget = (budget - existingBodyBytes).coerceAtLeast(0L)
             val (fitted, _) = NotePagesCodec.fitWithinByteBudget(cleanNew, titleBudget)
             pageTitles[pageIndex] = fitted
@@ -513,9 +513,9 @@ fun NoteEditorScreen(
         if (pageIndex !in pages.indices) return false
         val pTitle = pageTitles.getOrElse(pageIndex) { "" }
         val currentRaw = NotePagesCodec.encodePageEntry(pTitle, pages[pageIndex])
-        val otherBytes = totalNoteBytes - currentRaw.toByteArray(Charsets.UTF_8).size.toLong()
+        val otherBytes = totalNoteBytes - NotePagesCodec.utf8ByteLength(currentRaw)
         val headerOverhead = if (pTitle.isBlank()) 0L else {
-            (NotePagesCodec.encodePageEntry(pTitle, "").toByteArray(Charsets.UTF_8).size.toLong())
+            NotePagesCodec.utf8ByteLength(NotePagesCodec.encodePageEntry(pTitle, ""))
         }
         val safetyMargin = if (pageIndex > 0) 6L else 0L
         val budget = (NotePagesCodec.MAX_NOTE_BYTES - otherBytes - headerOverhead - safetyMargin).coerceAtLeast(0L)
@@ -1178,7 +1178,7 @@ fun NoteEditorScreen(
                                                     BasicTextField(
                                                         value = item.text,
                                                         onValueChange = { newText ->
-                                                            val curItemBytes = item.text.toByteArray(Charsets.UTF_8).size.toLong()
+                                                            val curItemBytes = NotePagesCodec.utf8ByteLength(item.text)
                                                             val budget = (NotePagesCodec.MAX_NOTE_BYTES - (totalNoteBytes - curItemBytes) - 8L).coerceAtLeast(0L)
                                                             val (fitted, truncated) = NotePagesCodec.fitWithinByteBudget(newText, budget)
                                                             checklistItems[index] = item.copy(text = fitted)
@@ -1333,7 +1333,11 @@ fun NoteEditorScreen(
                                                 newSegSel.end.coerceIn(0, maxSegLen)
                                             )
                                         }
-                                        segmentCompositions["$pageIndex:$segIdx"] = if (truncated) null else newSegComp
+                                        segmentCompositions["$pageIndex:$segIdx"] = if (truncated) {
+                                            null
+                                        } else {
+                                            newSegComp?.takeIf { !it.collapsed && it.min >= 0 && it.max <= maxSegLen }
+                                        }
                                         pendingStylesByPage[pageIndex] = nextPending
                                     },
                                     onSegmentFocused = { segIdx ->
