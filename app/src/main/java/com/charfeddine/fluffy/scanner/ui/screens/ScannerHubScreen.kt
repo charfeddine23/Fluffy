@@ -1,7 +1,5 @@
 package com.charfeddine.fluffy.scanner.ui.screens
 
-import android.app.Activity
-import android.content.Intent
 import android.net.Uri
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
@@ -52,6 +50,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.AddCircleOutline
 import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.CameraAlt
@@ -60,7 +59,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Edit
@@ -314,31 +312,6 @@ fun ScannerHubScreen(
         pendingAppendGalleryDocId = null
         if (uris.isNotEmpty()) {
             scannerViewModel.importDeviceFiles(uris, appendToDocId = appendDocId, isArabic = isArabic)
-        }
-    }
-
-    val openPdfLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        val appendDocId = pendingAppendGalleryDocId
-        pendingAppendGalleryDocId = null
-        if (result.resultCode == Activity.RESULT_OK) {
-            val intentData = result.data
-            val pickedUris = buildList<Uri> {
-                val clip = intentData?.clipData
-                if (clip != null) {
-                    for (i in 0 until clip.itemCount) {
-                        clip.getItemAt(i)?.uri?.let { add(it) }
-                    }
-                }
-                val single = intentData?.data
-                if (single != null && single !in this) {
-                    add(single)
-                }
-            }
-            if (pickedUris.isNotEmpty()) {
-                scannerViewModel.importDeviceFiles(pickedUris, appendToDocId = appendDocId, isArabic = isArabic)
-            }
         }
     }
 
@@ -910,28 +883,14 @@ fun ScannerHubScreen(
                                             onClick = onLaunchAppIdScanner
                                         )
                                         HubQuickActionTile(
-                                            icon = Icons.Default.Description,
-                                            label = "Open PDF",
+                                            icon = Icons.AutoMirrored.Filled.MenuBook,
+                                            label = if (isArabic) "قراءة PDF" else "Read PDF",
                                             accentColor = ScannerGlassPalette.VioletGlow,
                                             highlighted = false,
                                             modifier = Modifier
                                                 .weight(1f)
-                                                .testTag("hub_import_gallery_btn"),
-                                            onClick = {
-                                                pendingAppendGalleryDocId = null
-                                                val pdfIntent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                                                    addCategory(Intent.CATEGORY_OPENABLE)
-                                                    type = "application/pdf"
-                                                    putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/pdf"))
-                                                    putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
-                                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                                }
-                                                runCatching {
-                                                    openPdfLauncher.launch(pdfIntent)
-                                                }.onFailure {
-                                                    fileImportLauncher.launch(arrayOf("application/pdf"))
-                                                }
-                                            }
+                                                .testTag("hub_read_pdf_btn"),
+                                            onClick = { scannerViewModel.openPdfLibrary() }
                                         )
                                         HubQuickActionTile(
                                             icon = Icons.Default.PictureAsPdf,
@@ -1459,6 +1418,7 @@ fun ScannerHubScreen(
         onSplitPdf = { uri, outName -> scannerViewModel.splitPdf(uri, outName, isArabic) },
         onCompressPdf = { uri, quality, outName -> scannerViewModel.compressPdf(uri, quality, outName, isArabic) },
         onProtectPdf = { uri, pwd, outName -> scannerViewModel.passwordProtectPdf(uri, pwd, outName, isArabic) },
+        onEditPdf = { uris -> scannerViewModel.importDeviceFiles(uris, appendToDocId = null, isArabic = isArabic) },
         onDismiss = { showPdfToolsSheet = false }
     )
 

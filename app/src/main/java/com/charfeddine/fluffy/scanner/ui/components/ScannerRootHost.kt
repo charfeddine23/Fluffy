@@ -40,6 +40,8 @@ import com.charfeddine.fluffy.scanner.domain.ScannerViewModel
 import com.charfeddine.fluffy.scanner.ui.screens.CameraScannerScreen
 import com.charfeddine.fluffy.scanner.ui.screens.CropAndFilterScreen
 import com.charfeddine.fluffy.scanner.ui.screens.DocumentDetailEditorScreen
+import com.charfeddine.fluffy.scanner.ui.screens.PdfLibraryScreen
+import com.charfeddine.fluffy.scanner.ui.screens.PdfReaderScreen
 import com.charfeddine.fluffy.scanner.ui.screens.ScannerHubScreen
 import com.charfeddine.fluffy.scanner.ui.theme.ScannerGlassPalette
 import com.charfeddine.fluffy.scanner.ui.theme.scannerGlassSurface
@@ -164,8 +166,7 @@ fun ScannerRootHost(
                         onBackToCamera = {
                             val editDoc = current.editDocumentId
                             if (editDoc != null) {
-                                scannerViewModel.batchFrames.value = emptyList()
-                                scannerViewModel.openDocumentDetail(editDoc)
+                                scannerViewModel.cancelPageCropEditor(editDoc)
                             } else {
                                 scannerViewModel.currentRoute.value = ScannerSubRoute.Camera(current.appendToDocId)
                             }
@@ -188,6 +189,26 @@ fun ScannerRootHost(
                             }
                         },
                         onBackToHub = { scannerViewModel.navigateBackToHub() }
+                    )
+                }
+
+                ScannerSubRoute.PdfLibrary -> {
+                    PdfLibraryScreen(
+                        scannerViewModel = scannerViewModel,
+                        progressStore = scannerViewModel.pdfProgressStore,
+                        isArabic = isArabic,
+                        onOpenPdfReader = { entry -> scannerViewModel.openPdfReader(entry) },
+                        onBackToHub = { scannerViewModel.navigateBackToHub() }
+                    )
+                }
+
+                is ScannerSubRoute.PdfReader -> {
+                    PdfReaderScreen(
+                        pdfEntry = current.entry,
+                        scannerViewModel = scannerViewModel,
+                        progressStore = scannerViewModel.pdfProgressStore,
+                        isArabic = isArabic,
+                        onBackToLibrary = { scannerViewModel.openPdfLibrary() }
                     )
                 }
             }

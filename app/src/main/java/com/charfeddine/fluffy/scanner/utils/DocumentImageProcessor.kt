@@ -31,6 +31,7 @@ import kotlin.math.floor
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
@@ -347,7 +348,8 @@ object DocumentImageProcessor {
 
     /**
      * Applies full offline enhancement pipeline:
-     * Filter preset + Brightness (-100..100) + Contrast (0.5..2.0) + Sharpness (0..1) + Rotation.
+     * Filter preset + Shadows (-1..1) + Highlights (-1..1) + Saturation (0..2) +
+     * Temperature (-1..1) + Brightness (-100..100) + Contrast (0.5..2.0) + Sharpness (0..1) + Rotation.
      */
     fun applyEnhancements(
         source: Bitmap,
@@ -356,7 +358,11 @@ object DocumentImageProcessor {
         contrast: Float = 1f,
         sharpness: Float = 0f,
         rotationDeg: Int = 0,
-        enableSuperRes: Boolean = true
+        enableSuperRes: Boolean = true,
+        shadows: Float = 0f,
+        highlights: Float = 0f,
+        saturation: Float = 1f,
+        temperature: Float = 0f
     ): Bitmap {
         val rotated = if (rotationDeg % 360 != 0) rotateBitmap(source, rotationDeg.toFloat()) else source
 
@@ -366,15 +372,37 @@ object DocumentImageProcessor {
             ScannerFilterType.MAGIC_COLOR -> applyMagicColorFilter(rotated, enableSuperRes = enableSuperRes)
             ScannerFilterType.BW_DOCUMENT -> applyAdaptiveBwThreshold(rotated)
             ScannerFilterType.SHADOW_GLARE_REMOVAL -> applyShadowGlareRemoval(rotated)
+            ScannerFilterType.SUPER_CLEAR -> applySuperClearFilter(rotated, enableSuperRes = enableSuperRes)
+            ScannerFilterType.DEEP_INK -> applyDeepInkFilter(rotated)
+            ScannerFilterType.CLEAN_PAPER -> applyCleanPaperFilter(rotated)
         }
         if (rotated !== source && !rotated.isRecycled) rotated.recycle()
 
-        val adjusted = if (abs(brightness) > 0.5f || abs(contrast - 1f) > 0.02f) {
-            applyBrightnessContrast(filtered, brightness, contrast).also {
+        val toneRecovered = if (abs(shadows) > 0.01f || abs(highlights) > 0.01f) {
+            applyShadowsHighlights(filtered, shadows, highlights).also {
                 if (it !== filtered && !filtered.isRecycled) filtered.recycle()
             }
         } else {
             filtered
+        }
+
+        val hasColorMatrixAdj = abs(brightness) > 0.5f ||
+            abs(contrast - 1f) > 0.02f ||
+            abs(saturation - 1f) > 0.01f ||
+            abs(temperature) > 0.01f
+
+        val adjusted = if (hasColorMatrixAdj) {
+            applyColorAndToneMatrix(
+                source = toneRecovered,
+                brightness = brightness,
+                contrast = contrast,
+                saturation = saturation,
+                temperature = temperature
+            ).also {
+                if (it !== toneRecovered && !toneRecovered.isRecycled) toneRecovered.recycle()
+            }
+        } else {
+            toneRecovered
         }
 
         return if (sharpness > 0.05f) {
@@ -386,19 +414,105 @@ object DocumentImageProcessor {
         }
     }
 
-    private fun applyBrightnessContrast(source: Bitmap, brightness: Float, contrast: Float): Bitmap {
+    private fun applyShadowsHighlights(
+        source: Bitmap,
+        shadows: Float,
+        highlights: Float
+    ): Bitmap {
+        val w = source.width
+        val h = source.height
+        val n = w * h
+        val sVal = shadows.coerceIn(-1f, 1f)
+        val hVal = highlights.coerceIn(-1f, 1f)
+
+        // Precompute luminance gain & offset LUT for 0..255 so inner pixel loop has zero pow() calls
+        val scaleLut = FloatArray(256)
+        val zeroLift = if (sVal > 0f) (sVal * 42f).roundToInt() else 0
+        for (l in 0..255) {
+            val ln = l / 255f
+            val wShadow = (1f - ln) * (1f - ln)
+            val wHigh = ln * ln
+            val shadowDelta = if (sVal >= 0f) sVal * wShadow * 96f else sVal * wShadow * 76f
+            val highDelta = if (hVal >= 0f) hVal * wHigh * 84f else hVal * wHigh * 96f
+            val targetL = (l + shadowDelta + highDelta).coerceIn(0f, 255f)
+            scaleLut[l] = if (l == 0) 1f else targetL / l.toFloat()
+        }
+
+        val px = IntArray(n)
+        source.getPixels(px, 0, w, 0, 0, w, h)
+        for (i in 0 until n) {
+            val c = px[i]
+            val r = (c ushr 16) and 0xFF
+            val g = (c ushr 8) and 0xFF
+            val b = c and 0xFF
+            val lum = ((r * 77 + g * 150 + b * 29) shr 8).coerceIn(0, 255)
+            val nr: Int
+            val ng: Int
+            val nb: Int
+            if (lum == 0 && zeroLift > 0) {
+                nr = zeroLift
+                ng = zeroLift
+                nb = zeroLift
+            } else {
+                val scale = scaleLut[lum]
+                nr = (r * scale).roundToInt().coerceIn(0, 255)
+                ng = (g * scale).roundToInt().coerceIn(0, 255)
+                nb = (b * scale).roundToInt().coerceIn(0, 255)
+            }
+            px[i] = (c and -0x1000000) or (nr shl 16) or (ng shl 8) or nb
+        }
+        return Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
+    }
+
+    private fun applyColorAndToneMatrix(
+        source: Bitmap,
+        brightness: Float,
+        contrast: Float,
+        saturation: Float,
+        temperature: Float
+    ): Bitmap {
         val out = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(out)
-        val translate = (-0.5f * contrast + 0.5f) * 255f + brightness
-        val cm = ColorMatrix(
-            floatArrayOf(
-                contrast, 0f, 0f, 0f, translate,
-                0f, contrast, 0f, 0f, translate,
-                0f, 0f, contrast, 0f, translate,
-                0f, 0f, 0f, 1f, 0f
+        val combined = ColorMatrix()
+
+        val sat = saturation.coerceIn(0f, 2f)
+        if (abs(sat - 1f) > 0.01f) {
+            combined.postConcat(ColorMatrix().apply { setSaturation(sat) })
+        }
+
+        val temp = temperature.coerceIn(-1f, 1f)
+        if (abs(temp) > 0.01f) {
+            val rScale = (1f + temp * 0.22f).coerceIn(0.72f, 1.28f)
+            val gScale = (1f + temp * 0.03f).coerceIn(0.94f, 1.06f)
+            val bScale = (1f - temp * 0.24f).coerceIn(0.72f, 1.28f)
+            val shift = temp * 10f
+            combined.postConcat(
+                ColorMatrix(
+                    floatArrayOf(
+                        rScale, 0f, 0f, 0f, shift,
+                        0f, gScale, 0f, 0f, 0f,
+                        0f, 0f, bScale, 0f, -shift,
+                        0f, 0f, 0f, 1f, 0f
+                    )
+                )
             )
-        )
-        val paint = Paint().apply { colorFilter = ColorMatrixColorFilter(cm) }
+        }
+
+        if (abs(brightness) > 0.5f || abs(contrast - 1f) > 0.02f) {
+            val translate = (-0.5f * contrast + 0.5f) * 255f + brightness
+            combined.postConcat(
+                ColorMatrix(
+                    floatArrayOf(
+                        contrast, 0f, 0f, 0f, translate,
+                        0f, contrast, 0f, 0f, translate,
+                        0f, 0f, contrast, 0f, translate,
+                        0f, 0f, 0f, 1f, 0f
+                    )
+                )
+            )
+        }
+
+        val paint = Paint().apply { colorFilter = ColorMatrixColorFilter(combined) }
         canvas.drawBitmap(source, 0f, 0f, paint)
         return out
     }
@@ -868,34 +982,185 @@ object DocumentImageProcessor {
     }
 
     /**
-     * Shadow & Glare Removal: smooths uneven room shadows and softens specular glare hotspots.
+     * Shadow Removal: multi-scale illumination surface normalization to erase hand/phone
+     * shadows and soften specular glare hotspots while preserving paper brightness and ink clarity.
      */
     private fun applyShadowGlareRemoval(source: Bitmap): Bitmap {
         val w = source.width
         val h = source.height
-        val bgW = (w / 12).coerceAtLeast(16)
-        val bgH = (h / 12).coerceAtLeast(16)
+        val bgW = (w / 10).coerceIn(18, 112)
+        val bgH = (h / 10).coerceIn(18, 112)
+        val tiny = Bitmap.createScaledBitmap(source, bgW, bgH, true)
+        val smooth = boxBlurBitmap(tiny, radius = 5)
+        val fullBg = Bitmap.createScaledBitmap(smooth, w, h, true)
+        tiny.recycle()
+        smooth.recycle()
+
+        val n = w * h
+        val srcPx = IntArray(n)
+        val bgPx = IntArray(n)
+        source.getPixels(srcPx, 0, w, 0, 0, w, h)
+        fullBg.getPixels(bgPx, 0, w, 0, 0, w, h)
+        fullBg.recycle()
+
+        for (i in 0 until n) {
+            val s = srcPx[i]
+            val b = bgPx[i]
+            val sr = (s ushr 16) and 0xFF
+            val sg = (s ushr 8) and 0xFF
+            val sb = s and 0xFF
+
+            val br = max(34, (b ushr 16) and 0xFF)
+            val bg = max(34, (b ushr 8) and 0xFF)
+            val bb = max(34, b and 0xFF)
+            val bgLuma = max(34, (br * 77 + bg * 150 + bb * 29) shr 8)
+
+            val lumRatio = (240f / bgLuma).coerceIn(0.86f, 2.85f)
+            val r = (sr * (0.72f * lumRatio + 0.28f * (240f / br).coerceIn(0.86f, 2.85f))).roundToInt().coerceIn(0, 255)
+            val g = (sg * (0.72f * lumRatio + 0.28f * (240f / bg).coerceIn(0.86f, 2.85f))).roundToInt().coerceIn(0, 255)
+            val bl = (sb * (0.72f * lumRatio + 0.28f * (240f / bb).coerceIn(0.86f, 2.85f))).roundToInt().coerceIn(0, 255)
+            srcPx[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or bl
+        }
+        return Bitmap.createBitmap(srcPx, w, h, Bitmap.Config.ARGB_8888)
+    }
+
+    /**
+     * Super Clear / Text Boost: background leveling + crisp text contrast curve +
+     * high-definition multi-scale edge sharpening for razor-sharp printed documents.
+     */
+    private fun applySuperClearFilter(source: Bitmap, enableSuperRes: Boolean = true): Bitmap {
+        val superRes = if (enableSuperRes) {
+            upscaleLanczos4IfNeeded(source, minLongestEdge = 2000, maxScale = 2.0f)
+        } else {
+            source
+        }
+        val leveled = applyIlluminationDivisionNormalization(superRes, preserveSkinAndPortrait = false)
+        if (superRes !== source && !superRes.isRecycled) superRes.recycle()
+
+        val w = leveled.width
+        val h = leveled.height
+        val n = w * h
+        val px = IntArray(n)
+        leveled.getPixels(px, 0, w, 0, 0, w, h)
+        if (leveled !== source && !leveled.isRecycled) leveled.recycle()
+
+        for (i in 0 until n) {
+            val c = px[i]
+            val r = (c ushr 16) and 0xFF
+            val g = (c ushr 8) and 0xFF
+            val b = c and 0xFF
+            val lum = (r * 77 + g * 150 + b * 29) shr 8
+            val maxC = max(r, max(g, b))
+            val minC = min(r, min(g, b))
+            if (lum > 214 && (maxC - minC) < 36) {
+                px[i] = Color.WHITE
+            } else if (lum < 155) {
+                val factor = 0.78f
+                val nr = (r * factor).roundToInt().coerceIn(0, 255)
+                val ng = (g * factor).roundToInt().coerceIn(0, 255)
+                val nb = (b * factor).roundToInt().coerceIn(0, 255)
+                px[i] = (0xFF shl 24) or (nr shl 16) or (ng shl 8) or nb
+            }
+        }
+        val boosted = Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
+        val sharpened = applyMultiScaleUnsharpMask(boosted, strength = 1.25f, noiseThreshold = 4.2f)
+        if (sharpened !== boosted && !boosted.isRecycled) boosted.recycle()
+        return sharpened
+    }
+
+    /**
+     * Deep Ink: darkens faded print, pencil marks, and light ballpoint handwriting
+     * while preserving clean paper brightness and original ink hues.
+     */
+    private fun applyDeepInkFilter(source: Bitmap): Bitmap {
+        val leveled = applyIlluminationDivisionNormalization(source, preserveSkinAndPortrait = false)
+        val w = leveled.width
+        val h = leveled.height
+        val n = w * h
+        val px = IntArray(n)
+        leveled.getPixels(px, 0, w, 0, 0, w, h)
+        if (leveled !== source && !leveled.isRecycled) leveled.recycle()
+
+        // Precompute ink-deepening luminance LUT (darkens faded print/handwriting strongly, preserves clean paper)
+        val inkGainLut = FloatArray(256)
+        for (l in 0..255) {
+            inkGainLut[l] = when {
+                l == 0 -> 1f
+                l >= 224 -> 1f
+                else -> {
+                    val norm = l / 224f
+                    val target = 224f * norm.pow(2.15f)
+                    (target / l.toFloat()).coerceIn(0.18f, 1f)
+                }
+            }
+        }
+
+        for (i in 0 until n) {
+            val c = px[i]
+            val r = (c ushr 16) and 0xFF
+            val g = (c ushr 8) and 0xFF
+            val b = c and 0xFF
+            val lum = ((r * 77 + g * 150 + b * 29) shr 8).coerceIn(0, 255)
+            val gain = inkGainLut[lum]
+            if (gain < 0.999f) {
+                val nr = (r * gain).roundToInt().coerceIn(0, 255)
+                val ng = (g * gain).roundToInt().coerceIn(0, 255)
+                val nb = (b * gain).roundToInt().coerceIn(0, 255)
+                px[i] = (0xFF shl 24) or (nr shl 16) or (ng shl 8) or nb
+            }
+        }
+        val darkened = Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
+        val crisp = applyMultiScaleUnsharpMask(darkened, strength = 0.68f, noiseThreshold = 5.0f)
+        if (crisp !== darkened && !darkened.isRecycled) darkened.recycle()
+        return crisp
+    }
+
+    /**
+     * Clean Paper: removes yellow/aged tint and textured paper grain, whitening the page
+     * surface while preserving colored stamps, signatures, and ink legibility.
+     */
+    private fun applyCleanPaperFilter(source: Bitmap): Bitmap {
+        val w = source.width
+        val h = source.height
+        val bgW = (w / 12).coerceIn(18, 96)
+        val bgH = (h / 12).coerceIn(18, 96)
         val tiny = Bitmap.createScaledBitmap(source, bgW, bgH, true)
         val smooth = boxBlurBitmap(tiny, radius = 4)
         val fullBg = Bitmap.createScaledBitmap(smooth, w, h, true)
         tiny.recycle()
         smooth.recycle()
 
-        val srcPx = IntArray(w * h)
-        val bgPx = IntArray(w * h)
+        val n = w * h
+        val srcPx = IntArray(n)
+        val bgPx = IntArray(n)
         source.getPixels(srcPx, 0, w, 0, 0, w, h)
         fullBg.getPixels(bgPx, 0, w, 0, 0, w, h)
         fullBg.recycle()
 
-        for (i in srcPx.indices) {
+        for (i in 0 until n) {
             val s = srcPx[i]
             val b = bgPx[i]
-            val bgLuma = max(40, (Color.red(b) * 77 + Color.green(b) * 150 + Color.blue(b) * 29) shr 8)
-            val ratio = (232f / bgLuma).coerceIn(0.85f, 2.4f)
-            val r = (Color.red(s) * ratio).toInt().coerceIn(0, 248)
-            val g = (Color.green(s) * ratio).toInt().coerceIn(0, 248)
-            val bl = (Color.blue(s) * ratio).toInt().coerceIn(0, 248)
-            srcPx[i] = Color.rgb(r, g, bl)
+            val sr = (s ushr 16) and 0xFF
+            val sg = (s ushr 8) and 0xFF
+            val sb = s and 0xFF
+
+            val br = max(36, (b ushr 16) and 0xFF)
+            val bg = max(36, (b ushr 8) and 0xFF)
+            val bb = max(36, b and 0xFF)
+
+            var nr = (sr * (252f / br).coerceIn(0.85f, 3.2f)).roundToInt().coerceIn(0, 255)
+            var ng = (sg * (252f / bg).coerceIn(0.85f, 3.2f)).roundToInt().coerceIn(0, 255)
+            var nb = (sb * (252f / bb).coerceIn(0.85f, 3.2f)).roundToInt().coerceIn(0, 255)
+
+            val lum = (nr * 77 + ng * 150 + nb * 29) shr 8
+            val chroma = max(nr, max(ng, nb)) - min(nr, min(ng, nb))
+            if (lum > 192 && chroma < 42) {
+                val whiten = ((lum - 192) / 38f).coerceIn(0f, 1f)
+                nr = (nr + (255 - nr) * whiten).roundToInt().coerceIn(0, 255)
+                ng = (ng + (255 - ng) * whiten).roundToInt().coerceIn(0, 255)
+                nb = (nb + (255 - nb) * whiten).roundToInt().coerceIn(0, 255)
+            }
+            srcPx[i] = (0xFF shl 24) or (nr shl 16) or (ng shl 8) or nb
         }
         return Bitmap.createBitmap(srcPx, w, h, Bitmap.Config.ARGB_8888)
     }

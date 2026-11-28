@@ -19,9 +19,12 @@ enum class ScanMode(val id: String, val labelEn: String, val labelAr: String) {
 enum class ScannerFilterType(val id: String, val labelEn: String, val labelAr: String) {
     ORIGINAL("original", "Original", "الأصلي"),
     MAGIC_COLOR("magic_color", "Magic Color", "ألوان سحرية"),
-    BW_DOCUMENT("bw_doc", "B&W crisp", "أبيض وأسود"),
+    BW_DOCUMENT("bw_doc", "B&W Crisp", "أبيض وأسود"),
     GRAYSCALE("grayscale", "Grayscale", "رمادي"),
-    SHADOW_GLARE_REMOVAL("deshadow", "De-Shadow", "إزالة الظل");
+    SHADOW_GLARE_REMOVAL("deshadow", "Shadow Removal", "إزالة الظل"),
+    SUPER_CLEAR("super_clear", "Super Clear", "وضوح فائق"),
+    DEEP_INK("deep_ink", "Deep Ink", "حبر داكن"),
+    CLEAN_PAPER("clean_paper", "Clean Paper", "ورق نقي");
 
     companion object {
         fun fromId(id: String): ScannerFilterType = entries.firstOrNull { it.id == id } ?: ORIGINAL
@@ -324,6 +327,10 @@ data class BatchCapturedFrame(
     val brightness: Float = 0f,
     val contrast: Float = 1.05f,
     val sharpness: Float = 0.2f,
+    val shadows: Float = 0f,
+    val highlights: Float = 0f,
+    val saturation: Float = 1f,
+    val temperature: Float = 0f,
     val rotationDeg: Int = 0,
     val ocrText: String = "",
     val idCardGroupId: String? = null,
@@ -375,6 +382,10 @@ data class ScannedPageEntity(
     val brightness: Float = 0f,
     val contrast: Float = 1.05f,
     val sharpness: Float = 0.2f,
+    val shadows: Float = 0f,
+    val highlights: Float = 0f,
+    val saturation: Float = 1f,
+    val temperature: Float = 0f,
     val rotationDeg: Int = 0,
     val annotationsJson: String = "",
     val signaturesJson: String = "",

@@ -18,7 +18,7 @@ import com.charfeddine.fluffy.scanner.data.model.ScannerFolderEntity
         ScannedPageEntity::class,
         SavedSignatureEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class ScannerDatabase : RoomDatabase() {
@@ -37,6 +37,15 @@ abstract class ScannerDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE scanned_pages ADD COLUMN shadows REAL NOT NULL DEFAULT 0.0")
+                db.execSQL("ALTER TABLE scanned_pages ADD COLUMN highlights REAL NOT NULL DEFAULT 0.0")
+                db.execSQL("ALTER TABLE scanned_pages ADD COLUMN saturation REAL NOT NULL DEFAULT 1.0")
+                db.execSQL("ALTER TABLE scanned_pages ADD COLUMN temperature REAL NOT NULL DEFAULT 0.0")
+            }
+        }
+
         @Volatile
         private var INSTANCE: ScannerDatabase? = null
 
@@ -47,7 +56,7 @@ abstract class ScannerDatabase : RoomDatabase() {
                     ScannerDatabase::class.java,
                     "fluffy_scanner.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                 INSTANCE = instance
                 instance

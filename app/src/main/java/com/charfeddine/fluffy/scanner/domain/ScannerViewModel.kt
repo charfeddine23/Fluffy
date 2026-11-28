@@ -11,9 +11,11 @@ import android.provider.OpenableColumns
 import android.util.LruCache
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.charfeddine.fluffy.scanner.data.local.PdfReadingProgressStore
 import com.charfeddine.fluffy.scanner.data.local.ScannerDatabase
 import com.charfeddine.fluffy.scanner.data.model.BatchCapturedFrame
 import com.charfeddine.fluffy.scanner.data.model.CompressionQuality
+import com.charfeddine.fluffy.scanner.data.model.DevicePdfEntry
 import com.charfeddine.fluffy.scanner.data.model.DocumentQuad
 import com.charfeddine.fluffy.scanner.data.model.IdCardPrintMode
 import com.charfeddine.fluffy.scanner.data.model.IdCardSide
@@ -64,12 +66,15 @@ sealed interface ScannerSubRoute {
         val editPageId: String? = null
     ) : ScannerSubRoute
     data class DocumentDetail(val documentId: String) : ScannerSubRoute
+    data object PdfLibrary : ScannerSubRoute
+    data class PdfReader(val entry: DevicePdfEntry) : ScannerSubRoute
 }
 
 class ScannerViewModel(application: Application) : AndroidViewModel(application) {
 
     private val db = ScannerDatabase.getDatabase(application)
     val repository = ScannerRepository(application, db.scannerDao())
+    val pdfProgressStore = PdfReadingProgressStore(application)
 
     // Navigation inside the Scanner Ecosystem
     val currentRoute = MutableStateFlow<ScannerSubRoute>(ScannerSubRoute.Hub)
@@ -139,6 +144,8 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
     val idCardFrontRawPath = MutableStateFlow<String?>(null)
     private var idCardFrontQuad: DocumentQuad? = null
     val activeCropIndex = MutableStateFlow(0)
+    val detailPageIndexByDocId = MutableStateFlow<Map<String, Int>>(emptyMap())
+    private var editInitialFrameSnapshots: Map<String, BatchCapturedFrame> = emptyMap()
 
     // Exit Auto-Save tracking for edited documents in DocumentDetailEditorScreen
     private val modifiedDocIdsForAutoSave = MutableStateFlow<Set<String>>(emptySet())
@@ -159,6 +166,13 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
 
     private fun bitmapCacheKey(pageId: String, processedPath: String, isLocked: Boolean): String =
         "$pageId|$processedPath|$isLocked"
+
+    private fun evictPageBitmapCache(pageId: String) {
+        val prefix = "$pageId|"
+        pageBitmapLruCache.snapshot().keys.filter { it.startsWith(prefix) }.forEach { key ->
+            pageBitmapLruCache.remove(key)
+        }
+    }
 
     fun getCachedPageBitmap(pageId: String, processedPath: String, isLocked: Boolean): Bitmap? {
         val bmp = pageBitmapLruCache.get(bitmapCacheKey(pageId, processedPath, isLocked))
@@ -371,12 +385,19 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
         statusMessage.value = msg
     }
 
+    fun setDetailPageIndex(docId: String, pageIndex: Int) {
+        val safe = pageIndex.coerceAtLeast(0)
+        if (detailPageIndexByDocId.value[docId] == safe) return
+        detailPageIndexByDocId.value = detailPageIndexByDocId.value + (docId to safe)
+    }
+
     fun openCameraScanner(appendToDocId: String? = null, initialMode: ScanMode? = null) {
         if (initialMode != null) {
             setActiveScanMode(initialMode)
         }
         detailTransitionDirection.value = 0
         batchFrames.value = emptyList()
+        editInitialFrameSnapshots = emptyMap()
         idCardFrontRawPath.value = null
         idCardFrontQuad = null
         activeCropIndex.value = 0
@@ -388,9 +409,28 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
         currentRoute.value = ScannerSubRoute.DocumentDetail(docId)
     }
 
+    fun cancelPageCropEditor(docId: String) {
+        val currentIdx = activeCropIndex.value.coerceAtLeast(0)
+        setDetailPageIndex(docId, currentIdx)
+        batchFrames.value = emptyList()
+        editInitialFrameSnapshots = emptyMap()
+        openDocumentDetail(docId)
+    }
+
+    fun openPdfLibrary() {
+        detailTransitionDirection.value = 0
+        currentRoute.value = ScannerSubRoute.PdfLibrary
+    }
+
+    fun openPdfReader(entry: DevicePdfEntry) {
+        detailTransitionDirection.value = 0
+        currentRoute.value = ScannerSubRoute.PdfReader(entry)
+    }
+
     fun navigateBackToHub() {
         detailTransitionDirection.value = 0
         batchFrames.value = emptyList()
+        editInitialFrameSnapshots = emptyMap()
         idCardFrontRawPath.value = null
         idCardFrontQuad = null
         currentRoute.value = ScannerSubRoute.Hub
@@ -1096,7 +1136,11 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
         brightness: Float,
         contrast: Float,
         sharpness: Float,
-        rotationDeg: Int
+        rotationDeg: Int,
+        shadows: Float = batchFrames.value.getOrNull(index)?.shadows ?: 0f,
+        highlights: Float = batchFrames.value.getOrNull(index)?.highlights ?: 0f,
+        saturation: Float = batchFrames.value.getOrNull(index)?.saturation ?: 1f,
+        temperature: Float = batchFrames.value.getOrNull(index)?.temperature ?: 0f
     ) {
         val list = batchFrames.value.toMutableList()
         if (index !in list.indices) return
@@ -1105,6 +1149,10 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
             brightness = brightness,
             contrast = contrast,
             sharpness = sharpness,
+            shadows = shadows,
+            highlights = highlights,
+            saturation = saturation,
+            temperature = temperature,
             rotationDeg = rotationDeg
         )
         list[index] = updated
@@ -1117,6 +1165,10 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                         brightness = brightness,
                         contrast = contrast,
                         sharpness = sharpness,
+                        shadows = shadows,
+                        highlights = highlights,
+                        saturation = saturation,
+                        temperature = temperature,
                         rotationDeg = rotationDeg
                     )
                 }
@@ -1216,7 +1268,11 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                                     contrast = frame.contrast,
                                     sharpness = frame.sharpness,
                                     rotationDeg = 0,
-                                    enableSuperRes = false
+                                    enableSuperRes = false,
+                                    shadows = frame.shadows,
+                                    highlights = frame.highlights,
+                                    saturation = frame.saturation,
+                                    temperature = frame.temperature
                                 )
                                 if (frontAuto !== frontFinal && !frontAuto.isRecycled) frontAuto.recycle()
 
@@ -1231,7 +1287,11 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                                     contrast = frame.contrast,
                                     sharpness = frame.sharpness,
                                     rotationDeg = 0,
-                                    enableSuperRes = false
+                                    enableSuperRes = false,
+                                    shadows = frame.shadows,
+                                    highlights = frame.highlights,
+                                    saturation = frame.saturation,
+                                    temperature = frame.temperature
                                 )
                                 if (backAuto !== backFinal && !backAuto.isRecycled) backAuto.recycle()
 
@@ -1298,6 +1358,10 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                                         brightness = frame.brightness,
                                         contrast = frame.contrast,
                                         sharpness = frame.sharpness,
+                                        shadows = frame.shadows,
+                                        highlights = frame.highlights,
+                                        saturation = frame.saturation,
+                                        temperature = frame.temperature,
                                         rotationDeg = frame.rotationDeg,
                                         ocrText = ocrRes.fullText
                                     )
@@ -1324,7 +1388,11 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                                     brightness = frame.brightness,
                                     contrast = frame.contrast,
                                     sharpness = frame.sharpness,
-                                    rotationDeg = frame.rotationDeg
+                                    rotationDeg = frame.rotationDeg,
+                                    shadows = frame.shadows,
+                                    highlights = frame.highlights,
+                                    saturation = frame.saturation,
+                                    temperature = frame.temperature
                                 )
                                 if (prepared !== out && !prepared.isRecycled) prepared.recycle()
                                 out
@@ -1361,6 +1429,10 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
                                     brightness = frame.brightness,
                                     contrast = frame.contrast,
                                     sharpness = frame.sharpness,
+                                    shadows = frame.shadows,
+                                    highlights = frame.highlights,
+                                    saturation = frame.saturation,
+                                    temperature = frame.temperature,
                                     rotationDeg = frame.rotationDeg,
                                     ocrText = ocrRes.fullText
                                 )
@@ -1424,11 +1496,11 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun openPageCropEditor(docId: String, page: ScannedPageEntity) {
+    private fun pageEntityToBatchFrame(page: ScannedPageEntity): BatchCapturedFrame? {
         val rawPath = page.originalImagePath.takeIf { it.isNotBlank() && File(it).exists() }
             ?: page.processedImagePath
-        if (rawPath.isBlank() || !File(rawPath).exists()) return
-        val frame = BatchCapturedFrame(
+        if (rawPath.isBlank() || !File(rawPath).exists()) return null
+        return BatchCapturedFrame(
             id = page.id,
             rawImagePath = rawPath,
             processedImagePath = page.processedImagePath.ifBlank { rawPath },
@@ -1437,84 +1509,176 @@ class ScannerViewModel(application: Application) : AndroidViewModel(application)
             brightness = page.brightness,
             contrast = page.contrast,
             sharpness = page.sharpness,
+            shadows = page.shadows,
+            highlights = page.highlights,
+            saturation = page.saturation,
+            temperature = page.temperature,
             rotationDeg = page.rotationDeg,
             ocrText = page.ocrText
         )
-        batchFrames.value = listOf(frame)
+    }
+
+    fun openPageCropEditor(
+        docId: String,
+        page: ScannedPageEntity,
+        allPages: List<ScannedPageEntity> = emptyList()
+    ) {
+        val orderedSource = if (allPages.isNotEmpty()) {
+            allPages.sortedBy { it.pageOrder }
+        } else {
+            listOf(page)
+        }
+        val mappedFrames = orderedSource.mapNotNull(::pageEntityToBatchFrame)
+        val initialFrames = mappedFrames.ifEmpty {
+            listOfNotNull(pageEntityToBatchFrame(page))
+        }
+        if (initialFrames.isEmpty()) return
+
+        val startIdx = initialFrames.indexOfFirst { it.id == page.id }.coerceAtLeast(0)
+        batchFrames.value = initialFrames
+        editInitialFrameSnapshots = initialFrames.associateBy { it.id }
         idCardFrontRawPath.value = null
         idCardFrontQuad = null
-        activeCropIndex.value = 0
+        activeCropIndex.value = startIdx
+        setDetailPageIndex(docId, startIdx)
         currentRoute.value = ScannerSubRoute.CropAndFilter(
             appendToDocId = null,
             editDocumentId = docId,
             editPageId = page.id
         )
+
+        if (allPages.isEmpty()) {
+            viewModelScope.launch {
+                val fetched = withContext(Dispatchers.IO) {
+                    repository.getPagesOnce(docId).sortedBy { it.pageOrder }
+                }
+                if (fetched.size > 1) {
+                    val activeRoute = currentRoute.value
+                    if (activeRoute is ScannerSubRoute.CropAndFilter && activeRoute.editDocumentId == docId) {
+                        val currentById = batchFrames.value.associateBy { it.id }
+                        val allFrames = fetched.mapNotNull(::pageEntityToBatchFrame)
+                        if (allFrames.isNotEmpty()) {
+                            editInitialFrameSnapshots = allFrames.associateBy { it.id }
+                            val merged = allFrames.map { currentById[it.id] ?: it }
+                            val currentSelectedId = currentById.values.firstOrNull()?.id ?: page.id
+                            val targetIdx = merged.indexOfFirst { it.id == currentSelectedId }.coerceAtLeast(0)
+                            batchFrames.value = merged
+                            activeCropIndex.value = targetIdx
+                            setDetailPageIndex(docId, targetIdx)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fun saveEditedPageFrame(docId: String, pageId: String, isArabic: Boolean) {
-        val frame = batchFrames.value.firstOrNull() ?: return
+        val currentFrames = batchFrames.value
+        if (currentFrames.isEmpty()) return
+        val activeFrame = currentFrames.firstOrNull { it.id == pageId }
+            ?: currentFrames.getOrNull(activeCropIndex.value)
+            ?: currentFrames.first()
+        val preservedIndex = currentFrames.indexOfFirst { it.id == activeFrame.id }
+            .takeIf { it >= 0 }
+            ?: activeCropIndex.value.coerceIn(0, currentFrames.lastIndex)
+
+        val framesToSave = if (editInitialFrameSnapshots.isNotEmpty()) {
+            currentFrames.filter { frame ->
+                val initial = editInitialFrameSnapshots[frame.id]
+                initial == null || initial != frame
+            }
+        } else {
+            listOf(activeFrame)
+        }
+
+        if (framesToSave.isEmpty()) {
+            setDetailPageIndex(docId, preservedIndex)
+            batchFrames.value = emptyList()
+            editInitialFrameSnapshots = emptyMap()
+            currentRoute.value = ScannerSubRoute.DocumentDetail(docId)
+            return
+        }
+
         viewModelScope.launch {
             isBusy.value = true
             try {
                 val updated = withContext(Dispatchers.IO) {
                     val existingDoc = repository.getDocumentOnce(docId) ?: return@withContext false
-                    val existingPages = repository.getPagesOnce(docId)
-                    val targetPage = existingPages.firstOrNull { it.id == pageId } ?: return@withContext false
+                    val existingPages = repository.getPagesOnce(docId).associateBy { it.id }
+                    var anySaved = false
 
-                    val rawPath = targetPage.originalImagePath.takeIf { it.isNotBlank() && File(it).exists() }
-                        ?: frame.rawImagePath
-                    val rawBmp = repository.decodeSampledPageBitmap(rawPath, 2400)
-                        ?: return@withContext false
+                    for (frame in framesToSave) {
+                        val targetPage = existingPages[frame.id] ?: continue
+                        val rawPath = targetPage.originalImagePath.takeIf { it.isNotBlank() && File(it).exists() }
+                            ?: frame.rawImagePath
+                        val rawBmp = repository.decodeSampledPageBitmap(rawPath, 2400)
+                            ?: continue
 
-                    val enhanced = withContext(Dispatchers.Default) {
-                        val warped = DocumentImageProcessor.warpPerspective(rawBmp, frame.detectedQuad, 2400)
-                        if (rawBmp !== warped && !rawBmp.isRecycled) rawBmp.recycle()
-                        val out = DocumentImageProcessor.applyEnhancements(
-                            source = warped,
-                            filter = frame.filter,
+                        val enhanced = withContext(Dispatchers.Default) {
+                            val warped = DocumentImageProcessor.warpPerspective(rawBmp, frame.detectedQuad, 2400)
+                            if (rawBmp !== warped && !rawBmp.isRecycled) rawBmp.recycle()
+                            val out = DocumentImageProcessor.applyEnhancements(
+                                source = warped,
+                                filter = frame.filter,
+                                brightness = frame.brightness,
+                                contrast = frame.contrast,
+                                sharpness = frame.sharpness,
+                                rotationDeg = frame.rotationDeg,
+                                shadows = frame.shadows,
+                                highlights = frame.highlights,
+                                saturation = frame.saturation,
+                                temperature = frame.temperature
+                            )
+                            if (warped !== out && !warped.isRecycled) warped.recycle()
+                            out
+                        }
+
+                        val outFile = File(repository.docsRootDir, "page_${UUID.randomUUID()}.jpg")
+                        DocumentImageProcessor.saveBitmapAsJpeg(enhanced, outFile, 94)
+                        val ocrRes = OfflineOcrAndBarcodeEngine.extractTextOffline(enhanced)
+                        if (!enhanced.isRecycled) enhanced.recycle()
+
+                        repository.encryptFileIfLocked(outFile, existingDoc.isLocked)
+
+                        val oldProcessed = targetPage.processedImagePath
+                        if (oldProcessed.isNotBlank() &&
+                            oldProcessed != outFile.absolutePath &&
+                            oldProcessed != targetPage.originalImagePath
+                        ) {
+                            runCatching { File(oldProcessed).delete() }
+                        }
+
+                        val updatedPage = targetPage.copy(
+                            originalImagePath = rawPath,
+                            processedImagePath = outFile.absolutePath,
+                            cornersJson = frame.detectedQuad.toJson(),
+                            filterId = frame.filter.id,
                             brightness = frame.brightness,
                             contrast = frame.contrast,
                             sharpness = frame.sharpness,
-                            rotationDeg = frame.rotationDeg
+                            shadows = frame.shadows,
+                            highlights = frame.highlights,
+                            saturation = frame.saturation,
+                            temperature = frame.temperature,
+                            rotationDeg = frame.rotationDeg,
+                            ocrText = ocrRes.fullText.ifBlank { targetPage.ocrText }
                         )
-                        if (warped !== out && !warped.isRecycled) warped.recycle()
-                        out
+                        repository.upsertPage(updatedPage)
+                        evictPageBitmapCache(targetPage.id)
+                        anySaved = true
                     }
 
-                    val outFile = File(repository.docsRootDir, "page_${UUID.randomUUID()}.jpg")
-                    DocumentImageProcessor.saveBitmapAsJpeg(enhanced, outFile, 94)
-                    val ocrRes = OfflineOcrAndBarcodeEngine.extractTextOffline(enhanced)
-                    if (!enhanced.isRecycled) enhanced.recycle()
-
-                    repository.encryptFileIfLocked(outFile, existingDoc.isLocked)
-
-                    val oldProcessed = targetPage.processedImagePath
-                    if (oldProcessed.isNotBlank() &&
-                        oldProcessed != outFile.absolutePath &&
-                        oldProcessed != targetPage.originalImagePath
-                    ) {
-                        runCatching { File(oldProcessed).delete() }
+                    if (anySaved) {
+                        repository.syncDocumentStats(docId)
+                        markDocumentModified(docId)
                     }
-
-                    val updatedPage = targetPage.copy(
-                        originalImagePath = rawPath,
-                        processedImagePath = outFile.absolutePath,
-                        cornersJson = frame.detectedQuad.toJson(),
-                        filterId = frame.filter.id,
-                        brightness = frame.brightness,
-                        contrast = frame.contrast,
-                        sharpness = frame.sharpness,
-                        rotationDeg = frame.rotationDeg,
-                        ocrText = ocrRes.fullText.ifBlank { targetPage.ocrText }
-                    )
-                    repository.upsertPage(updatedPage)
-                    repository.syncDocumentStats(docId)
-                    markDocumentModified(docId)
-                    true
+                    anySaved
                 }
 
                 if (updated) {
+                    setDetailPageIndex(docId, preservedIndex)
                     batchFrames.value = emptyList()
+                    editInitialFrameSnapshots = emptyMap()
                     currentRoute.value = ScannerSubRoute.DocumentDetail(docId)
                     statusMessage.value = if (isArabic) {
                         "تم تحديث حواف وتحسينات الصفحة ✓"

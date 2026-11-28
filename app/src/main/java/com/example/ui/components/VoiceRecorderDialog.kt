@@ -252,11 +252,13 @@ fun VoiceRecorderDialog(
             onDismiss()
         }
     ) {
+        val recorderFill = themePreset.surface.copy(alpha = 0.95f)
         LiquidGlassCard(
             isDark = isDark,
             tint = GlassTint.FROST,
             shape = RoundedCornerShape(28.dp),
             borderWidth = 1.8.dp,
+            customFill = recorderFill,
             testTag = "voice_recorder_dialog"
         ) {
             Column(

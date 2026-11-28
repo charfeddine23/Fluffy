@@ -259,8 +259,8 @@ fun DocumentDetailEditorScreen(
         scannerViewModel.preloadAdjacentDocuments(neighborIds, unlockedIds, docsById)
     }
 
-    val activePageIndexMap = remember { mutableStateMapOf<String, Int>() }
-    var activePageIndex = activePageIndexMap[activeDoc.id] ?: 0
+    val detailPageIndexMap by scannerViewModel.detailPageIndexByDocId.collectAsState()
+    val activePageIndex = detailPageIndexMap[activeDoc.id] ?: 0
     val safePageIndex = activePageIndex.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
     val currentPage: ScannedPageEntity? = pages.getOrNull(safePageIndex)
 
@@ -394,8 +394,8 @@ fun DocumentDetailEditorScreen(
                             doc = slotDoc,
                             isSlotCurrent = isSlotCurrent,
                             isLockedAndProtected = slotDoc.isLocked && slotDoc.id !in unlockedIds,
-                            activePageIndex = activePageIndexMap[slotDoc.id] ?: 0,
-                            onActivePageIndexChange = { newIdx -> activePageIndexMap[slotDoc.id] = newIdx },
+                            activePageIndex = detailPageIndexMap[slotDoc.id] ?: 0,
+                            onActivePageIndexChange = { newIdx -> scannerViewModel.setDetailPageIndex(slotDoc.id, newIdx) },
                             activeTool = if (isSlotCurrent) activeTool else AnnotationTool.NONE,
                             penColorArgb = penColorArgb,
                             redactionBlack = redactionBlack,
@@ -649,7 +649,7 @@ fun DocumentDetailEditorScreen(
                                 showMoreMenu = false
                                 activeTool = AnnotationTool.NONE
                                 currentPage?.let { pg ->
-                                    scannerViewModel.openPageCropEditor(doc.id, pg)
+                                    scannerViewModel.openPageCropEditor(doc.id, pg, pages)
                                 }
                             }
                         )
@@ -910,7 +910,7 @@ fun DocumentDetailEditorScreen(
                                 onClick = {
                                     activeTool = AnnotationTool.NONE
                                     currentPage?.let { pg ->
-                                        scannerViewModel.openPageCropEditor(doc.id, pg)
+                                        scannerViewModel.openPageCropEditor(doc.id, pg, pages)
                                     }
                                 }
                             )
@@ -1093,24 +1093,24 @@ fun DocumentDetailEditorScreen(
             activePageIndex = safePageIndex,
             isArabic = isArabic,
             onSelectPage = { idx ->
-                activePageIndexMap[doc.id] = idx
+                scannerViewModel.setDetailPageIndex(doc.id, idx)
                 showPagesSheet = false
             },
             onEditPage = { pg ->
                 showPagesSheet = false
                 activeTool = AnnotationTool.NONE
-                scannerViewModel.openPageCropEditor(doc.id, pg)
+                scannerViewModel.openPageCropEditor(doc.id, pg, pages)
             },
             onMoveEarlier = { idx ->
                 if (idx > 0) {
                     scannerViewModel.movePageOrder(doc.id, idx, idx - 1)
-                    activePageIndexMap[doc.id] = idx - 1
+                    scannerViewModel.setDetailPageIndex(doc.id, idx - 1)
                 }
             },
             onMoveLater = { idx ->
                 if (idx < pages.lastIndex) {
                     scannerViewModel.movePageOrder(doc.id, idx, idx + 1)
-                    activePageIndexMap[doc.id] = idx + 1
+                    scannerViewModel.setDetailPageIndex(doc.id, idx + 1)
                 }
             },
             onDuplicatePage = { pg ->
@@ -1121,7 +1121,7 @@ fun DocumentDetailEditorScreen(
             },
             onDeletePage = { pg ->
                 scannerViewModel.deletePage(doc.id, pg.id, isArabic)
-                activePageIndexMap[doc.id] = (safePageIndex - 1).coerceAtLeast(0)
+                scannerViewModel.setDetailPageIndex(doc.id, (safePageIndex - 1).coerceAtLeast(0))
             },
             onAddPage = {
                 showPagesSheet = false
@@ -1610,24 +1610,35 @@ private fun DocumentPagerStageSlot(
     val latestOnSelectSignature by rememberUpdatedState(onSelectSignature)
     val latestOnZoomStateChanged by rememberUpdatedState(onZoomStateChanged)
     val latestPagesCount by rememberUpdatedState(pages.size)
+    var hasSyncedInitialPage by remember(doc.id) { mutableStateOf(false) }
+    val latestHasSyncedInitialPage by rememberUpdatedState(hasSyncedInitialPage)
 
     LaunchedEffect(pagePagerState) {
         snapshotFlow { pagePagerState.settledPage }
             .distinctUntilChanged()
             .collect { settled ->
-                val maxIdx = (latestPagesCount - 1).coerceAtLeast(0)
-                val clamped = settled.coerceIn(0, maxIdx)
-                isCurrentPageZoomed = false
-                latestOnZoomStateChanged(false)
-                latestOnSelectSignature(null)
-                latestOnActivePageIndexChange(clamped)
+                if (latestPagesCount > 0 && latestHasSyncedInitialPage) {
+                    val maxIdx = (latestPagesCount - 1).coerceAtLeast(0)
+                    val clamped = settled.coerceIn(0, maxIdx)
+                    isCurrentPageZoomed = false
+                    latestOnZoomStateChanged(false)
+                    latestOnSelectSignature(null)
+                    latestOnActivePageIndexChange(clamped)
+                }
             }
     }
 
     LaunchedEffect(safePageIndex, pages.size) {
         if (pages.isNotEmpty() && !pagePagerState.isScrollInProgress) {
             val target = safePageIndex.coerceIn(0, pages.lastIndex)
-            if (pagePagerState.currentPage != target) {
+            if (!hasSyncedInitialPage) {
+                if (pagePagerState.currentPage != target) {
+                    isCurrentPageZoomed = false
+                    latestOnZoomStateChanged(false)
+                    pagePagerState.scrollToPage(target)
+                }
+                hasSyncedInitialPage = true
+            } else if (pagePagerState.currentPage != target) {
                 isCurrentPageZoomed = false
                 latestOnZoomStateChanged(false)
                 pagePagerState.animateScrollToPage(
@@ -1863,7 +1874,7 @@ private fun DocumentPagerStageSlot(
             }
         }
 
-        if (pages.size > 1 && activeTool == AnnotationTool.NONE) {
+        if (pages.size > 1) {
             Spacer(modifier = Modifier.height(6.dp))
             Row(
                 modifier = Modifier

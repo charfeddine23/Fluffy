@@ -53,6 +53,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Compress
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -132,6 +133,7 @@ fun PdfToolsSheet(
     onSplitPdf: (Uri, String) -> Unit,
     onCompressPdf: (Uri, CompressionQuality, String) -> Unit,
     onProtectPdf: (Uri, String, String) -> Unit,
+    onEditPdf: (List<Uri>) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     AnimatedVisibility(
@@ -144,7 +146,7 @@ fun PdfToolsSheet(
         BackHandler(enabled = visible) { onDismiss() }
 
         val context = LocalContext.current
-        var activeTool by remember { mutableIntStateOf(0) } // 0=Merge, 1=Split, 2=Compress, 3=Protect
+        var activeTool by remember { mutableIntStateOf(0) } // 0=Merge, 1=Split, 2=Compress, 3=Protect, 4=Edit PDF
 
         var mergeUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
         var splitUri by remember { mutableStateOf<Uri?>(null) }
@@ -153,16 +155,18 @@ fun PdfToolsSheet(
         var protectUri by remember { mutableStateOf<Uri?>(null) }
         var protectPassword by remember { mutableStateOf("") }
         var showPassword by remember { mutableStateOf(false) }
+        var editUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
         var outputTitle by remember { mutableStateOf("") }
 
         val metadataCache = remember { mutableStateMapOf<String, PdfUriMetadata>() }
 
-        val allActiveUris = remember(mergeUris, splitUri, compressUri, protectUri) {
+        val allActiveUris = remember(mergeUris, splitUri, compressUri, protectUri, editUris) {
             buildList {
                 addAll(mergeUris)
                 splitUri?.let { add(it) }
                 compressUri?.let { add(it) }
                 protectUri?.let { add(it) }
+                addAll(editUris)
             }.distinctBy { it.toString() }
         }
 
@@ -182,8 +186,12 @@ fun PdfToolsSheet(
             contract = ActivityResultContracts.OpenMultipleDocuments()
         ) { uris ->
             if (uris.isNotEmpty()) {
-                val combined = (mergeUris + uris).distinctBy { it.toString() }
-                mergeUris = combined
+                if (activeTool == 4) {
+                    editUris = (editUris + uris).distinctBy { it.toString() }
+                } else {
+                    val combined = (mergeUris + uris).distinctBy { it.toString() }
+                    mergeUris = combined
+                }
             }
         }
 
@@ -203,8 +211,9 @@ fun PdfToolsSheet(
         val violetGlow = ScannerGlassPalette.VioletGlow
         val emeraldGlow = ScannerGlassPalette.EmeraldGlow
         val amberGlow = ScannerGlassPalette.AmberGlow
+        val roseGlow = ScannerGlassPalette.RoseGlow
 
-        val tools = remember(cyanGlow, violetGlow, emeraldGlow, amberGlow) {
+        val tools = remember(cyanGlow, violetGlow, emeraldGlow, amberGlow, roseGlow) {
             listOf(
                 PdfToolDescriptor(
                     index = 0,
@@ -241,16 +250,26 @@ fun PdfToolsSheet(
                     subtitleEn = "Lock with password",
                     icon = Icons.Default.Lock,
                     accent = amberGlow
+                ),
+                PdfToolDescriptor(
+                    index = 4,
+                    titleAr = "تعديل PDF",
+                    titleEn = "Edit PDF",
+                    subtitleAr = "قص، فلاتر، توقيع وإعادة ترتيب الصفحات",
+                    subtitleEn = "Crop, enhance, markup & reorder pages",
+                    icon = Icons.Default.Edit,
+                    accent = roseGlow
                 )
             )
         }
 
-        val activeDescriptor = tools[activeTool.coerceIn(0, 3)]
+        val activeDescriptor = tools[activeTool.coerceIn(0, 4)]
         val hasCurrentSelection = when (activeTool) {
             0 -> mergeUris.isNotEmpty() || outputTitle.isNotBlank()
             1 -> splitUri != null || outputTitle.isNotBlank()
             2 -> compressUri != null || outputTitle.isNotBlank()
-            else -> protectUri != null || protectPassword.isNotBlank() || outputTitle.isNotBlank()
+            3 -> protectUri != null || protectPassword.isNotBlank() || outputTitle.isNotBlank()
+            else -> editUris.isNotEmpty()
         }
 
         fun clearActiveWorkspace() {
@@ -263,6 +282,7 @@ fun PdfToolsSheet(
                     protectUri = null
                     protectPassword = ""
                 }
+                else -> editUris = emptyList()
             }
         }
 
@@ -434,6 +454,13 @@ fun PdfToolsSheet(
                                 onClick = { activeTool = 3 }
                             )
                         }
+                        PdfToolBentoCard(
+                            tool = tools[4],
+                            selected = activeTool == 4,
+                            isArabic = isArabic,
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { activeTool = 4 }
+                        )
                     }
 
                     // Active Tool Workspace
@@ -501,7 +528,7 @@ fun PdfToolsSheet(
                                     onOutputTitleChange = { outputTitle = it }
                                 )
 
-                                else -> ProtectWorkspaceSection(
+                                3 -> ProtectWorkspaceSection(
                                     isArabic = isArabic,
                                     protectUri = protectUri,
                                     meta = protectUri?.let { metadataCache[it.toString()] },
@@ -513,6 +540,16 @@ fun PdfToolsSheet(
                                     onPasswordChange = { protectPassword = it },
                                     onTogglePasswordVisibility = { showPassword = !showPassword },
                                     onOutputTitleChange = { outputTitle = it }
+                                )
+
+                                else -> EditPdfWorkspaceSection(
+                                    isArabic = isArabic,
+                                    editUris = editUris,
+                                    metadataCache = metadataCache,
+                                    onPickFiles = { multiPdfPicker.launch(arrayOf("application/pdf")) },
+                                    onRemove = { idx ->
+                                        editUris = editUris.toMutableList().apply { removeAt(idx) }
+                                    }
                                 )
                             }
                         }
@@ -526,15 +563,18 @@ fun PdfToolsSheet(
                     0 -> mergeUris.size >= 2
                     1 -> splitUri != null
                     2 -> compressUri != null
-                    else -> protectUri != null && protectPassword.isNotBlank()
+                    3 -> protectUri != null && protectPassword.isNotBlank()
+                    else -> editUris.isNotEmpty()
                 }
                 val actionTestTag = when (activeTool) {
                     0 -> "pdf_tool_merge_action"
                     1 -> "pdf_tool_split_action"
                     2 -> "pdf_tool_compress_action"
-                    else -> "pdf_tool_protect_action"
+                    3 -> "pdf_tool_protect_action"
+                    else -> "pdf_tool_edit_action"
                 }
                 val totalMergePages = mergeUris.sumOf { metadataCache[it.toString()]?.pageCount ?: 0 }
+                val totalEditPages = editUris.sumOf { metadataCache[it.toString()]?.pageCount ?: 0 }
                 val actionLabel = when (activeTool) {
                     0 -> if (isArabic) {
                         if (mergeUris.size >= 2) {
@@ -553,7 +593,22 @@ fun PdfToolsSheet(
                     }
                     1 -> if (isArabic) "تقسيم إلى صفحات منفصلة" else "Split Into Separate PDFs"
                     2 -> if (isArabic) "ضغط وتصدير الملف" else "Compress & Export PDF"
-                    else -> if (isArabic) "تشفير وحفظ الملف المحمي" else "Encrypt & Save Protected PDF"
+                    3 -> if (isArabic) "تشفير وحفظ الملف المحمي" else "Encrypt & Save Protected PDF"
+                    else -> if (isArabic) {
+                        if (editUris.isNotEmpty()) {
+                            if (totalEditPages > 0) "فتح للتعديل (${editUris.size} ملف • $totalEditPages صفحة)"
+                            else "فتح للتعديل (${editUris.size} ملف)"
+                        } else {
+                            "اختر ملف PDF للتعديل"
+                        }
+                    } else {
+                        if (editUris.isNotEmpty()) {
+                            if (totalEditPages > 0) "Open in Editor (${editUris.size} PDF • $totalEditPages pages)"
+                            else "Open in Editor (${editUris.size} PDF)"
+                        } else {
+                            "Select PDF(s) to Edit"
+                        }
+                    }
                 }
 
                 val buttonTextColor = ScannerGlassPalette.contrastOn(activeDescriptor.accent)
@@ -585,7 +640,11 @@ fun PdfToolsSheet(
                                 modifier = Modifier.size(15.dp)
                             )
                             Text(
-                                text = if (isArabic) "الحفظ التلقائي: Downloads/FluffyScans" else "Saves to Downloads/FluffyScans",
+                                text = if (activeTool == 4) {
+                                    if (isArabic) "يفتح الصفحات داخل محرر الماسح الضوئي" else "Opens pages in Doc Scanner Editor"
+                                } else {
+                                    if (isArabic) "الحفظ التلقائي: Downloads/FluffyScans" else "Saves to Downloads/FluffyScans"
+                                },
                                 fontSize = 11.5.sp,
                                 color = ScannerGlassPalette.TextSecondary,
                                 fontWeight = FontWeight.Medium
@@ -608,8 +667,12 @@ fun PdfToolsSheet(
                                     onCompressPdf(it, selectedQuality, outputTitle)
                                     onDismiss()
                                 }
-                                else -> protectUri?.let {
+                                3 -> protectUri?.let {
                                     onProtectPdf(it, protectPassword, outputTitle)
+                                    onDismiss()
+                                }
+                                else -> if (editUris.isNotEmpty()) {
+                                    onEditPdf(editUris)
                                     onDismiss()
                                 }
                             }
@@ -1518,6 +1581,119 @@ private fun ProtectWorkspaceSection(
         colors = textFieldColors,
         modifier = Modifier.fillMaxWidth()
     )
+}
+
+@Composable
+private fun EditPdfWorkspaceSection(
+    isArabic: Boolean,
+    editUris: List<Uri>,
+    metadataCache: Map<String, PdfUriMetadata>,
+    onPickFiles: () -> Unit,
+    onRemove: (Int) -> Unit
+) {
+    val accent = ScannerGlassPalette.RoseGlow
+    if (editUris.isEmpty()) {
+        GlassPdfDropzone(
+            title = if (isArabic) "اختر ملف PDF للتعديل والتحرير" else "Select PDF(s) to Edit",
+            subtitle = if (isArabic) "استيراد الصفحات إلى محرر الماسح للقص والفلاتر والتوقيع" else "Import PDF pages into the scanner editor for crop, filters & markup",
+            icon = Icons.Default.Edit,
+            accent = accent,
+            onClick = onPickFiles
+        )
+    } else {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .iosLiquidGlass(shape = RoundedCornerShape(22.dp), glowAccent = true, fillAlpha = 0.72f)
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (isArabic) "ملفات التعديل (${editUris.size})" else "PDFs to Edit (${editUris.size})",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = ScannerGlassPalette.TextPrimary
+                )
+                Row(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(accent.copy(alpha = 0.16f))
+                        .border(0.8.dp, accent.copy(alpha = 0.45f), CircleShape)
+                        .clickable { onPickFiles() }
+                        .padding(horizontal = 11.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null, tint = accent, modifier = Modifier.size(15.dp))
+                    Text(
+                        text = if (isArabic) "إضافة ملفات" else "Add PDFs",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = accent
+                    )
+                }
+            }
+
+            editUris.forEachIndexed { index, uri ->
+                val meta = metadataCache[uri.toString()]
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(ScannerGlassPalette.FrostedCardDark)
+                        .border(0.8.dp, ScannerGlassPalette.SubtleStroke, RoundedCornerShape(16.dp))
+                        .padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    PdfThumbnailFrame(bitmap = meta?.previewBitmap, accent = accent, widthDp = 38, heightDp = 48)
+
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = meta?.displayName ?: "PDF #${index + 1}",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = ScannerGlassPalette.TextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        val infoParts = buildList {
+                            if (meta != null && meta.pageCount > 0) {
+                                add(if (isArabic) "${meta.pageCount} صفحة" else "${meta.pageCount} pages")
+                            }
+                            if (meta != null && meta.sizeBytes > 0L) {
+                                add(formatScannerBytes(meta.sizeBytes, isArabic))
+                            }
+                        }.joinToString(" • ")
+                        if (infoParts.isNotEmpty()) {
+                            Text(
+                                text = infoParts,
+                                fontSize = 11.sp,
+                                color = ScannerGlassPalette.TextSecondary
+                            )
+                        }
+                    }
+
+                    IconButton(
+                        onClick = { onRemove(index) },
+                        modifier = Modifier.size(34.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = if (isArabic) "إزالة" else "Remove",
+                            tint = accent,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 private fun readPdfUriMetadata(context: Context, uri: Uri): PdfUriMetadata {

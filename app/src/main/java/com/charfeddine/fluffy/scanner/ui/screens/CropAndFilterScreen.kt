@@ -112,6 +112,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -135,6 +136,7 @@ import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -175,7 +177,7 @@ fun CropAndFilterScreen(
     var isCropPhase by rememberSaveable(editDocumentId, editPageId, appendToDocId) { mutableStateOf(true) }
     var docTitle by remember { mutableStateOf("") }
     var showAdjustSliders by remember { mutableStateOf(false) }
-    var activeToneMetric by remember { mutableIntStateOf(0) } // 0=Brightness, 1=Contrast, 2=Sharpness
+    var activeToneMetric by remember { mutableIntStateOf(0) } // 0=Brightness, 1=Contrast, 2=Shadows, 3=Highlights, 4=Sharpness, 5=Saturation, 6=Temperature
     var showSplitCompare by remember { mutableStateOf(true) }
     var isAutoFitting by remember(frame.id) { mutableStateOf(false) }
 
@@ -348,7 +350,7 @@ fun CropAndFilterScreen(
         }
     }
 
-    // Recompute warped + enhanced preview when moving into Enhance phase or tweaking filters
+    // Recompute warped + enhanced preview when moving into Enhance phase or tweaking filters/adjustments
     LaunchedEffect(
         isCropPhase,
         frame.id,
@@ -358,6 +360,10 @@ fun CropAndFilterScreen(
         frame.brightness,
         frame.contrast,
         frame.sharpness,
+        frame.shadows,
+        frame.highlights,
+        frame.saturation,
+        frame.temperature,
         frame.rotationDeg,
         effectiveIdPrintMode,
         pairedPartner?.id,
@@ -365,6 +371,10 @@ fun CropAndFilterScreen(
     ) {
         val raw = rawBitmap ?: return@LaunchedEffect
         if (!isCropPhase) {
+            if (enhancedBitmap != null) {
+                // Coalesce rapid slider drag events so background rendering stays silky-smooth
+                delay(36L)
+            }
             isRenderingPreview = true
             try {
                 withContext(Dispatchers.Default) {
@@ -381,7 +391,11 @@ fun CropAndFilterScreen(
                             contrast = frame.contrast,
                             sharpness = frame.sharpness,
                             rotationDeg = 0,
-                            enableSuperRes = false
+                            enableSuperRes = false,
+                            shadows = frame.shadows,
+                            highlights = frame.highlights,
+                            saturation = frame.saturation,
+                            temperature = frame.temperature
                         )
                         if (sideAuto !== sideEnh && !sideAuto.isRecycled) sideAuto.recycle()
 
@@ -438,7 +452,11 @@ fun CropAndFilterScreen(
                                 contrast = frame.contrast,
                                 sharpness = frame.sharpness,
                                 rotationDeg = 0,
-                                enableSuperRes = false
+                                enableSuperRes = false,
+                                shadows = frame.shadows,
+                                highlights = frame.highlights,
+                                saturation = frame.saturation,
+                                temperature = frame.temperature
                             )
                             if (fAuto !== fEnh && !fAuto.isRecycled) fAuto.recycle()
 
@@ -449,7 +467,11 @@ fun CropAndFilterScreen(
                                 contrast = frame.contrast,
                                 sharpness = frame.sharpness,
                                 rotationDeg = 0,
-                                enableSuperRes = false
+                                enableSuperRes = false,
+                                shadows = frame.shadows,
+                                highlights = frame.highlights,
+                                saturation = frame.saturation,
+                                temperature = frame.temperature
                             )
                             if (bAuto !== bEnh && !bAuto.isRecycled) bAuto.recycle()
 
@@ -493,7 +515,11 @@ fun CropAndFilterScreen(
                         contrast = frame.contrast,
                         sharpness = frame.sharpness,
                         rotationDeg = frame.rotationDeg,
-                        enableSuperRes = false
+                        enableSuperRes = false,
+                        shadows = frame.shadows,
+                        highlights = frame.highlights,
+                        saturation = frame.saturation,
+                        temperature = frame.temperature
                     )
                     if (prepared !== warped && !prepared.isRecycled) prepared.recycle()
                     val rotatedBefore = if (frame.rotationDeg % 360 != 0) {
@@ -961,6 +987,10 @@ fun CropAndFilterScreen(
                 val hasToneModifications = abs(frame.brightness) > 0.5f ||
                     abs(frame.contrast - 1f) > 0.02f ||
                     frame.sharpness > 0.05f ||
+                    abs(frame.shadows) > 0.02f ||
+                    abs(frame.highlights) > 0.02f ||
+                    abs(frame.saturation - 1f) > 0.02f ||
+                    abs(frame.temperature) > 0.02f ||
                     frame.rotationDeg % 360 != 0
 
                 Column(
@@ -971,7 +1001,9 @@ fun CropAndFilterScreen(
                     LazyRow(
                         horizontalArrangement = Arrangement.spacedBy(9.dp),
                         contentPadding = PaddingValues(horizontal = 2.dp),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("enhance_filter_row")
                     ) {
                         items(ScannerFilterType.entries) { filter ->
                             val selected = frame.filter == filter
@@ -980,7 +1012,7 @@ fun CropAndFilterScreen(
 
                             Column(
                                 modifier = Modifier
-                                    .width(74.dp)
+                                    .width(86.dp)
                                     .minimumInteractiveComponentSize()
                                     .testTag("filter_chip_${filter.id}")
                                     .iosLiquidGlass(
@@ -1061,9 +1093,10 @@ fun CropAndFilterScreen(
                                     text = if (isArabic) filter.labelAr else filter.labelEn,
                                     color = if (selected) ScannerGlassPalette.CyanGlow else ScannerGlassPalette.TextPrimary,
                                     fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
-                                    fontSize = 10.5.sp,
+                                    fontSize = 10.sp,
                                     maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    overflow = TextOverflow.Ellipsis,
+                                    textAlign = TextAlign.Center
                                 )
                             }
                         }
@@ -1173,15 +1206,20 @@ fun CropAndFilterScreen(
                                     modifier = Modifier
                                         .size(44.dp)
                                         .minimumInteractiveComponentSize()
+                                        .testTag("adjust_reset_btn")
                                         .iosLiquidGlass(CircleShape, fillAlpha = 0.72f)
                                         .clickable {
                                             scannerViewModel.updateFrameEnhancement(
-                                                activeIdx,
-                                                frame.filter,
-                                                0f,
-                                                1f,
-                                                0f,
-                                                0
+                                                index = activeIdx,
+                                                filter = frame.filter,
+                                                brightness = 0f,
+                                                contrast = 1f,
+                                                sharpness = 0f,
+                                                rotationDeg = 0,
+                                                shadows = 0f,
+                                                highlights = 0f,
+                                                saturation = 1f,
+                                                temperature = 0f
                                             )
                                         },
                                     contentAlignment = Alignment.Center
@@ -1199,6 +1237,7 @@ fun CropAndFilterScreen(
                                 modifier = Modifier
                                     .height(44.dp)
                                     .minimumInteractiveComponentSize()
+                                    .testTag("adjust_toggle_btn")
                                     .iosLiquidGlass(
                                         shape = CircleShape,
                                         glowAccent = showAdjustSliders,
@@ -1229,7 +1268,7 @@ fun CropAndFilterScreen(
                         }
                     }
 
-                    // C. Single-Metric Tabbed iOS 27 Liquid Glass Tuner Card
+                    // C. Pro 7-Metric Tabbed iOS 27 Liquid Glass Tuner Card
                     AnimatedVisibility(
                         visible = showAdjustSliders,
                         enter = fadeIn(tween(180)) + expandVertically(tween(220)),
@@ -1238,7 +1277,11 @@ fun CropAndFilterScreen(
                         val activeAccent = when (activeToneMetric) {
                             0 -> ScannerGlassPalette.CyanGlow
                             1 -> ScannerGlassPalette.VioletGlow
-                            else -> ScannerGlassPalette.EmeraldGlow
+                            2 -> ScannerGlassPalette.CyanGlow
+                            3 -> ScannerGlassPalette.AmberGlow
+                            4 -> ScannerGlassPalette.EmeraldGlow
+                            5 -> ScannerGlassPalette.VioletGlow
+                            else -> ScannerGlassPalette.AmberGlow
                         }
                         val metricValueLabel = when (activeToneMetric) {
                             0 -> {
@@ -1246,7 +1289,40 @@ fun CropAndFilterScreen(
                                 if (v > 0) "+$v" else "$v"
                             }
                             1 -> String.format(Locale.US, "%.2fx", frame.contrast)
-                            else -> "${(frame.sharpness * 100).roundToInt()}%"
+                            2 -> {
+                                val v = (frame.shadows * 100f).roundToInt()
+                                if (v > 0) "+$v" else "$v"
+                            }
+                            3 -> {
+                                val v = (frame.highlights * 100f).roundToInt()
+                                if (v > 0) "+$v" else "$v"
+                            }
+                            4 -> "${(frame.sharpness * 100f).roundToInt()}%"
+                            5 -> "${(frame.saturation * 100f).roundToInt()}%"
+                            else -> {
+                                val v = (frame.temperature * 100f).roundToInt()
+                                if (v > 0) "+$v" else "$v"
+                            }
+                        }
+
+                        data class AdjustMetricSpec(
+                            val index: Int,
+                            val label: String,
+                            val accent: Color,
+                            val tag: String
+                        )
+                        val metricTabs = listOf(
+                            AdjustMetricSpec(0, if (isArabic) "السطوع" else "Brightness", ScannerGlassPalette.CyanGlow, "adjust_metric_brightness"),
+                            AdjustMetricSpec(1, if (isArabic) "التباين" else "Contrast", ScannerGlassPalette.VioletGlow, "adjust_metric_contrast"),
+                            AdjustMetricSpec(2, if (isArabic) "الظلال" else "Shadows", ScannerGlassPalette.CyanGlow, "adjust_metric_shadows"),
+                            AdjustMetricSpec(3, if (isArabic) "الإضاءة" else "Highlights", ScannerGlassPalette.AmberGlow, "adjust_metric_highlights"),
+                            AdjustMetricSpec(4, if (isArabic) "الحدة" else "Sharpness", ScannerGlassPalette.EmeraldGlow, "adjust_metric_sharpness"),
+                            AdjustMetricSpec(5, if (isArabic) "التشبع" else "Saturation", ScannerGlassPalette.VioletGlow, "adjust_metric_saturation"),
+                            AdjustMetricSpec(6, if (isArabic) "الحرارة" else "Temperature", ScannerGlassPalette.AmberGlow, "adjust_metric_temperature")
+                        )
+                        val metricRowState = rememberLazyListState()
+                        LaunchedEffect(activeToneMetric) {
+                            metricRowState.animateScrollToItem(activeToneMetric.coerceIn(0, metricTabs.lastIndex))
                         }
 
                         Column(
@@ -1258,34 +1334,37 @@ fun CropAndFilterScreen(
                         ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    val metricTabs = listOf(
-                                        Triple(0, if (isArabic) "السطوع" else "Brightness", ScannerGlassPalette.CyanGlow),
-                                        Triple(1, if (isArabic) "التباين" else "Contrast", ScannerGlassPalette.VioletGlow),
-                                        Triple(2, if (isArabic) "الحدة" else "Sharpness", ScannerGlassPalette.EmeraldGlow)
-                                    )
-                                    metricTabs.forEach { (idx, label, accent) ->
-                                        val isSel = activeToneMetric == idx
+                                LazyRow(
+                                    state = metricRowState,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("adjust_metrics_row")
+                                ) {
+                                    items(metricTabs, key = { it.index }) { spec ->
+                                        val isSel = activeToneMetric == spec.index
                                         Box(
                                             modifier = Modifier
                                                 .clip(CircleShape)
-                                                .background(if (isSel) accent.copy(alpha = 0.22f) else Color.Transparent)
+                                                .testTag(spec.tag)
+                                                .background(if (isSel) spec.accent.copy(alpha = 0.22f) else Color.Transparent)
                                                 .border(
                                                     width = if (isSel) 0.9.dp else 0.dp,
-                                                    color = if (isSel) accent.copy(alpha = 0.65f) else Color.Transparent,
+                                                    color = if (isSel) spec.accent.copy(alpha = 0.65f) else Color.Transparent,
                                                     shape = CircleShape
                                                 )
-                                                .clickable { activeToneMetric = idx }
-                                                .padding(horizontal = 11.dp, vertical = 5.dp)
+                                                .clickable { activeToneMetric = spec.index }
+                                                .padding(horizontal = 11.dp, vertical = 6.dp)
                                         ) {
                                             Text(
-                                                text = label,
-                                                color = if (isSel) accent else ScannerGlassPalette.TextSecondary,
+                                                text = spec.label,
+                                                color = if (isSel) spec.accent else ScannerGlassPalette.TextSecondary,
                                                 fontSize = 11.5.sp,
-                                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium
+                                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
+                                                maxLines = 1
                                             )
                                         }
                                     }
@@ -1294,6 +1373,7 @@ fun CropAndFilterScreen(
                                 Box(
                                     modifier = Modifier
                                         .clip(CircleShape)
+                                        .testTag("adjust_value_badge")
                                         .background(activeAccent.copy(alpha = 0.16f))
                                         .padding(horizontal = 10.dp, vertical = 4.dp)
                                 ) {
@@ -1306,6 +1386,11 @@ fun CropAndFilterScreen(
                                 }
                             }
 
+                            val sliderColors = SliderDefaults.colors(
+                                thumbColor = activeAccent,
+                                activeTrackColor = activeAccent,
+                                inactiveTrackColor = ScannerGlassPalette.SubtleStroke
+                            )
                             when (activeToneMetric) {
                                 0 -> Slider(
                                     value = frame.brightness,
@@ -1315,11 +1400,8 @@ fun CropAndFilterScreen(
                                         )
                                     },
                                     valueRange = -60f..60f,
-                                    colors = SliderDefaults.colors(
-                                        thumbColor = ScannerGlassPalette.CyanGlow,
-                                        activeTrackColor = ScannerGlassPalette.CyanGlow,
-                                        inactiveTrackColor = ScannerGlassPalette.SubtleStroke
-                                    )
+                                    colors = sliderColors,
+                                    modifier = Modifier.testTag("adjust_slider")
                                 )
                                 1 -> Slider(
                                     value = frame.contrast,
@@ -1329,13 +1411,34 @@ fun CropAndFilterScreen(
                                         )
                                     },
                                     valueRange = 0.6f..1.8f,
-                                    colors = SliderDefaults.colors(
-                                        thumbColor = ScannerGlassPalette.VioletGlow,
-                                        activeTrackColor = ScannerGlassPalette.VioletGlow,
-                                        inactiveTrackColor = ScannerGlassPalette.SubtleStroke
-                                    )
+                                    colors = sliderColors,
+                                    modifier = Modifier.testTag("adjust_slider")
                                 )
-                                else -> Slider(
+                                2 -> Slider(
+                                    value = frame.shadows,
+                                    onValueChange = {
+                                        scannerViewModel.updateFrameEnhancement(
+                                            activeIdx, frame.filter, frame.brightness, frame.contrast, frame.sharpness, frame.rotationDeg,
+                                            shadows = it
+                                        )
+                                    },
+                                    valueRange = -1f..1f,
+                                    colors = sliderColors,
+                                    modifier = Modifier.testTag("adjust_slider")
+                                )
+                                3 -> Slider(
+                                    value = frame.highlights,
+                                    onValueChange = {
+                                        scannerViewModel.updateFrameEnhancement(
+                                            activeIdx, frame.filter, frame.brightness, frame.contrast, frame.sharpness, frame.rotationDeg,
+                                            highlights = it
+                                        )
+                                    },
+                                    valueRange = -1f..1f,
+                                    colors = sliderColors,
+                                    modifier = Modifier.testTag("adjust_slider")
+                                )
+                                4 -> Slider(
                                     value = frame.sharpness,
                                     onValueChange = {
                                         scannerViewModel.updateFrameEnhancement(
@@ -1343,11 +1446,32 @@ fun CropAndFilterScreen(
                                         )
                                     },
                                     valueRange = 0f..1f,
-                                    colors = SliderDefaults.colors(
-                                        thumbColor = ScannerGlassPalette.EmeraldGlow,
-                                        activeTrackColor = ScannerGlassPalette.EmeraldGlow,
-                                        inactiveTrackColor = ScannerGlassPalette.SubtleStroke
-                                    )
+                                    colors = sliderColors,
+                                    modifier = Modifier.testTag("adjust_slider")
+                                )
+                                5 -> Slider(
+                                    value = frame.saturation,
+                                    onValueChange = {
+                                        scannerViewModel.updateFrameEnhancement(
+                                            activeIdx, frame.filter, frame.brightness, frame.contrast, frame.sharpness, frame.rotationDeg,
+                                            saturation = it
+                                        )
+                                    },
+                                    valueRange = 0f..2f,
+                                    colors = sliderColors,
+                                    modifier = Modifier.testTag("adjust_slider")
+                                )
+                                else -> Slider(
+                                    value = frame.temperature,
+                                    onValueChange = {
+                                        scannerViewModel.updateFrameEnhancement(
+                                            activeIdx, frame.filter, frame.brightness, frame.contrast, frame.sharpness, frame.rotationDeg,
+                                            temperature = it
+                                        )
+                                    },
+                                    valueRange = -1f..1f,
+                                    colors = sliderColors,
+                                    modifier = Modifier.testTag("adjust_slider")
                                 )
                             }
                         }
@@ -1364,7 +1488,11 @@ fun CropAndFilterScreen(
                     ) {
                         if (isEditExistingMode) {
                             Text(
-                                text = if (isArabic) "تعديل حواف وتحسين الصفحة" else "Edit Page Edges & Filter",
+                                text = if (batchFrames.size > 1) {
+                                    if (isArabic) "تعديل صفحة ${activeIdx + 1} من ${batchFrames.size}" else "Edit Page ${activeIdx + 1} of ${batchFrames.size}"
+                                } else {
+                                    if (isArabic) "تعديل حواف وتحسين الصفحة" else "Edit Page Edges & Filter"
+                                },
                                 color = ScannerGlassPalette.TextSecondary,
                                 fontSize = 12.5.sp,
                                 fontWeight = FontWeight.Medium,
@@ -1427,11 +1555,10 @@ fun CropAndFilterScreen(
                         Button(
                             onClick = {
                                 val docId = editDocumentId
-                                val pageId = editPageId
-                                if (isEditExistingMode && docId != null && pageId != null) {
+                                if (isEditExistingMode && docId != null) {
                                     scannerViewModel.saveEditedPageFrame(
                                         docId = docId,
-                                        pageId = pageId,
+                                        pageId = frame.id,
                                         isArabic = isArabic
                                     )
                                 } else if (!isEditExistingMode) {
